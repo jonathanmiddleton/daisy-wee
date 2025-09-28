@@ -1,0 +1,245 @@
+import os
+import sys
+import time
+import dataclasses
+from dataclasses import dataclass, fields as dataclass_fields
+from datetime import datetime, timezone
+from pathlib import Path
+import yaml
+
+from training.optim import Muon
+from models.gpt_core import GPTCore
+from training.data_gen import distributed_data_generator
+from training.optim import get_lr, get_window_size_blocks
+
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+import torch
+
+torch.empty(1, device="cuda", requires_grad=True).backward()  # prevents a bug on some systems
+from torch import Tensor, nn
+import torch.nn.functional as F
+import torch.distributed as dist
+
+torch._inductor.config.coordinate_descent_tuning = True  # we allow this flag for medium track
+torch._dynamo.config.compiled_autograd = True
+
+
+@dataclass
+class Hyperparameters:
+    # Required scenario-specific fields
+    train_files: str
+    val_files: str
+    train_seq_len: int
+    val_seq_len: int
+    num_iterations: int
+    cooldown_frac: float
+    # Common fields with defaults
+    vocab_size: int = 50257
+    val_tokens: int = 10485760  # how many tokens of validation data
+    val_loss_every: int = 125  # num steps between validation loss calculations
+    save_checkpoint: bool = True
+    init_checkpoint: str | None = None
+
+
+def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
+    """
+    Load Hyperparameters from a YAML file. If no path is provided, defaults to config/instruct_sft.yml.
+    Validates keys and required fields against the Hyperparameters dataclass.
+    """
+    cfg_dict = {}
+    used_path: Path | None = None
+    if config_path:
+        used_path = Path(config_path)
+        with open(used_path, "r") as f:
+            cfg_dict = yaml.safe_load(f) or {}
+    else:
+        used_path = Path("config/instruct_sft.yml")
+        if used_path.exists():
+            with open(used_path, "r") as f:
+                cfg_dict = yaml.safe_load(f) or {}
+
+    valid_names = {f.name for f in dataclass_fields(Hyperparameters)}
+    unknown = set(cfg_dict) - valid_names
+    if unknown:
+        raise ValueError(f"Unknown hyperparameter(s) in {used_path}: {sorted(unknown)}")
+
+    required = [f.name for f in dataclass_fields(Hyperparameters)
+                if f.default is dataclasses.MISSING and getattr(f, "default_factory",
+                                                                dataclasses.MISSING) is dataclasses.MISSING]
+    missing = [name for name in required if name not in cfg_dict]
+    if missing:
+        raise ValueError(f"Missing required hyperparameter(s) in {used_path}: {missing}")
+
+    return Hyperparameters(**cfg_dict)
+
+
+args = load_hparams_from_yaml(sys.argv[1] if len(sys.argv) > 1 else None)
+for s in sys.argv[1:]:
+    if s.startswith('--init-checkpoint=') or s.startswith('--init_checkpoint='):
+        args.init_checkpoint = s.split('=', 1)[1]
+
+run_id = int(os.environ.get("RUN_ID", 0))
+# torchrun sets these env variables
+rank = int(os.environ["RANK"])
+world_size = int(os.environ["WORLD_SIZE"])
+if world_size != 8:
+    print("[warn] This script is designed to run with world_size=8.")
+assert torch.cuda.is_available()
+device = torch.device("cuda", int(os.environ["LOCAL_RANK"]))
+torch.cuda.set_device(device)
+dist.init_process_group(backend="nccl", device_id=device)
+dist.barrier()
+master_process = (rank == 0)  # this process will do logging, checkpointing etc.
+
+########################################
+#    Construct model and optimizer     #
+########################################
+
+
+model: nn.Module = GPTCore(vocab_size=args.vocab_size, num_layers=16, num_heads=8, model_dim=1024,
+                           max_seq_len=max(args.train_seq_len, args.val_seq_len)).cuda()
+
+if args.init_checkpoint:
+    _obj = torch.load(args.init_checkpoint, map_location=device)
+    _sd = _obj.get('model', _obj) if isinstance(_obj, dict) else _obj
+    if isinstance(_sd, dict) and any(k.startswith('_orig_mod.') for k in _sd.keys()):
+        _sd = {k.replace('_orig_mod.', '', 1): v for k, v in _sd.items()}
+    _missing, _unexpected = model.load_state_dict(_sd, strict=False)
+    print(f"init_checkpoint:{args.init_checkpoint} missing:{len(_missing)} unexpected:{len(_unexpected)}")
+
+for m in model.modules():
+    if isinstance(m, nn.Embedding):
+        m.bfloat16()
+for param in model.parameters():
+    dist.broadcast(param.detach(), 0)
+
+# collect the parameters to optimize
+hidden_matrix_params = sorted((p for p in model.blocks.parameters() if p.ndim >= 2), key=lambda x: x.size(),
+                              reverse=True)
+embed_params = [*model.embed.parameters(), *model.value_embeds.parameters()]
+scalar_params = [model.scalars]
+head_params: list[nn.Parameter] = [model.lm_head_w]
+# sanity check
+params_collections = [hidden_matrix_params, embed_params, scalar_params, head_params]
+optimized_parameters_set = {p for params in params_collections for p in params}
+assert optimized_parameters_set == {*model.parameters()}
+assert len(optimized_parameters_set) == sum(len(lst) for lst in params_collections)
+
+# init the optimizer(s)
+adam_param_groups = [dict(params=head_params, lr=1 / 320), dict(params=embed_params, lr=0.3),
+                     dict(params=scalar_params, lr=0.015)]
+# small adam epsilon by @YouJiacheng. this is an alternate method of fixing the world_size dependence
+# discovered by @fernbear.bsky.social https://x.com/hi_tysam/status/1879692937589875094
+optimizer1 = torch.optim.AdamW(adam_param_groups, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.0, fused=True)
+optimizer2 = Muon(hidden_matrix_params, lr=0.025, momentum=0.95, rank=rank, world_size=world_size)
+optimizers: list[torch.optim.Optimizer] = [optimizer1, optimizer2]
+
+
+def opt_params(opt: torch.optim.Optimizer) -> list[nn.Parameter]:
+    return [p for group in opt.param_groups for p in group["params"]]
+
+
+opt2params = {opt: opt_params(opt) for opt in optimizers}
+for opt in optimizers:
+    for group in opt.param_groups:
+        group["initial_lr"] = group["lr"]
+
+print("Compiling model...", end="", flush=True)
+model: nn.Module = torch.compile(model, dynamic=False)
+print("done.", flush=True)
+
+########################################
+#        Training and validation       #
+########################################
+
+torch.cuda.reset_peak_memory_stats()
+train_loader = distributed_data_generator(args.train_files, world_size * args.train_seq_len, rank, world_size)
+tokens_per_step = world_size * args.train_seq_len
+tokens_seen = 0
+last_val_loss = None
+last_val_tokens = 0
+ema_dloss_per_token = None
+training_time_ms = 0
+# start the clock
+dist.barrier()
+t0 = time.perf_counter()
+# begin training
+train_steps = args.num_iterations
+for step in range(train_steps + 1):
+    last_step = (step == train_steps)
+
+    # --------------- VALIDATION SECTION -----------------
+    if last_step or (args.val_loss_every > 0 and step % args.val_loss_every == 0 and step != 0):
+        # stop the clock
+        dist.barrier()
+        training_time_ms += 1000 * (time.perf_counter() - t0)
+        model.eval()
+        val_batch_size = world_size * args.val_seq_len
+        assert args.val_tokens % val_batch_size == 0
+        val_steps = args.val_tokens // val_batch_size
+        val_loader = distributed_data_generator(args.val_files, val_batch_size, rank, world_size)
+        val_loss = 0
+        with torch.no_grad():
+            for _ in range(val_steps):
+                inputs, targets = next(val_loader)
+                val_loss += model(inputs, targets, get_window_size_blocks(step, train_steps))
+        val_loss /= val_steps
+        tokens_since_last = tokens_seen - last_val_tokens
+        if last_val_loss is not None and tokens_since_last > 0:
+            dpt = (val_loss.item() - last_val_loss) / tokens_since_last
+            ema_dloss_per_token = dpt if ema_dloss_per_token is None else 0.7 * ema_dloss_per_token + 0.3 * dpt
+            print(
+                f"dloss_per_token:{dpt:.6e} dloss_per_1e9tok:{dpt * 1e9:.6f} ema_dloss_per_1e9tok:{(ema_dloss_per_token or 0.0) * 1e9:.6f}")
+        last_val_loss = float(val_loss.item())
+        last_val_tokens = tokens_seen
+
+        del val_loader
+        dist.all_reduce(val_loss, op=dist.ReduceOp.AVG)
+        print(
+            f"step:{step}/{train_steps} val_loss:{val_loss:.6f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms")
+
+        model.train()
+        # start the clock again
+        dist.barrier()
+        t0 = time.perf_counter()
+
+    if last_step:
+        if master_process and args.save_checkpoint:
+            log = dict(step=step, model=model._orig_mod.state_dict(),
+                       optimizers=[opt.state_dict() for opt in optimizers])
+            os.makedirs(f"checkpoints", exist_ok=True)
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+            fname = f"checkpoints/{ts}-step{step:06d}-run{run_id}.pt"
+            torch.save(log, fname)
+
+        break
+
+    # --------------- TRAINING SECTION -----------------
+    inputs, targets = next(train_loader)
+    model(inputs, targets, get_window_size_blocks(step, train_steps)).backward()
+    opt2futures = {
+        opt: [dist.all_reduce(p.grad, op=dist.ReduceOp.AVG, async_op=True).get_future() for p in params]
+        for opt, params in opt2params.items()
+    }
+    # set optimization hyperparameters
+    for opt in optimizers:
+        for group in opt.param_groups:
+            group["lr"] = group["initial_lr"] * get_lr(step)
+    for group in optimizer2.param_groups:
+        frac = min(step / 300, 1)  # momentum warmup for muon
+        group["momentum"] = (1 - frac) * 0.85 + frac * 0.95
+    # step the optimizers
+    for opt in optimizers:
+        torch.futures.collect_all(opt2futures[opt]).wait()
+        opt.step()
+    # null the gradients
+    model.zero_grad(set_to_none=True)
+    tokens_seen += tokens_per_step
+    # logging
+    approx_training_time_ms = training_time_ms + 1000 * (time.perf_counter() - t0)
+    print(
+        f"step:{step + 1}/{train_steps} train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms / (step + 1):.2f}ms")
+
+print(f"peak memory allocated: {torch.cuda.max_memory_allocated() // 1024 // 1024} MiB "
+      f"reserved: {torch.cuda.max_memory_reserved() // 1024 // 1024} MiB")
+dist.destroy_process_group()

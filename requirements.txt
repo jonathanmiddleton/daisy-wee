@@ -1,0 +1,6 @@
+numpy
+tqdm
+huggingface-hub
+
+# PyTorch - we use torch nighties, currently 2.10
+# pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu126 --upgrade

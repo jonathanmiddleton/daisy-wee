@@ -1,0 +1,11 @@
+name: daisy-wee
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - git
+  - numpy
+  - tqdm
+  - huggingface_hub[cli]
