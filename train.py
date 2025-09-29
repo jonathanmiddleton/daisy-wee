@@ -80,15 +80,18 @@ for s in sys.argv[1:]:
 
 run_id = int(os.environ.get("RUN_ID", 0))
 # torchrun sets these env variables
-rank = int(os.environ["RANK"])
-world_size = int(os.environ["WORLD_SIZE"])
-if world_size != 8:
+rank = int(os.environ.get("RANK", "0"))
+world_size = int(os.environ.get("WORLD_SIZE", "1"))
+local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+use_distributed = world_size > 1
+if use_distributed and world_size != 8:
     print("[warn] This script is designed to run with world_size=8.")
 assert torch.cuda.is_available()
-device = torch.device("cuda", int(os.environ["LOCAL_RANK"]))
+device = torch.device("cuda", local_rank)
 torch.cuda.set_device(device)
-dist.init_process_group(backend="nccl", device_id=device)
-dist.barrier()
+if use_distributed:
+    dist.init_process_group(backend="nccl", device_id=device, world_size=world_size)
+    dist.barrier()
 master_process = (rank == 0)  # this process will do logging, checkpointing etc.
 
 ########################################
@@ -111,8 +114,8 @@ for m in model.modules():
     if isinstance(m, nn.Embedding):
         m.bfloat16()
 for param in model.parameters():
-    dist.broadcast(param.detach(), 0)
-
+    if use_distributed:
+        dist.broadcast(param.detach(), 0)
 # collect the parameters to optimize
 hidden_matrix_params = sorted((p for p in model.blocks.parameters() if p.ndim >= 2), key=lambda x: x.size(),
                               reverse=True)
@@ -161,7 +164,8 @@ last_val_tokens = 0
 ema_dloss_per_token = None
 training_time_ms = 0
 # start the clock
-dist.barrier()
+if use_distributed:
+    dist.barrier()
 t0 = time.perf_counter()
 # begin training
 train_steps = args.num_iterations
@@ -171,7 +175,8 @@ for step in range(train_steps + 1):
     # --------------- VALIDATION SECTION -----------------
     if last_step or (args.val_loss_every > 0 and step % args.val_loss_every == 0 and step != 0):
         # stop the clock
-        dist.barrier()
+        if use_distributed:
+            dist.barrier()
         training_time_ms += 1000 * (time.perf_counter() - t0)
         model.eval()
         val_batch_size = world_size * args.val_seq_len
@@ -194,13 +199,15 @@ for step in range(train_steps + 1):
         last_val_tokens = tokens_seen
 
         del val_loader
-        dist.all_reduce(val_loss, op=dist.ReduceOp.AVG)
+        if use_distributed:
+            dist.all_reduce(val_loss, op=dist.ReduceOp.AVG)
         print(
             f"step:{step}/{train_steps} val_loss:{val_loss:.6f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms")
 
         model.train()
         # start the clock again
-        dist.barrier()
+        if use_distributed:
+            dist.barrier()
         t0 = time.perf_counter()
 
     if last_step:
@@ -218,7 +225,8 @@ for step in range(train_steps + 1):
     inputs, targets = next(train_loader)
     model(inputs, targets, get_window_size_blocks(step, train_steps)).backward()
     opt2futures = {
-        opt: [dist.all_reduce(p.grad, op=dist.ReduceOp.AVG, async_op=True).get_future() for p in params]
+        opt: ([dist.all_reduce(p.grad, op=dist.ReduceOp.AVG, async_op=True).get_future() for p in params]
+              if use_distributed else [])
         for opt, params in opt2params.items()
     }
     # set optimization hyperparameters
@@ -230,7 +238,8 @@ for step in range(train_steps + 1):
         group["momentum"] = (1 - frac) * 0.85 + frac * 0.95
     # step the optimizers
     for opt in optimizers:
-        torch.futures.collect_all(opt2futures[opt]).wait()
+        if use_distributed:
+            torch.futures.collect_all(opt2futures[opt]).wait()
         opt.step()
     # null the gradients
     model.zero_grad(set_to_none=True)
@@ -242,4 +251,5 @@ for step in range(train_steps + 1):
 
 print(f"peak memory allocated: {torch.cuda.max_memory_allocated() // 1024 // 1024} MiB "
       f"reserved: {torch.cuda.max_memory_reserved() // 1024 // 1024} MiB")
-dist.destroy_process_group()
+if use_distributed and dist.is_initialized():
+    dist.destroy_process_group()
