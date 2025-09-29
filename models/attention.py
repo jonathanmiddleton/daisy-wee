@@ -16,8 +16,17 @@ class Rotary(nn.Module):
     def __init__(self, dim: int, max_seq_len: int):
         super().__init__()
         # half-truncate RoPE by @YouJiacheng (w/ base freq tuning)
-        angular_freq = (1 / 1024) ** torch.linspace(0, 1, steps=dim//4, dtype=torch.float32)
-        angular_freq = torch.cat([angular_freq, angular_freq.new_zeros(dim//4)])
+        # For small head_dim (< 4), do NOT truncate; otherwise keep half-truncation.
+        half = dim // 2
+        keep = dim // 4  # number of active frequencies when truncating by half
+        base = 1024
+        if keep == 0:
+            # head_dim < 4 -> no truncation; use standard RoPE with 'half' frequencies
+            angular_freq = (1 / base) ** torch.linspace(0, 1, steps=half, dtype=torch.float32)
+        else:
+            active = (1 / base) ** torch.linspace(0, 1, steps=keep, dtype=torch.float32)
+            # pad with zeros to keep total = half (dim//2)
+            angular_freq = torch.cat([active, active.new_zeros(half - keep)])
         t = torch.arange(max_seq_len, dtype=torch.float32)
         theta = torch.einsum("i,j -> ij", t, angular_freq)
         self.cos = nn.Buffer(theta.cos(), persistent=False)
@@ -84,9 +93,13 @@ class CausalSelfAttention(nn.Module):
             v = lambdas[0] * v + lambdas[1] * ve.view_as(v) # @KoszarskyB & @Grad62304977
         else: # skip mid-layers token value embeddings by @YouJiacheng
             v = lambdas[0] * v
-        k_all = torch.cat([k_ctx[..., -window:, :], k], 2)
-        v_all = torch.cat([v_ctx[..., -window:, :], v], 2)
-        y = F.scaled_dot_product_attention(q, k_all, v_all, scale=self.attn_scale, is_causal=True)
+        k_all = torch.cat([k_ctx[:, -window:], k], 1)[:, -window:]
+        v_all = torch.cat([v_ctx[:, -window:], v], 1)[:, -window:]
+        # SDPA expects (..., L, E) where L is the sequence length; put heads before time
+        q_ = q.transpose(1, 2)      # (B, H, 1, D)
+        k_ = k_all.transpose(1, 2)  # (B, H, S, D)
+        v_ = v_all.transpose(1, 2)  # (B, H, S, D)
+        y = F.scaled_dot_product_attention(q_, k_, v_, scale=self.attn_scale, is_causal=False)
         y = y.transpose(1, 2).reshape(B, 1, self.num_heads * self.head_dim)
         y = F.linear(y, self.qkvo_w[3])
         return y, k, v
