@@ -40,6 +40,10 @@ class Hyperparameters:
     save_checkpoint: bool = True
     init_checkpoint: str | None = None
 
+def print0(st):
+    if master_process:
+        print(st)
+
 
 def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
     """
@@ -80,14 +84,14 @@ for s in sys.argv[1:]:
 run_id = int(os.environ.get("RUN_ID", 0))
 # torchrun sets these env variables
 rank = int(os.environ.get("RANK", "0"))
-print(f"rank:{rank}")
+print0(f"rank:{rank}")
 world_size = int(os.environ.get("WORLD_SIZE", "1"))
-print(f"world_size:{world_size}")
+print0(f"world_size:{world_size}")
 local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-print(f"local_rank:{local_rank}")
+print0(f"local_rank:{local_rank}")
 use_distributed = world_size > 1
 if use_distributed and world_size != 8:
-    print("[warn] This script is designed to run with world_size=8.")
+    print0("[warn] This script is designed to run with world_size=8.")
 assert torch.cuda.is_available()
 device = torch.device("cuda", local_rank)
 torch.cuda.set_device(device)
@@ -110,7 +114,7 @@ if args.init_checkpoint:
     if isinstance(_sd, dict) and any(k.startswith('_orig_mod.') for k in _sd.keys()):
         _sd = {k.replace('_orig_mod.', '', 1): v for k, v in _sd.items()}
     _missing, _unexpected = model.load_state_dict(_sd, strict=False)
-    print(f"init_checkpoint:{args.init_checkpoint} missing:{len(_missing)} unexpected:{len(_unexpected)}")
+    print0(f"init_checkpoint:{args.init_checkpoint} missing:{len(_missing)} unexpected:{len(_unexpected)}")
 
 for m in model.modules():
     if isinstance(m, nn.Embedding):
@@ -150,9 +154,9 @@ for opt in optimizers:
     for group in opt.param_groups:
         group["initial_lr"] = group["lr"]
 
-print("Compiling model...", end="", flush=True)
-model: nn.Module = torch.compile(model, dynamic=False)
-print("done.", flush=True)
+print0("Compiling model...")
+model: nn.Module = torch.compile(model, dynamic=True)
+print0("Finished compiling model.")
 
 ########################################
 #        Training and validation       #
@@ -196,16 +200,14 @@ for step in range(train_steps + 1):
         if last_val_loss is not None and tokens_since_last > 0:
             dpt = (val_loss.item() - last_val_loss) / tokens_since_last
             ema_dloss_per_token = dpt if ema_dloss_per_token is None else 0.7 * ema_dloss_per_token + 0.3 * dpt
-            print(
-                f"delta loss per 1e9 tokens:{dpt * 1e9:.6f} [ema:{(ema_dloss_per_token or 0.0) * 1e9:.6f}]")
+            print0(f"delta loss per 1e9 tokens:{dpt * 1e9:.6f} [ema:{(ema_dloss_per_token or 0.0) * 1e9:.6f}]")
         last_val_loss = float(val_loss.item())
         last_val_tokens = tokens_seen
 
         del val_loader
         if use_distributed:
             dist.all_reduce(val_loss, op=dist.ReduceOp.AVG)
-        print(
-            f"step:{step}/{train_steps} val_loss:{val_loss:.6f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms")
+            print0(f"step:{step}/{train_steps} val_loss:{val_loss:.6f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms")
 
         model.train()
         # start the clock again
@@ -249,10 +251,9 @@ for step in range(train_steps + 1):
     tokens_seen += tokens_per_step
     # logging
     approx_training_time_ms = training_time_ms + 1000 * (time.perf_counter() - t0)
-    print(
-        f"step:{step + 1}/{train_steps} train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms / (step + 1):.2f}ms")
+    print0(f"step:{step + 1}/{train_steps} train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms / (step + 1):.2f}ms")
 
-print(f"peak memory allocated: {torch.cuda.max_memory_allocated() // 1024 // 1024} MiB "
+print0(f"peak memory allocated: {torch.cuda.max_memory_allocated() // 1024 // 1024} MiB "
       f"reserved: {torch.cuda.max_memory_reserved() // 1024 // 1024} MiB")
 if use_distributed and dist.is_initialized():
     dist.destroy_process_group()
