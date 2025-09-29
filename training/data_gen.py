@@ -14,7 +14,12 @@ def _load_data_shard(file: Path):
     return tokens
 
 def distributed_data_generator(filename_pattern: str, batch_size: int, rank : int, world_size : int):
-    files = sorted(Path.cwd().glob(filename_pattern))
+    if filename_pattern.startswith("/"):
+        p = Path(filename_pattern)
+        files = sorted(list(p.parent.glob(p.name)))
+
+    else:
+        files = sorted(Path.cwd().glob(filename_pattern))
     assert batch_size % world_size == 0
     local_batch_size = batch_size // world_size
     file_iter = iter(files) # use itertools.cycle(files) instead if you want to do multi-epoch training

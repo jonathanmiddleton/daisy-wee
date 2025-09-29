@@ -53,7 +53,7 @@ def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
         with open(used_path, "r") as f:
             cfg_dict = yaml.safe_load(f) or {}
     else:
-        used_path = Path("config/instruct_sft.yml")
+        used_path = Path("config/pretrain.yml")
         if used_path.exists():
             with open(used_path, "r") as f:
                 cfg_dict = yaml.safe_load(f) or {}
@@ -187,7 +187,7 @@ for step in range(train_steps + 1):
         with torch.no_grad():
             for _ in range(val_steps):
                 inputs, targets = next(val_loader)
-                val_loss += model(inputs, targets, get_window_size_blocks(step, train_steps))
+                val_loss += model(inputs, get_window_size_blocks(step, train_steps), targets)
         val_loss /= val_steps
         tokens_since_last = tokens_seen - last_val_tokens
         if last_val_loss is not None and tokens_since_last > 0:
@@ -223,7 +223,7 @@ for step in range(train_steps + 1):
 
     # --------------- TRAINING SECTION -----------------
     inputs, targets = next(train_loader)
-    model(inputs, targets, get_window_size_blocks(step, train_steps)).backward()
+    model(inputs,get_window_size_blocks(step, train_steps), targets).backward()
     opt2futures = {
         opt: ([dist.all_reduce(p.grad, op=dist.ReduceOp.AVG, async_op=True).get_future() for p in params]
               if use_distributed else [])
