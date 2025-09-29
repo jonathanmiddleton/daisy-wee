@@ -44,7 +44,6 @@ model.load_state_dict(state_dict)
 
 model.eval()
 if device != 'cpu':
-    model.to(device)
     model = torch.compile(model, dynamic=True)
 enc = tiktoken.get_encoding("gpt2")
 encode = lambda s: enc.encode(s, allowed_special={"<|endoftext|>"})
@@ -67,8 +66,8 @@ devtype = "cuda" if str(device).startswith("cuda") else ("mps" if str(device).st
 ctx = torch.amp.autocast(device_type=devtype, dtype=torch.bfloat16)
 with torch.no_grad():
     with ctx:
-        gen = Generator(model=model, window=4096, eos_token_id=50256, temperature=0.7, top_p=0.9,
-                        repetition_penalty=1.1)
-        tokens = gen.generate(x, max_new_tokens=256)
+        gen = Generator(model=model, window=1024, eos_token_id=50256, temperature=1.0, top_p=1.0,
+                        repetition_penalty=1.0)
+        tokens = gen.generate(x[0], max_new_tokens=256)
 
-        print(decode(tokens[0].tolist()))
+        print(decode(tokens))

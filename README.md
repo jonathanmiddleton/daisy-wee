@@ -6,7 +6,7 @@
       <img src="assets/daisy-wee.png" alt="Daisy‑Wee" width="160">
     </td>
     <td>
-      <i>Note: This is an exploratory project. Goals are to probe, measure, and share what works—not to ship a production system. Interfaces and results will evolve.</i>
+      <i>Note: This is an exploratory project. Interfaces and results will evolve.</i>
     </td>
   </tr>
 </table>
