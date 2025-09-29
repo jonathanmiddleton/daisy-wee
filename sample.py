@@ -66,8 +66,8 @@ devtype = "cuda" if str(device).startswith("cuda") else ("mps" if str(device).st
 ctx = torch.amp.autocast(device_type=devtype, dtype=torch.bfloat16)
 with torch.no_grad():
     with ctx:
-        gen = Generator(model=model, window=1024, eos_token_id=50256, temperature=0.7, top_p=0.7,
-                        repetition_penalty=1.35)
-        tokens = gen.generate(x[0], max_new_tokens=256)
+        gen = Generator(model=model, window=1024, eos_token_id=50256, temperature=0.7, top_p=0.95,
+                        repetition_penalty=1.25)
+        tokens = gen.generate(x[0], max_new_tokens=50)
 
         print(decode(tokens))

@@ -80,8 +80,11 @@ for s in sys.argv[1:]:
 run_id = int(os.environ.get("RUN_ID", 0))
 # torchrun sets these env variables
 rank = int(os.environ.get("RANK", "0"))
+print(f"rank:{rank}")
 world_size = int(os.environ.get("WORLD_SIZE", "1"))
+print(f"world_size:{world_size}")
 local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+print(f"local_rank:{local_rank}")
 use_distributed = world_size > 1
 if use_distributed and world_size != 8:
     print("[warn] This script is designed to run with world_size=8.")
