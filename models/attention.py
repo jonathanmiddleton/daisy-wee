@@ -41,11 +41,10 @@ class Rotary(nn.Module):
         return _apply_rope(x_BTHD, cos, sin)
 
     def step(self, x_BTHD: Tensor, pos: int):
-        assert self.cos.size(0) >= pos
+        assert self.cos.size(0) > pos
         cos = self.cos[None, pos, None, :]
         sin = self.sin[None, pos, None, :]
         return _apply_rope(x_BTHD, cos, sin)
-
 
 
 class CausalSelfAttention(nn.Module):
@@ -106,8 +105,10 @@ class CausalSelfAttention(nn.Module):
         else: # skip mid-layers token value embeddings by @YouJiacheng
             lambdas = lambdas.to(target_dtype)
             v = lambdas[0] * v
-        k_all = torch.cat([k_ctx[:, -window:], k], 1)[:, -window:]
-        v_all = torch.cat([v_ctx[:, -window:], v], 1)[:, -window:]
+        start = max(0, pos - window + 1)
+        k_all = torch.cat([k_ctx[:, start:pos], k], 1)
+        v_all = torch.cat([v_ctx[:, start:pos], v], 1)
+
         # SDPA expects (..., L, E) where L is the sequence length; put heads before time
         q_ = q.transpose(1, 2)      # (B, H, 1, D)
         k_ = k_all.transpose(1, 2)  # (B, H, S, D)
