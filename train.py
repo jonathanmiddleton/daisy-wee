@@ -40,11 +40,6 @@ class Hyperparameters:
     save_checkpoint: bool = True
     init_checkpoint: str | None = None
 
-def print0(st):
-    if master_process:
-        print(st)
-
-
 def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
     """
     Load Hyperparameters from a YAML file. If no path is provided, defaults to config/instruct_sft.yml.
@@ -75,7 +70,6 @@ def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
 
     return Hyperparameters(**cfg_dict)
 
-
 args = load_hparams_from_yaml(sys.argv[1] if len(sys.argv) > 1 else None)
 for s in sys.argv[1:]:
     if s.startswith('--init-checkpoint=') or s.startswith('--init_checkpoint='):
@@ -84,14 +78,11 @@ for s in sys.argv[1:]:
 run_id = int(os.environ.get("RUN_ID", 0))
 # torchrun sets these env variables
 rank = int(os.environ.get("RANK", "0"))
-print0(f"rank:{rank}")
 world_size = int(os.environ.get("WORLD_SIZE", "1"))
-print0(f"world_size:{world_size}")
 local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-print0(f"local_rank:{local_rank}")
 use_distributed = world_size > 1
 if use_distributed and world_size != 8:
-    print0("[warn] This script is designed to run with world_size=8.")
+    print("[warn] This script is designed to run with world_size=8.")
 assert torch.cuda.is_available()
 device = torch.device("cuda", local_rank)
 torch.cuda.set_device(device)
@@ -99,6 +90,11 @@ if use_distributed:
     dist.init_process_group(backend="nccl", device_id=device, world_size=world_size)
     dist.barrier()
 master_process = (rank == 0)  # this process will do logging, checkpointing etc.
+
+def print0(st):
+    if master_process:
+        print(st)
+
 
 ########################################
 #    Construct model and optimizer     #
