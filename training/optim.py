@@ -94,9 +94,16 @@ class Muon(torch.optim.Optimizer):
                         eff_lr=torch._as_tensor_fullprec(group["lr"] * max(1, p.size(-2) / p.size(-1)) ** 0.5),
                         eff_weight_decay=torch._as_tensor_fullprec(group["lr"] * group["weight_decay"] * getattr(p, "wd_mul", 1.0)),
                     )
-                futures.append(dist.all_gather(params_pad[base_i:base_i + self.world_size], params_pad[base_i + self.rank], async_op=True).get_future())
-        torch.futures.collect_all(futures).wait()
-
+                if self.world_size > 1 and dist.is_available() and dist.is_initialized():
+                    futures.append(
+                        dist.all_gather(
+                            params_pad[base_i:base_i + self.world_size],
+                            params_pad[base_i + self.rank],
+                            async_op=True
+                        ).get_future()
+                    )
+                if futures:
+                    torch.futures.collect_all(futures).wait()
 
 # learning rate schedule: stable then decay
 def get_lr(step: int, num_iterations: int, cooldown_frac: float):

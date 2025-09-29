@@ -1,28 +1,28 @@
+import dataclasses
 import os
 import sys
 import time
-import dataclasses
 from dataclasses import dataclass, fields as dataclass_fields
 from datetime import datetime, timezone
 from pathlib import Path
+
 import yaml
 
-from training.optim import Muon
 from models.gpt_core import GPTCore
 from training.data_gen import distributed_data_generator
+from training.optim import Muon
 from training.optim import get_lr, get_window_size_blocks
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import torch
 
 torch.empty(1, device="cuda", requires_grad=True).backward()  # prevents a bug on some systems
-from torch import Tensor, nn
-import torch.nn.functional as F
+from torch import nn
 import torch.distributed as dist
 
-torch._inductor.config.coordinate_descent_tuning = True  # we allow this flag for medium track
+torch._inductor.config.coordinate_descent_tuning = True
 torch._dynamo.config.compiled_autograd = True
-
+torch._dynamo.config.error_on_nested_fx_trace = False # temp workaround/diagnostic for dynamo error
 
 @dataclass
 class Hyperparameters:
@@ -47,7 +47,6 @@ def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
     Validates keys and required fields against the Hyperparameters dataclass.
     """
     cfg_dict = {}
-    used_path: Path | None = None
     if config_path:
         used_path = Path(config_path)
         with open(used_path, "r") as f:
@@ -121,6 +120,7 @@ hidden_matrix_params = sorted((p for p in model.blocks.parameters() if p.ndim >=
                               reverse=True)
 embed_params = [*model.embed.parameters(), *model.value_embeds.parameters()]
 scalar_params = [model.scalars]
+# noinspection PyTypeChecker
 head_params: list[nn.Parameter] = [model.lm_head_w]
 # sanity check
 params_collections = [hidden_matrix_params, embed_params, scalar_params, head_params]
@@ -139,7 +139,7 @@ optimizers: list[torch.optim.Optimizer] = [optimizer1, optimizer2]
 
 
 def opt_params(opt: torch.optim.Optimizer) -> list[nn.Parameter]:
-    return [p for group in opt.param_groups for p in group["params"]]
+    return [p for g in opt.param_groups for p in g["params"]]
 
 
 opt2params = {opt: opt_params(opt) for opt in optimizers}
@@ -194,7 +194,7 @@ for step in range(train_steps + 1):
             dpt = (val_loss.item() - last_val_loss) / tokens_since_last
             ema_dloss_per_token = dpt if ema_dloss_per_token is None else 0.7 * ema_dloss_per_token + 0.3 * dpt
             print(
-                f"dloss_per_token:{dpt:.6e} dloss_per_1e9tok:{dpt * 1e9:.6f} ema_dloss_per_1e9tok:{(ema_dloss_per_token or 0.0) * 1e9:.6f}")
+                f"delta loss per 1e9 tokens:{dpt * 1e9:.6f} [ema:{(ema_dloss_per_token or 0.0) * 1e9:.6f}]")
         last_val_loss = float(val_loss.item())
         last_val_tokens = tokens_seen
 
@@ -232,7 +232,7 @@ for step in range(train_steps + 1):
     # set optimization hyperparameters
     for opt in optimizers:
         for group in opt.param_groups:
-            group["lr"] = group["initial_lr"] * get_lr(step)
+            group["lr"] = group["initial_lr"] * get_lr(step, args.num_iterations, args.cooldown_frac)
     for group in optimizer2.param_groups:
         frac = min(step / 300, 1)  # momentum warmup for muon
         group["momentum"] = (1 - frac) * 0.85 + frac * 0.95

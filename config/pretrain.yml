@@ -9,5 +9,5 @@ cooldown_frac: 0.7
 # Common settings
 vocab_size: 50257
 val_tokens: 10485760
-val_loss_every: 125
+val_loss_every: 200
 save_checkpoint: true

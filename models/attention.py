@@ -4,13 +4,15 @@ from torch.nn.attention.flex_attention import BlockMask, flex_attention
 from torch.nn import functional as F
 from models.functional import norm, init_linear
 
-
 def _apply_rope(x_BTHD , cos, sin):
     x1, x2 = x_BTHD.to(dtype=torch.float32).chunk(2, dim=-1)
     y1 = x1 * cos + x2 * sin
     y2 = x1 * (-sin) + x2 * cos
     return torch.cat((y1, y2), dim=3).type_as(x_BTHD)
 
+@torch.compile
+def _flex_call(q, k, v, block_mask, scale):
+    return flex_attention(q, k, v, block_mask=block_mask, scale=scale)
 
 class Rotary(nn.Module):
     def __init__(self, dim: int, max_seq_len: int):
@@ -72,7 +74,8 @@ class CausalSelfAttention(nn.Module):
             v = lambdas[0] * v + lambdas[1] * ve.view_as(v) # @KoszarskyB & @Grad62304977
         else: # skip mid-layers token value embeddings by @YouJiacheng
             v = lambdas[0] * v
-        y = flex_attention(
+
+        y = _flex_call(
             q.transpose(1, 2),
             k.transpose(1, 2),
             v.transpose(1, 2),
