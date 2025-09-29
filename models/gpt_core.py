@@ -31,6 +31,7 @@ class GPTCore(nn.Module):
 
     def create_blockmasks(self, input_seq: Tensor, sliding_window_num_blocks: Tensor):
         BLOCK_SIZE = 128
+        device = input_seq.device
         docs = (input_seq == 50256).cumsum(0)
 
         # noinspection PyUnusedLocal
@@ -47,7 +48,7 @@ class GPTCore(nn.Module):
         # manual block mask creation by @YouJiacheng
         assert len(input_seq) % BLOCK_SIZE == 0
         NUM_BLOCKS = len(input_seq) // BLOCK_SIZE
-        block_idx = torch.arange(NUM_BLOCKS, dtype=torch.int32, device="cuda")
+        block_idx = torch.arange(NUM_BLOCKS, dtype=torch.int32, device=device)
         causal_blockmask_any = block_idx[:, None] >= block_idx
         causal_blockmask_all = block_idx[:, None] > block_idx
         docs_low = docs.view(-1, BLOCK_SIZE)[:, 0].contiguous()

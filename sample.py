@@ -13,9 +13,9 @@ TRAIN_SEQ_LEN = 64*1024
 parser = argparse.ArgumentParser(description="Generate text with a GPT model from a checkpoint.")
 parser.add_argument("checkpoint", type=str, help="Path to model checkpoint (.pt)")
 parser.add_argument("--max_tokens", type=int, default=100, help="Number of new tokens to generate")
-parser.add_argument("--repetition_penalty", type=float, default=1.05, help="Repetition penalty")
+parser.add_argument("--repetition_penalty", type=float, default=1.35, help="Repetition penalty")
 parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
-parser.add_argument("--top_k", type=int, default=100, help="Top-k sampling")
+parser.add_argument("--top_k", type=int, default=50, help="Top-k sampling")
 parser.add_argument(
     "--device",
     type=str,
@@ -66,8 +66,8 @@ devtype = "cuda" if str(device).startswith("cuda") else ("mps" if str(device).st
 ctx = torch.amp.autocast(device_type=devtype, dtype=torch.bfloat16)
 with torch.no_grad():
     with ctx:
-        gen = Generator(model=model, window=1024, eos_token_id=50256, temperature=1.0, top_p=1.0,
-                        repetition_penalty=1.0)
+        gen = Generator(model=model, window=1024, eos_token_id=50256, temperature=0.7, top_p=0.7,
+                        repetition_penalty=1.35)
         tokens = gen.generate(x[0], max_new_tokens=256)
 
         print(decode(tokens))

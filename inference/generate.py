@@ -93,7 +93,10 @@ class Generator:
     def _sample(self, logits_1xb):
         x = logits_1xb.float().view(-1)
         x = _apply_repetition_penalty(x, self.history, self.repetition_penalty)
-        if self.temperature != 1.0: x = x / max(self.temperature, 1e-6)
+        if self.temperature == 0.0:
+            return int(torch.argmax(x))
+        elif self.temperature != 1.0:
+            x = x / self.temperature
         if self.top_k is not None and self.top_k > 0:
             v, _ = torch.topk(x, self.top_k)
             x = torch.where(x >= v[-1], x, torch.tensor(float("-inf"), device=x.device))

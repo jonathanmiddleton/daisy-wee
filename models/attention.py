@@ -70,9 +70,14 @@ class CausalSelfAttention(nn.Module):
         q, k = norm(q), norm(k) # QK norm @Grad62304977
         q, k = self.rotary(q), self.rotary(k)
         v = norm(v)
+        target_dtype = q.dtype
+        v = v.to(target_dtype)
         if ve is not None:
+            ve = ve.to(target_dtype)
+            lambdas = lambdas.to(target_dtype)
             v = lambdas[0] * v + lambdas[1] * ve.view_as(v) # @KoszarskyB & @Grad62304977
         else: # skip mid-layers token value embeddings by @YouJiacheng
+            lambdas = lambdas.to(target_dtype)
             v = lambdas[0] * v
 
         y = _flex_call(
@@ -92,9 +97,14 @@ class CausalSelfAttention(nn.Module):
         q, k = norm(q), norm(k) # QK norm @Grad62304977
         q, k = self.rotary.step(q, pos), self.rotary.step(k, pos)
         v = norm(v)
+        target_dtype = q.dtype
+        v = v.to(target_dtype)
         if ve is not None:
+            ve = ve.to(target_dtype)
+            lambdas = lambdas.to(target_dtype)
             v = lambdas[0] * v + lambdas[1] * ve.view_as(v) # @KoszarskyB & @Grad62304977
         else: # skip mid-layers token value embeddings by @YouJiacheng
+            lambdas = lambdas.to(target_dtype)
             v = lambdas[0] * v
         k_all = torch.cat([k_ctx[:, -window:], k], 1)[:, -window:]
         v_all = torch.cat([v_ctx[:, -window:], v], 1)[:, -window:]
