@@ -120,5 +120,19 @@ class TestKVCache(unittest.TestCase):
                 self.assertEqual(got, expect)
             cache.advance()
 
+    def test_kvcache_contract(self, W=4, steps=6, L=2, B=1, H=3, D=5, device="cpu", dtype=torch.bfloat16):
+        cache = KVCache(L=L, B=B, H=H, W=W, D=D, device=device, dtype=dtype)
+        for t in range(steps):
+            for layer in range(L):
+                k_ctx, _ = cache.view(layer)
+                self.assertEqual(k_ctx.size(1),min(t, W)) # f"t={t} got {k_ctx.size(1)}"
+            k_new = torch.full((B, H, 1, D), float(t), device=device, dtype=dtype)
+            v_new = torch.full((B, H, 1, D), float(t), device=device, dtype=dtype)
+            for layer in range(L):
+                cache.write(layer, k_new, v_new)
+            cache.advance()
+
+
+
 if __name__ == "__main__":
     unittest.main()
