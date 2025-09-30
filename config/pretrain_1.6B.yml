@@ -2,8 +2,8 @@
 train_files: "data/fineweb/fineweb_train_*.bin"
 val_files: "data/fineweb/fineweb_val_*.bin"
 # max sequence length is max of (train,val)
-train_seq_len: 65536      # 64 * 1024
-val_seq_len: 65536        # 64 * 1024
+train_seq_len: 10240      # 10 * 1024
+val_seq_len: 10240        # 10 * 1024
 #
 num_iterations: 61036
 cooldown_frac: 0.7

@@ -216,6 +216,7 @@ for step in range(train_steps + 1):
 
         del val_loader
         if use_distributed:
+            val_loss = val_loss.to(device)  # ensure CUDA tensor for NCCL
             dist.all_reduce(val_loss, op=dist.ReduceOp.AVG)
             print0( f"step:{step}/{train_steps} val_loss:{val_loss:.6f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms")
 
@@ -264,7 +265,7 @@ for step in range(train_steps + 1):
     inputs, targets = next(train_loader)
     model(inputs,get_window_size_blocks(step, train_steps), targets).backward()
     opt2futures = {
-        opt: ([dist.all_reduce(p.grad, op=dist.ReduceOp.AVG, async_op=True).get_future() for p in params]
+        opt: ([dist.all_reduce(p.grad, op=dist.ReduceOp.AVG, async_op=True).get_future() for p in params if p.grad is not None]
               if use_distributed else [])
         for opt, params in opt2params.items()
     }
