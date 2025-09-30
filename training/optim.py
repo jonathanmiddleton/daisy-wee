@@ -84,6 +84,9 @@ class Muon(torch.optim.Optimizer):
             for base_i in range(len(params))[::self.world_size]:
                 if base_i + self.rank < len(params):
                     p = params[base_i + self.rank]
+                    # Skip if no gradient for this parameter on this step/rank
+                    if p.grad is None:
+                        continue
                     state = self.state[p]
                     if len(state) == 0:
                         state["mantissa"] = torch.zeros_like(p, dtype=torch.uint16)
