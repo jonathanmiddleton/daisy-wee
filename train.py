@@ -233,7 +233,7 @@ for step in range(train_steps + 1):
             if args.save_checkpoint and improved and val_iter % args.val_snapshot_every == 0:
                 os.makedirs("checkpoints", exist_ok=True)
                 ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-                fname = f"checkpoints/{ts}-step{step:06d}-run{run_id}-best.pt"
+                fname = f"checkpoints/{ts}-step{step:06d}-run{run_id}-{best_val}.pt"
                 _model_to_state = model._orig_mod if hasattr(model, "_orig_mod") else model
                 log = dict(
                     step=step,
