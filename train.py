@@ -30,7 +30,7 @@ class Hyperparameters:
     # Required scenario-specific fields
     train_files: str
     val_files: str
-    train_seq_len: int
+    max_seq_len: int
     val_seq_len: int
     num_iterations: int
     cooldown_frac: float
@@ -110,7 +110,7 @@ print0(json.dumps(asdict(args), indent=2, sort_keys=True))
 
 
 model: nn.Module = GPTCore(vocab_size=args.vocab_size, num_layers=args.num_layers, num_heads=args.num_heads, model_dim=args.model_dim,
-                           max_seq_len=max(args.train_seq_len, args.val_seq_len), head_dim=args.head_dim).cuda()
+                           max_seq_len=max(args.max_seq_len, args.val_seq_len), head_dim=args.head_dim).cuda()
 best_val_from_ckpt = None
 if args.init_checkpoint:
     _obj = torch.load(args.init_checkpoint, map_location=device)
@@ -173,8 +173,8 @@ else:
 ########################################
 
 torch.cuda.reset_peak_memory_stats()
-train_loader = distributed_data_generator(args.train_files, world_size * args.train_seq_len, rank, world_size)
-tokens_per_step = world_size * args.train_seq_len
+train_loader = distributed_data_generator(args.train_files, world_size * args.max_seq_len, rank, world_size)
+tokens_per_step = world_size * args.max_seq_len
 tokens_seen = 0
 last_val_loss = None
 last_val_tokens = 0
@@ -233,7 +233,7 @@ for step in range(train_steps + 1):
             if args.save_checkpoint and improved and val_iter % args.val_snapshot_every == 0:
                 os.makedirs("checkpoints", exist_ok=True)
                 ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-                fname = f"checkpoints/{ts}-step{step:06d}-run{run_id}-{best_val}.pt"
+                fname = f"checkpoints/{ts}-step{step:06d}-run{run_id}-{best_val:.2f}.pt"
                 _model_to_state = model._orig_mod if hasattr(model, "_orig_mod") else model
                 log = dict(
                     step=step,

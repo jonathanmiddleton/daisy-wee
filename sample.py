@@ -7,7 +7,7 @@ from models.gpt_core import GPTCore
 from inference.generate import Generator
 
 VOCAB_SIZE = 50257
-TRAIN_SEQ_LEN = 64*1024
+MAX_SEQ_LEN = 64*1024
 
 # Command line interface
 parser = argparse.ArgumentParser(description="Generate text with a GPT model from a checkpoint.")
@@ -33,7 +33,7 @@ cli = parser.parse_args()
 device = cli.device
 checkpoint = load(cli.checkpoint, map_location=device)
 model: nn.Module = GPTCore(vocab_size=VOCAB_SIZE, num_layers=16, num_heads=8, model_dim=1024,
-                       max_seq_len=TRAIN_SEQ_LEN).to(device)
+                           max_seq_len=MAX_SEQ_LEN).to(device)
 state_dict = checkpoint['model']
 
 unwanted_prefix = '_orig_mod.'
