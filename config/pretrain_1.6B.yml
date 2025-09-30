@@ -16,7 +16,3 @@ num_layers: 38
 head_dim: 128             # documented here as static
 num_heads: 13
 model_dim: 1664           # num_heads * head_dim
-
-
-
-

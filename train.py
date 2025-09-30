@@ -133,16 +133,14 @@ hidden_matrix_params = sorted((p for p in model.blocks.parameters() if p.ndim >=
                               reverse=True)
 embed_params = [*model.embed.parameters(), *model.value_embeds.parameters()]
 scalar_params = [model.scalars]
-# noinspection PyTypeChecker
-head_params: list[nn.Parameter] = [model.lm_head_w]
 # sanity check
-params_collections = [hidden_matrix_params, embed_params, scalar_params, head_params]
+params_collections = [hidden_matrix_params, embed_params, scalar_params]
 optimized_parameters_set = {p for params in params_collections for p in params}
 assert optimized_parameters_set == {*model.parameters()}
 assert len(optimized_parameters_set) == sum(len(lst) for lst in params_collections)
 
 # init the optimizer(s)
-adam_param_groups = [dict(params=head_params, lr=1 / 320), dict(params=embed_params, lr=0.3),
+adam_param_groups = [dict(params=embed_params, lr=0.3),
                      dict(params=scalar_params, lr=0.015)]
 # small adam epsilon by @YouJiacheng. this is an alternate method of fixing the world_size dependence
 # discovered by @fernbear.bsky.social https://x.com/hi_tysam/status/1879692937589875094
