@@ -1,3 +1,5 @@
+import os
+
 import torch
 from torch import nn, Tensor
 from torch.nn.attention.flex_attention import BlockMask, flex_attention
@@ -10,7 +12,7 @@ def _apply_rope(x_BTHD , cos, sin):
     y2 = x1 * (-sin) + x2 * cos
     return torch.cat((y1, y2), dim=3).type_as(x_BTHD)
 
-@torch.compile
+# @torch._dynamo.disable()
 def _flex_call(q, k, v, block_mask, scale):
     return flex_attention(q, k, v, block_mask=block_mask, scale=scale)
 
@@ -56,7 +58,8 @@ class CausalSelfAttention(nn.Module):
         # merged QKV weights: suggested by many, implemented by @fernbear.bsky.social, and further improved by @YouJiacheng
         # https://x.com/hi_tysam/status/1879699187107033311
         self.qkvo_w = nn.Parameter(init_linear(torch.empty(4, hdim, dim)).bfloat16())
-        self.qkvo_w.detach()[3].zero_() # out zero init suggested by @Grad62304977
+        if os.getenv("DISABLE_O_ZERO_INIT", "") != "1": # 1 for unittests
+            self.qkvo_w.detach()[3].zero_() # zero-out init suggested by @Grad62304977
         self.rotary = Rotary(head_dim, max_seq_len)
         # scale the attention logits by given constant, instead of the default head_dim**-0.5, by @leloykun
         # inspired by learnable scalars used by @brendanh0gan https://x.com/hi_tysam/status/1879693583898591283

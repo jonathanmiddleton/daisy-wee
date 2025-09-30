@@ -117,7 +117,7 @@ class TestKVCache(unittest.TestCase):
                 got = snap(layer)
                 n = min(t + 1, W)
                 expect = list(range(max(0, t - n + 1), t + 1))
-                self.assertEqual(got, expect) # f"t={t}, layer={layer}, got {got}, expect {expect}"
+                self.assertEqual(got, expect)
             cache.advance()
 
 if __name__ == "__main__":
