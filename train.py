@@ -20,7 +20,7 @@ torch.empty(1, device="cuda", requires_grad=True).backward()  # prevents a bug o
 from torch import nn
 import torch.distributed as dist
 
-torch._inductor.config.coordinate_descent_tuning = True
+#torch._inductor.config.coordinate_descent_tuning = True
 torch._dynamo.config.compiled_autograd = True
 torch._dynamo.config.error_on_nested_fx_trace = False # temp workaround/diagnostic for dynamo error
 
@@ -206,6 +206,7 @@ for step in range(train_steps + 1):
                 inputs, targets = next(val_loader)
                 val_loss += model(inputs, get_window_size_blocks(step, train_steps), targets)
         val_loss /= val_steps
+        del val_loader
         tokens_since_last = tokens_seen - last_val_tokens
         if last_val_loss is not None and tokens_since_last > 0:
             dpt = (val_loss.item() - last_val_loss) / tokens_since_last
@@ -214,11 +215,9 @@ for step in range(train_steps + 1):
         last_val_loss = float(val_loss.item())
         last_val_tokens = tokens_seen
 
-        del val_loader
         if use_distributed:
-            val_loss = val_loss.to(device)  # ensure CUDA tensor for NCCL
             dist.all_reduce(val_loss, op=dist.ReduceOp.AVG)
-            print0( f"step:{step}/{train_steps} val_loss:{val_loss:.6f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms")
+        print0( f"step:{step}/{train_steps} val_loss:{val_loss:.6f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms")
 
         cur_val = float(val_loss.item())
 

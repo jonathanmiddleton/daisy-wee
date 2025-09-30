@@ -12,7 +12,7 @@ def _apply_rope(x_BTHD , cos, sin):
     y2 = x1 * (-sin) + x2 * cos
     return torch.cat((y1, y2), dim=3).type_as(x_BTHD)
 
-# @torch._dynamo.disable()
+#@torch.compile
 def _flex_call(q, k, v, block_mask, scale):
     return flex_attention(q, k, v, block_mask=block_mask, scale=scale)
 
