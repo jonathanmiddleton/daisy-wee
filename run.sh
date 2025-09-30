@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export TORCH_COMPILE_OFF=0
+
 # Default values
 NPROC=8
 
