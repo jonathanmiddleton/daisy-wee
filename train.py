@@ -84,6 +84,7 @@ run_id = int(os.environ.get("RUN_ID", 0))
 rank = int(os.environ.get("RANK", "0"))
 world_size = int(os.environ.get("WORLD_SIZE", "1"))
 local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+TORCH_COMPILE_OFF = os.environ.get("TORCH_COMPILE_OFF", "0") == "1"
 use_distributed = world_size > 1
 if use_distributed and world_size != 8:
     print("[warn] This script is designed to run with world_size=8.")
@@ -154,9 +155,13 @@ for opt in optimizers:
     for group in opt.param_groups:
         group["initial_lr"] = group["lr"]
 
-print0("Compiling model...")
-model: nn.Module = torch.compile(model, dynamic=False)
-print0("Finished compiling model.")
+
+if not TORCH_COMPILE_OFF:
+    print0("Compiling model...")
+    model: nn.Module = torch.compile(model, dynamic=False)
+    print0("Finished compiling model.")
+else:
+    print0(f"Compiling disabled: TORCH_COMPILE_OFF={TORCH_COMPILE_OFF}")
 
 ########################################
 #        Training and validation       #
