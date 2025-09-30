@@ -1,11 +1,11 @@
 # Pretraining checkpoint path
-init_checkpoint: "logs/run_id/state_step_100000.pt"
+init_checkpoint: "checkpoints/state_step_100000.pt"
 # Instruct SFT training configuration
 train_files: "data/instruct_mix/instruct_train_*.bin"
 val_files: "data/instruct_mix/instruct_val_*.bin"
 train_seq_len: 65536      # 64 * 1024
 val_seq_len: 262144       # 64 * 1024
-num_iterations: 400
+num_iterations: 50        # assumes 8x GPUs, 400 for 1x GPU
 cooldown_frac: 0.9
 
 # Common settings
