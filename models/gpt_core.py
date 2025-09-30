@@ -9,11 +9,11 @@ def next_multiple_of_n(v: float | int, *, n: int):
     return next(x for x in range(n, int(v) + 1 + n, n) if x >= v)
 
 class GPTCore(nn.Module):
-    def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int):
+    def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim=128):
         super().__init__()
         self.embed = nn.Embedding(vocab_size, model_dim)
         self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(3)])
-        self.blocks = nn.ModuleList([Block(model_dim, num_heads, max_seq_len, i) for i in range(num_layers)])
+        self.blocks = nn.ModuleList([Block(model_dim, num_heads, max_seq_len, i, head_dim) for i in range(num_layers)])
         self.lm_head_w = nn.Parameter(torch.zeros(next_multiple_of_n(vocab_size, n=128), model_dim))
         assert num_layers % 2 == 0
         self.scalars = nn.Parameter(torch.cat([
@@ -23,8 +23,9 @@ class GPTCore(nn.Module):
         ]))
 
     def create_blockmasks(self, input_seq: Tensor, sliding_window_num_blocks: Tensor):
-        n = len(input_seq)
-        BLOCK_SIZE = 128 if n % 128 == 0 else next(bs for bs in (64, 32, 16, 8, 4, 2, 1) if n % bs == 0)
+        #n = len(input_seq)
+        BLOCK_SIZE = 128 #if n % 128 == 0 else next(bs for bs in (64, 32, 16, 8, 4, 2, 1) if n % bs == 0)
+        assert(len(input_seq) % BLOCK_SIZE == 0)
         device = input_seq.device
         docs = (input_seq == 50256).cumsum(0)
 
@@ -72,8 +73,9 @@ class GPTCore(nn.Module):
         ve = [ve[0], ve[1], ve[2]] + [None] * (L - 6) + [ve[0], ve[1], ve[2]]
 
         long_bm, short_bm = self.create_blockmasks(input_seq, sliding_window_num_blocks)
+        # TODO: hoursglass pattern
         cycle = [long_bm] + [short_bm] * 3
-        block_masks = (cycle * ((L + 3) // 4))[:L]
+        block_masks = (cycle * ((L + 3) // 4))[:L-1] + [long_bm]
 
         x = x0 = norm(self.embed(input_seq)[None])
 

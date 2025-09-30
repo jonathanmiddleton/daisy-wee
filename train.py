@@ -43,6 +43,7 @@ class Hyperparameters:
     num_layers: int = None
     num_heads: int = None
     model_dim: int = None
+    head_dim: int = None
 
 def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
     """
@@ -107,7 +108,7 @@ def print0(st):
 
 
 model: nn.Module = GPTCore(vocab_size=args.vocab_size, num_layers=args.num_layers, num_heads=args.num_heads, model_dim=args.model_dim,
-                           max_seq_len=max(args.train_seq_len, args.val_seq_len)).cuda()
+                           max_seq_len=max(args.train_seq_len, args.val_seq_len), head_dim=head_dim).cuda()
 best_val_from_ckpt = None
 if args.init_checkpoint:
     _obj = torch.load(args.init_checkpoint, map_location=device)
