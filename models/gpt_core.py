@@ -1,11 +1,9 @@
 import torch
-from torch import  nn, Tensor
+from torch import nn, Tensor
 import torch.nn.functional as F
 from models.block import Block
 from models.functional import norm
 from torch.nn.attention.flex_attention import BlockMask
-
-
 
 def next_multiple_of_n(v: float | int, *, n: int):
     return next(x for x in range(n, int(v) + 1 + n, n) if x >= v)
@@ -14,27 +12,22 @@ class GPTCore(nn.Module):
     def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int):
         super().__init__()
         self.embed = nn.Embedding(vocab_size, model_dim)
-        # token value embeddings by @KoszarskyB - inspired by @Grad62304977's value residual implementation following https://arxiv.org/abs/2410.17897
-        # value embedding code simplification inspired by @ragulpr https://github.com/KellerJordan/modded-nanogpt/pull/78
         self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(3)])
         self.blocks = nn.ModuleList([Block(model_dim, num_heads, max_seq_len, i) for i in range(num_layers)])
-        # there are only 50257 unique GPT-2 tokens; we extend to nearest multiple of 128 for efficiency.
-        # suggested to me by @Grad62304977. this originates from Karpathy's experiments.
         self.lm_head_w = nn.Parameter(torch.zeros(next_multiple_of_n(vocab_size, n=128), model_dim))
-        # Add learnable skip connection weights for decoder layers
         assert num_layers % 2 == 0
         self.scalars = nn.Parameter(torch.cat([
-            torch.ones(num_layers), # skip_weights
-            *[torch.tensor([1.0, 0.0]) for _ in range(num_layers)], # block lambdas
-            *[torch.tensor([0.5, 0.5]) for _ in range(num_layers)], # SA lambdas
+            torch.ones(num_layers),
+            *[torch.tensor([1.0, 0.0]) for _ in range(num_layers)],
+            *[torch.tensor([0.5, 0.5]) for _ in range(num_layers)],
         ]))
 
     def create_blockmasks(self, input_seq: Tensor, sliding_window_num_blocks: Tensor):
-        BLOCK_SIZE = 128
+        n = len(input_seq)
+        BLOCK_SIZE = 128 if n % 128 == 0 else next(bs for bs in (64, 32, 16, 8, 4, 2, 1) if n % bs == 0)
         device = input_seq.device
         docs = (input_seq == 50256).cumsum(0)
 
-        # noinspection PyUnusedLocal
         def document_causal(b, h, q_idx, kv_idx):
             causal_mask = q_idx >= kv_idx
             document_mask = docs[q_idx] == docs[kv_idx]
@@ -45,7 +38,6 @@ class GPTCore(nn.Module):
             indices = dense_blockmask.argsort(dim=-1, descending=False, stable=True).flip(-1).to(torch.int32)
             return num_blocks[None, None].contiguous(), indices[None, None].contiguous()
 
-        # manual block mask creation by @YouJiacheng
         assert len(input_seq) % BLOCK_SIZE == 0
         NUM_BLOCKS = len(input_seq) // BLOCK_SIZE
         block_idx = torch.arange(NUM_BLOCKS, dtype=torch.int32, device=device)
@@ -70,41 +62,47 @@ class GPTCore(nn.Module):
                 mask_mod=document_causal,
             )
 
-        # Long-short SWA block masks by @leloykun & @YouJiacheng, adapated from suggestion by @Grad62304977, following Gemma 2 paper
         return build_bm(sliding_window_num_blocks), build_bm(sliding_window_num_blocks // 2)
 
     def forward(self, input_seq: Tensor, sliding_window_num_blocks: Tensor, target_seq: Tensor = None):
         assert input_seq.ndim == 1
+        L = len(self.blocks)
 
         ve = [value_embed(input_seq) for value_embed in self.value_embeds]
-        # 012 ... 012 structure on token value embeddings by @YouJiacheng, improved on @leloykun's U-net structure
-        ve = [ve[0], ve[1], ve[2]] + [None] * (len(self.blocks) - 6) + [ve[0], ve[1], ve[2]]
-        assert len(ve) == len(self.blocks)
+        ve = [ve[0], ve[1], ve[2]] + [None] * (L - 6) + [ve[0], ve[1], ve[2]]
 
         long_bm, short_bm = self.create_blockmasks(input_seq, sliding_window_num_blocks)
-        block_masks = [long_bm, short_bm, short_bm, short_bm, long_bm, short_bm, short_bm, short_bm, short_bm, short_bm, short_bm, long_bm, short_bm, short_bm, short_bm, long_bm]
-        assert len(block_masks) == len(self.blocks)
+        cycle = [long_bm] + [short_bm] * 3
+        block_masks = (cycle * ((L + 3) // 4))[:L]
 
-        x = x0 = norm(self.embed(input_seq)[None]) # use of norm here by @Grad62304977
+        x = x0 = norm(self.embed(input_seq)[None])
+
+        stride = max(1, L // 4)
+        skip_map = {}
+        for m in range(3):
+            i = L - 3 + m
+            j = i - stride * (m + 1)
+            if 0 <= j < i < L:
+                skip_map[i] = j
+
+        skip_weights = self.scalars[:L]
+        lambdas = self.scalars[1 * L:3 * L].view(-1, 2)
+        sa_lambdas = self.scalars[3 * L:5 * L].view(-1, 2)
 
         skip_connections = []
-        skip_map = {
-            9: 6,
-            10: 4,
-            11: 2,
-        }
-        skip_weights = self.scalars[:len(self.blocks)]
-        lambdas = self.scalars[1 * len(self.blocks): 3 * len(self.blocks)].view(-1, 2)
-        sa_lambdas = self.scalars[3 * len(self.blocks): 5 * len(self.blocks)].view(-1, 2)
-        for i in range(len(self.blocks)):
+        for i in range(L):
             if i in skip_map:
                 x = x + skip_weights[skip_map[i]] * skip_connections[skip_map[i]]
-            x = self.blocks[i](x, ve[i], x0, block_masks[i], lambdas[i], sa_lambdas[i])
+            if torch.is_grad_enabled():
+                x = torch.utils.checkpoint.checkpoint(
+                    lambda _x, lam, sa_lam: self.blocks[i](_x, ve[i], x0, block_masks[i], lam, sa_lam),
+                    x, lambdas[i], sa_lambdas[i], use_reentrant=False
+                )
+            else:
+                x = self.blocks[i](x, ve[i], x0, block_masks[i], lambdas[i], sa_lambdas[i])
             skip_connections.append(x)
 
         x = norm(x)
-        # for parity testing via tests/test_generate_step_equals_forward.py
-        # return F.linear(x.flatten(end_dim=1), self.lm_head_w.bfloat16()).float()
         if self.training:
             logits: Tensor = F.linear(x.flatten(end_dim=1), self.lm_head_w.bfloat16()).float()
             loss = F.cross_entropy(15 * logits * torch.rsqrt(logits.square() + 225), target_seq)
@@ -115,8 +113,6 @@ class GPTCore(nn.Module):
             logits: Tensor = F.linear(x.flatten(end_dim=1).chunk(4)[i], self.lm_head_w.bfloat16()).float()
             loss += F.cross_entropy(15 * logits * torch.rsqrt(logits.square() + 225), target_seq.chunk(4)[i]) / 4
         return loss
-
-
 
     @torch.no_grad()
     def step(self, token_id: Tensor, k_ctxs, v_ctxs, pos: int, window: int):
@@ -135,7 +131,15 @@ class GPTCore(nn.Module):
         ve2 = self.value_embeds[2](token_id).view(B, 1, h, d)
         L = len(self.blocks)
         ve = [ve0, ve1, ve2] + [None] * (L - 6) + [ve0, ve1, ve2]
-        skip_map = {9: 6, 10: 4, 11: 2}
+
+        stride = max(1, L // 4)
+        skip_map = {}
+        for m in range(3):
+            i = L - 3 + m
+            j = i - stride * (m + 1)
+            if 0 <= j < i < L:
+                skip_map[i] = j
+
         scalars = self.scalars
         skip_weights = scalars[:L]
         lambdas = scalars[1 * L:3 * L].view(-1, 2)
