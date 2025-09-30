@@ -2,6 +2,7 @@ import dataclasses
 import os
 import sys
 import time
+import json
 from dataclasses import dataclass, fields as dataclass_fields
 from datetime import datetime, timezone
 from pathlib import Path
@@ -101,6 +102,7 @@ def print0(st):
     if master_process:
         print(st)
 
+print0(json.dumps(args, indent=2, sort_keys=True))
 
 ########################################
 #    Construct model and optimizer     #
@@ -228,19 +230,20 @@ for step in range(train_steps + 1):
             if improved:
                 best_val = cur_val
 
-            if (
-                args.save_checkpoint
-                and args.val_snapshot_every > 0
-                and (val_iter % args.val_snapshot_every == 0)
-                and improved
-            ):
+            if args.save_checkpoint and improved and val_iter % args.val_snapshot_every == 0:
                 os.makedirs("checkpoints", exist_ok=True)
                 ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
                 fname = f"checkpoints/{ts}-step{step:06d}-run{run_id}-best.pt"
-                log = dict(step=step, model=model._orig_mod.state_dict(),
-                                                optimizers = [opt.state_dict() for opt in optimizers],
-                           best_val=best_val)
+                _model_to_state = model._orig_mod if hasattr(model, "_orig_mod") else model
+                log = dict(
+                    step=step,
+                    model=_model_to_state.state_dict(),
+                    optimizers=[opt.state_dict() for opt in optimizers],
+                    best_val=best_val,
+                )
                 torch.save(log, fname)
+                print0(f"Saved checkpoint to {fname}")
+
 
         model.train()
         # start the clock again
@@ -250,7 +253,8 @@ for step in range(train_steps + 1):
 
     if last_step:
         if master_process and args.save_checkpoint:
-            log = dict(step=step, model=model._orig_mod.state_dict(),
+            _model_to_state = model._orig_mod if hasattr(model, "_orig_mod") else model
+            log = dict(step=step, model=_model_to_state.state_dict(),
                        optimizers=[opt.state_dict() for opt in optimizers],
                        best_val=best_val)
             os.makedirs(f"checkpoints", exist_ok=True)
