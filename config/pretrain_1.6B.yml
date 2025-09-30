@@ -1,7 +1,7 @@
 # Pretraining configuration
 train_files: "data/fineweb/fineweb_train_*.bin"
 val_files: "data/fineweb/fineweb_val_*.bin"
-val_seq_len: 65536        # N * 1024
+val_seq_len: 131072        # N * 1024
 num_iterations: 61036
 cooldown_frac: 0.7
 # Common settings
@@ -10,7 +10,7 @@ val_loss_every: 500
 val_snapshot_every: 1     # in terms of val iterations, not steps
 save_checkpoint: true
 # Model settings
-max_seq_len: 65536      # N * 1024, max_sequence_length
+max_seq_len: 65536        # N * 1024, max_sequence_length
 vocab_size: 50257
 num_layers: 38
 head_dim: 128             # documented here as static
