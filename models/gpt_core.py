@@ -93,12 +93,12 @@ class GPTCore(nn.Module):
         for i in range(L):
             if i in skip_map:
                 x = x + skip_weights[skip_map[i]] * skip_connections[skip_map[i]]
-            if torch.is_grad_enabled():
-                x = torch.utils.checkpoint.checkpoint(
-                    lambda _x, lam, sa_lam: self.blocks[i](_x, ve[i], x0, block_masks[i], lam, sa_lam),
-                    x, lambdas[i], sa_lambdas[i], use_reentrant=False
-                )
-            else:
+            # if torch.is_grad_enabled():
+            #     x = torch.utils.checkpoint.checkpoint(
+            #         lambda _x, lam, sa_lam: self.blocks[i](_x, ve[i], x0, block_masks[i], lam, sa_lam),
+            #         x, lambdas[i], sa_lambdas[i], use_reentrant=False
+            #     )
+            # else:
                 x = self.blocks[i](x, ve[i], x0, block_masks[i], lambdas[i], sa_lambdas[i])
             skip_connections.append(x)
 
