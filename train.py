@@ -108,7 +108,7 @@ def print0(st):
 
 model: nn.Module = GPTCore(vocab_size=args.vocab_size, num_layers=args.num_layers, num_heads=args.num_heads, model_dim=args.model_dim,
                            max_seq_len=max(args.train_seq_len, args.val_seq_len)).cuda()
-
+best_val_from_ckpt = None
 if args.init_checkpoint:
     _obj = torch.load(args.init_checkpoint, map_location=device)
     _sd = _obj.get('model', _obj) if isinstance(_obj, dict) else _obj
@@ -116,6 +116,8 @@ if args.init_checkpoint:
         _sd = {k.replace('_orig_mod.', '', 1): v for k, v in _sd.items()}
     _missing, _unexpected = model.load_state_dict(_sd, strict=False)
     print0(f"init_checkpoint:{args.init_checkpoint} missing:{len(_missing)} unexpected:{len(_unexpected)}")
+    if isinstance(_obj, dict) and "best_val" in _obj:
+        best_val_from_ckpt = float(_obj["best_val"])
 
 for m in model.modules():
     if isinstance(m, nn.Embedding):
@@ -175,8 +177,8 @@ last_val_loss = None
 last_val_tokens = 0
 ema_dloss_per_token = None
 training_time_ms = 0
+best_val = float("inf") if best_val_from_ckpt is None else best_val_from_ckpt
 val_iter = 0
-best_val = float("inf")
 # start the clock
 if use_distributed:
     dist.barrier()
@@ -235,7 +237,8 @@ for step in range(train_steps + 1):
                 ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
                 fname = f"checkpoints/{ts}-step{step:06d}-run{run_id}-best.pt"
                 log = dict(step=step, model=model._orig_mod.state_dict(),
-                                                optimizers = [opt.state_dict() for opt in optimizers])
+                                                optimizers = [opt.state_dict() for opt in optimizers],
+                           best_val=best_val)
                 torch.save(log, fname)
 
         model.train()
@@ -247,7 +250,8 @@ for step in range(train_steps + 1):
     if last_step:
         if master_process and args.save_checkpoint:
             log = dict(step=step, model=model._orig_mod.state_dict(),
-                       optimizers=[opt.state_dict() for opt in optimizers])
+                       optimizers=[opt.state_dict() for opt in optimizers],
+                       best_val=best_val)
             os.makedirs(f"checkpoints", exist_ok=True)
             ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
             fname = f"checkpoints/{ts}-step{step:06d}-run{run_id}.pt"
