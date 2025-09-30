@@ -3,11 +3,11 @@ import os
 import sys
 import time
 import json
-from dataclasses import dataclass, fields as dataclass_fields
 from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
+from dataclasses import dataclass, fields as dataclass_fields, asdict
 
 from models.gpt_core import GPTCore
 from training.data_gen import distributed_data_generator
@@ -102,7 +102,7 @@ def print0(st):
     if master_process:
         print(st)
 
-print0(json.dumps(args, indent=2, sort_keys=True))
+print0(json.dumps(asdict(args), indent=2, sort_keys=True))
 
 ########################################
 #    Construct model and optimizer     #
