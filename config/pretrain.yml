@@ -11,3 +11,6 @@ vocab_size: 50257
 val_tokens: 10485760
 val_loss_every: 200
 save_checkpoint: true
+num_layers: 38
+num_heads: 25
+model_dim: 1600

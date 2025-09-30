@@ -53,17 +53,17 @@ class CausalSelfAttention(nn.Module):
     def __init__(self, dim: int, num_heads: int, max_seq_len: int, head_dim=128):
         super().__init__()
         self.num_heads = num_heads
-        self.head_dim = head_dim
-        hdim = num_heads * head_dim
+        self.head_dim = head_dim or (dim // num_heads)
+        hdim = num_heads * self.head_dim
         # merged QKV weights: suggested by many, implemented by @fernbear.bsky.social, and further improved by @YouJiacheng
         # https://x.com/hi_tysam/status/1879699187107033311
         self.qkvo_w = nn.Parameter(init_linear(torch.empty(4, hdim, dim)).bfloat16())
         if os.getenv("DISABLE_O_ZERO_INIT", "") != "1": # 1 for unittests
             self.qkvo_w.detach()[3].zero_() # zero-out init suggested by @Grad62304977
-        self.rotary = Rotary(head_dim, max_seq_len)
+        self.rotary = Rotary(self.head_dim, max_seq_len)
         # scale the attention logits by given constant, instead of the default head_dim**-0.5, by @leloykun
         # inspired by learnable scalars used by @brendanh0gan https://x.com/hi_tysam/status/1879693583898591283
-        self.attn_scale = 0.12
+        self.attn_scale = 0.12 * (128 / self.head_dim) ** 0.5
 
     def forward(self, x: Tensor, ve: Tensor | None, block_mask: BlockMask, lambdas: Tensor):
         B, T = x.size(0), x.size(1) # batch size, sequence length

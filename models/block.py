@@ -8,8 +8,8 @@ from torch.nn.attention.flex_attention import BlockMask
 class Block(nn.Module):
     def __init__(self, dim: int, num_heads: int, max_seq_len: int, layer_idx: int):
         super().__init__()
-        # skip attention of blocks.7 (the 8th layer) by @YouJiacheng
-        self.attn = CausalSelfAttention(dim, num_heads, max_seq_len) if layer_idx != 7 else None #TODO: remove magic 7
+        # skip attention for layers mod 8
+        self.attn = CausalSelfAttention(dim, num_heads, max_seq_len) if (layer_idx + 1) % 8 != 0 else None
         self.mlp = MLP(dim)
 
     def forward(self, x: Tensor, ve: Tensor | None, x0: Tensor, block_mask: BlockMask, lambdas: Tensor, sa_lambdas: Tensor):

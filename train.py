@@ -39,6 +39,9 @@ class Hyperparameters:
     val_loss_every: int = 125  # num steps between validation loss calculations
     save_checkpoint: bool = True
     init_checkpoint: str | None = None
+    num_layers: int = None
+    num_heads: int = None
+    model_dim: int = None
 
 def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
     """
@@ -101,7 +104,7 @@ def print0(st):
 ########################################
 
 
-model: nn.Module = GPTCore(vocab_size=args.vocab_size, num_layers=16, num_heads=8, model_dim=1024,
+model: nn.Module = GPTCore(vocab_size=args.vocab_size, num_layers=args.num_layers, num_heads=args.num_heads, model_dim=args.model_dim,
                            max_seq_len=max(args.train_seq_len, args.val_seq_len)).cuda()
 
 if args.init_checkpoint:
