@@ -1,9 +1,9 @@
 # Pretraining configuration
-train_files: "/gpt/data/fineweb/fineweb_train_*.bin"
-val_files: "/gpt/data/fineweb/fineweb_val_*.bin"
+train_files: "data/fineweb/fineweb_train_*.bin"
+val_files: "data/fineweb/fineweb_val_*.bin"
 train_seq_len: 65536      # 64 * 1024
 val_seq_len: 262144       # 4 * 64 * 1024
-num_iterations: 5960
+num_iterations: 9400
 cooldown_frac: 0.7
 
 # Common settings
