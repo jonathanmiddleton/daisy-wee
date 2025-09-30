@@ -37,6 +37,7 @@ class Hyperparameters:
     vocab_size: int = 50257
     val_tokens: int = 10485760  # how many tokens of validation data
     val_loss_every: int = 125  # num steps between validation loss calculations
+    val_snapshot_every: int = 1000
     save_checkpoint: bool = True
     init_checkpoint: str | None = None
     num_layers: int = None
@@ -169,6 +170,8 @@ last_val_loss = None
 last_val_tokens = 0
 ema_dloss_per_token = None
 training_time_ms = 0
+val_iter = 0
+best_val = float("inf")
 # start the clock
 if use_distributed:
     dist.barrier()
@@ -206,7 +209,29 @@ for step in range(train_steps + 1):
         del val_loader
         if use_distributed:
             dist.all_reduce(val_loss, op=dist.ReduceOp.AVG)
-            print0(f"step:{step}/{train_steps} val_loss:{val_loss:.6f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms")
+            print0( f"step:{step}/{train_steps} val_loss:{val_loss:.6f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms")
+
+        cur_val = float(val_loss.item())
+
+        if master_process:
+            val_iter += 1
+            improved = cur_val < best_val
+
+            if improved:
+                best_val = cur_val
+
+            if (
+                args.save_checkpoint
+                and args.val_snapshot_every > 0
+                and (val_iter % args.val_snapshot_every == 0)
+                and improved
+            ):
+                os.makedirs("checkpoints", exist_ok=True)
+                ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+                fname = f"checkpoints/{ts}-step{step:06d}-run{run_id}-best.pt"
+                log = dict(step=step, model=model._orig_mod.state_dict(),
+                                                optimizers = [opt.state_dict() for opt in optimizers])
+                torch.save(log, fname)
 
         model.train()
         # start the clock again

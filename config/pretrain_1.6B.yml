@@ -14,3 +14,4 @@ save_checkpoint: true
 num_layers: 38
 num_heads: 25
 model_dim: 1600
+val_snapshot_every: 1000
