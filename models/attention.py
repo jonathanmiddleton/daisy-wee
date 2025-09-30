@@ -50,10 +50,10 @@ class Rotary(nn.Module):
 
 
 class CausalSelfAttention(nn.Module):
-    def __init__(self, dim: int, num_heads: int, max_seq_len: int, head_dim=128):
+    def __init__(self, dim: int, num_heads: int, max_seq_len: int, head_dim: int | None = None):
         super().__init__()
         self.num_heads = num_heads
-        self.head_dim = head_dim or (dim // num_heads)
+        self.head_dim = (dim // num_heads) if head_dim is None else head_dim
         hdim = num_heads * self.head_dim
         # merged QKV weights: suggested by many, implemented by @fernbear.bsky.social, and further improved by @YouJiacheng
         # https://x.com/hi_tysam/status/1879699187107033311
