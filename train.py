@@ -155,7 +155,7 @@ for opt in optimizers:
         group["initial_lr"] = group["lr"]
 
 print0("Compiling model...")
-model: nn.Module = torch.compile(model, dynamic=True)
+model: nn.Module = torch.compile(model, dynamic=False)
 print0("Finished compiling model.")
 
 ########################################
