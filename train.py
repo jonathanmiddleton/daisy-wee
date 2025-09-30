@@ -87,8 +87,8 @@ world_size = int(os.environ.get("WORLD_SIZE", "1"))
 local_rank = int(os.environ.get("LOCAL_RANK", "0"))
 TORCH_COMPILE_OFF = os.environ.get("TORCH_COMPILE_OFF", "0") == "1"
 use_distributed = world_size > 1
-if use_distributed and world_size != 8:
-    print("[warn] This script is designed to run with world_size=8.")
+# if use_distributed and world_size != 8:
+#     print("[warn] This script is designed to run with world_size=8.")
 assert torch.cuda.is_available()
 device = torch.device("cuda", local_rank)
 torch.cuda.set_device(device)

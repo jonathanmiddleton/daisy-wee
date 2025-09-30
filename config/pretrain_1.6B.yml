@@ -2,8 +2,8 @@
 train_files: "data/fineweb/fineweb_train_*.bin"
 val_files: "data/fineweb/fineweb_val_*.bin"
 # max sequence length is max of (train,val)
-train_seq_len: 10240      # 10 * 1024
-val_seq_len: 10240        # 10 * 1024
+train_seq_len: 65536      # N * 1024
+val_seq_len: 65536        # N * 1024
 #
 num_iterations: 61036
 cooldown_frac: 0.7
@@ -12,9 +12,9 @@ cooldown_frac: 0.7
 vocab_size: 50257
 val_tokens: 10485760
 val_loss_every: 200
+val_snapshot_every: 1000
 save_checkpoint: true
 num_layers: 38
+head_dim: 128             # documented here as static
 num_heads: 13
-model_dim: 1664
-head_dim: 128
-val_snapshot_every: 1000
+model_dim: 1664           # num_heads * head_dim
