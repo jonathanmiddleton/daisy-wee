@@ -157,15 +157,15 @@ MoE will be introduced incrementally and benchmarked against the dense baseline 
 
 **Example Commands**
 - Inspect training options:
-  - `python train_350b.py --help`
+  - `python train.py --help`
 - Start a pretraining run:
-  - `python -u train_350b.py config/pretrain.yml`
+  - `python -u train.py config/pretrain.yml`
 - Generate samples after training:
   - `python sample.py`
 - Build SFT data shards:
   - `python build_sft_shards.py`
 - Start an SFT run:
-  - `python -u train_350b.py config/instruct_sft.yml`
+  - `python -u train.py config/instruct_sft.yml`
 
 ---
 
