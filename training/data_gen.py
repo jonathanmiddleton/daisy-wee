@@ -1,3 +1,5 @@
+import itertools
+
 import torch
 from pathlib import Path
 
@@ -22,11 +24,14 @@ def distributed_data_generator(filename_pattern: str, batch_size: int, rank : in
         files = sorted(Path.cwd().glob(filename_pattern))
     assert batch_size % world_size == 0
     local_batch_size = batch_size // world_size
-    file_iter = iter(files) # use itertools.cycle(files) instead if you want to do multi-epoch training
-    tokens, pos = _load_data_shard(next(file_iter)), 0
+    file_iter = itertools.cycle(files)
+    current_file = next(file_iter)
+    tokens, pos = _load_data_shard(current_file), 0
     while True:
         if pos + batch_size + 1 >= len(tokens):
-            tokens, pos = _load_data_shard(next(file_iter)), 0
+            print(f"Current file: {current_file}")
+            current_file = next(file_iter)
+            tokens, pos = _load_data_shard(current_file), 0
         buf = tokens[pos + rank * local_batch_size:][:local_batch_size + 1]
         inputs = buf[:-1].to(device="cuda", dtype=torch.int32, non_blocking=True) # no sync on host side;
         targets = buf[1:].to(device="cuda", dtype=torch.int64, non_blocking=True) # H2D in another stream isn't helpful.

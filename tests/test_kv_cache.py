@@ -102,5 +102,23 @@ class TestKVCache(unittest.TestCase):
         self.assertEqual(v.shape, (B, 0, H, D))
 
 
+    def test_kvcache_view(self, W=4, steps=6, L=2, B=1, H=3, D=5, device="cpu", dtype=torch.bfloat16):
+        cache = KVCache(L=L, B=B, H=H, W=W, D=D, device=device, dtype=dtype)
+        def snap(layer):
+            k_ctx, _ = cache.view(layer)            # (B, T, H, D)
+            return k_ctx[0, :, 0, 0].to(torch.int64).tolist()
+
+        for t in range(steps):
+            k_new = torch.full((B, H, 1, D), float(t), device=device, dtype=dtype)
+            v_new = torch.full((B, H, 1, D), float(t), device=device, dtype=dtype)
+            for layer in range(L):
+                cache.write(layer, k_new, v_new)
+            for layer in range(L):
+                got = snap(layer)
+                n = min(t + 1, W)
+                expect = list(range(max(0, t - n + 1), t + 1))
+                self.assertEqual(got, expect) # f"t={t}, layer={layer}, got {got}, expect {expect}"
+            cache.advance()
+
 if __name__ == "__main__":
     unittest.main()

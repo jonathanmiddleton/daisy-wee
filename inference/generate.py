@@ -32,6 +32,7 @@ class Generator:
         self.eos_token_id = eos_token_id
         self.history = torch.empty(0, dtype=torch.long, device=self.device)
         self.window = window
+        self.vocab_size = self.model.embed.num_embeddings
 
     @torch.no_grad()
     def reset(self):
@@ -54,6 +55,7 @@ class Generator:
                 k_ctxs.append(kc); v_ctxs.append(vc)
             token = torch.tensor(tok, device=self.device, dtype=torch.long)
             logits, k_new, v_new = self.model.step(token, k_ctxs, v_ctxs, self.cache.t, self.window)
+            logits = logits[..., :self.vocab_size]
             for i in range(len(self.model.blocks)):
                 if k_new[i] is not None:
                     self.cache.write(i, k_new[i], v_new[i])
@@ -69,6 +71,7 @@ class Generator:
             k_ctxs.append(kc); v_ctxs.append(vc)
         token = torch.tensor(token_id, device=self.device, dtype=torch.long)
         logits, k_new, v_new = self.model.step(token, k_ctxs, v_ctxs, self.cache.t, self.window)
+        logits = logits[..., :self.vocab_size]
         for i in range(len(self.model.blocks)):
             if k_new[i] is not None:
                 self.cache.write(i, k_new[i], v_new[i])

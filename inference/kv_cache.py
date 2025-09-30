@@ -2,8 +2,8 @@ import torch
 
 class KVCache:
     def __init__(self, L, B, H, W, D, device, dtype):
-        self.k = torch.empty(L, B, H, W, D, device=device, dtype=dtype)
-        self.v = torch.empty(L, B, H, W, D, device=device, dtype=dtype)
+        self.k = torch.zeros(L, B, H, W, D, device=device, dtype=dtype)
+        self.v = torch.zeros(L, B, H, W, D, device=device, dtype=dtype)
         self.W = W
         self.t = 0
 
@@ -13,13 +13,17 @@ class KVCache:
     def view(self, layer):
         n = min(self.t, self.W)
         if n == 0:
-            return self.k[layer, :, :, :0].transpose(1, 2), self.v[layer, :, :, :0].transpose(1, 2)
-        if n < self.W:
-            return self.k[layer, :, :, :n].transpose(1, 2), self.v[layer, :, :, :n].transpose(1, 2)
-        s = self.t % self.W
-        k1, k2 = self.k[layer, :, :, s:], self.k[layer, :, :, :s]
-        v1, v2 = self.v[layer, :, :, s:], self.v[layer, :, :, :s]
-        return torch.cat([k1, k2], 2).transpose(1, 2), torch.cat([v1, v2], 2).transpose(1, 2)
+            z = self.k[layer, :, :, :0]
+            return z.transpose(1, 2), z.transpose(1, 2)
+        start = (self.t - n) % self.W
+        end = start + n
+        if end <= self.W:
+            k = self.k[layer, :, :, start:end]
+            v = self.v[layer, :, :, start:end]
+        else:
+            k = torch.cat([self.k[layer, :, :, start:], self.k[layer, :, :, :end - self.W]], dim=2)
+            v = torch.cat([self.v[layer, :, :, start:], self.v[layer, :, :, :end - self.W]], dim=2)
+        return k.transpose(1, 2), v.transpose(1, 2)
 
     def write(self, layer, k_new, v_new):
         if k_new.size(1) == 1:
