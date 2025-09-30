@@ -45,6 +45,10 @@ class Hyperparameters:
     num_heads: int = None
     model_dim: int = None
     head_dim: int = None
+    snapshot_skip: int = None
+    embed_params_lr: float = 0.3
+    scalar_params_lr: float = 0.015
+    hidden_matrix_params_lr: float = 0.025
 
 def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
     """
@@ -140,12 +144,12 @@ assert optimized_parameters_set == {*model.parameters()}
 assert len(optimized_parameters_set) == sum(len(lst) for lst in params_collections)
 
 # init the optimizer(s)
-adam_param_groups = [dict(params=embed_params, lr=0.3),
-                     dict(params=scalar_params, lr=0.015)]
+adam_param_groups = [dict(params=embed_params, lr=args.embed_params_lr),
+                     dict(params=scalar_params, lr=args.scalar_params_lr),]
 # small adam epsilon by @YouJiacheng. this is an alternate method of fixing the world_size dependence
 # discovered by @fernbear.bsky.social https://x.com/hi_tysam/status/1879692937589875094
 optimizer1 = torch.optim.AdamW(adam_param_groups, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.0, fused=True)
-optimizer2 = Muon(hidden_matrix_params, lr=0.025, momentum=0.95, rank=rank, world_size=world_size)
+optimizer2 = Muon(hidden_matrix_params, lr=args.hidden_matrix_params_lr, momentum=0.95, rank=rank, world_size=world_size)
 optimizers: list[torch.optim.Optimizer] = [optimizer1, optimizer2]
 
 
@@ -228,7 +232,9 @@ for step in range(train_steps + 1):
             if improved:
                 best_val = cur_val
 
-            if args.save_checkpoint and improved and val_iter % args.val_snapshot_every == 0:
+            if (args.save_checkpoint and improved
+                    and val_iter % args.val_snapshot_every == 0
+                    and val_iter > args.snapshot_skip):
                 os.makedirs("checkpoints", exist_ok=True)
                 ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
                 fname = f"checkpoints/{ts}-step{step:06d}-run{run_id}-{best_val:.2f}.pt"

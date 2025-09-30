@@ -4,13 +4,17 @@ val_files: "data/fineweb/fineweb_val_*.bin"
 val_seq_len: 262144       # 4 * 64 * 1024
 num_iterations: 5960
 cooldown_frac: 0.7
+embed_params_lr: 0.3
+scalar_params_lr: 0.015
+hidden_matrix_params_lr: 0.025
 # Common settings
 val_tokens: 10485760
-val_loss_every: 200
+val_loss_every: 500
+val_snapshot_every: 2     # in terms of val iterations, not steps
+snapshot_skip: 20         # skip snaps for the first N val iterations
 save_checkpoint: true
-val_snapshot_every: 1000
 # Model settings
-max_seq_len: 65536      # N * 1024, max_sequence_length
+max_seq_len: 65536        # N * 1024, max_sequence_length
 vocab_size: 50257
 num_layers: 16
 head_dim: 128             # documented here as static
