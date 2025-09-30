@@ -16,7 +16,7 @@ save_checkpoint: true
 # Model settings
 max_seq_len: 65536        # N * 1024, max_sequence_length
 vocab_size: 50257
-num_layers: 38
-head_dim: 128             # documented here as static
-num_heads: 13
-model_dim: 1664           # num_heads * head_dim
+num_layers: 48
+head_dim: 64              # default: 128
+num_heads: 25
+model_dim: 1600           # num_heads * head_dim

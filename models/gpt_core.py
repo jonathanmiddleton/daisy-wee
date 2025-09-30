@@ -8,6 +8,16 @@ from torch.nn.attention.flex_attention import BlockMask
 def next_multiple_of_n(v: float | int, *, n: int):
     return next(x for x in range(n, int(v) + 1 + n, n) if x >= v)
 
+def _get_skip_map(L: int):
+    skip_map = {}
+    stride = max(1, L // 4)
+    for m in range(3):
+        i = L - 3 + m
+        j = i - stride * (m + 1)
+        if 0 <= j < i < L:
+            skip_map[i] = j
+    return skip_map
+
 class GPTCore(nn.Module):
     def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim=128):
         super().__init__()
@@ -22,8 +32,7 @@ class GPTCore(nn.Module):
         ]))
 
     def create_blockmasks(self, input_seq: Tensor, sliding_window_num_blocks: Tensor):
-        #n = len(input_seq)
-        BLOCK_SIZE = 128 #if n % 128 == 0 else next(bs for bs in (64, 32, 16, 8, 4, 2, 1) if n % bs == 0)
+        BLOCK_SIZE = 128
         assert(len(input_seq) % BLOCK_SIZE == 0)
         device = input_seq.device
         docs = (input_seq == 50256).cumsum(0)
@@ -79,14 +88,7 @@ class GPTCore(nn.Module):
 
         x = x0 = norm(self.embed(input_seq)[None])
 
-        stride = max(1, L // 4)
-        skip_map = {}
-        for m in range(3):
-            i = L - 3 + m
-            j = i - stride * (m + 1)
-            if 0 <= j < i < L:
-                skip_map[i] = j
-
+        skip_map = _get_skip_map(L)
         skip_weights = self.scalars[:L]
         lambdas = self.scalars[1 * L:3 * L].view(-1, 2)
         sa_lambdas = self.scalars[3 * L:5 * L].view(-1, 2)
@@ -95,12 +97,6 @@ class GPTCore(nn.Module):
         for i in range(L):
             if i in skip_map:
                 x = x + skip_weights[skip_map[i]] * skip_connections[skip_map[i]]
-            # if torch.is_grad_enabled():
-            #     x = torch.utils.checkpoint.checkpoint(
-            #         lambda _x, lam, sa_lam: self.blocks[i](_x, ve[i], x0, block_masks[i], lam, sa_lam),
-            #         x, lambdas[i], sa_lambdas[i], use_reentrant=False
-            #     )
-            # else:
                 x = self.blocks[i](x, ve[i], x0, block_masks[i], lambdas[i], sa_lambdas[i])
             skip_connections.append(x)
 
@@ -134,14 +130,7 @@ class GPTCore(nn.Module):
         L = len(self.blocks)
         ve = [ve0, ve1, ve2] + [None] * (L - 6) + [ve0, ve1, ve2]
 
-        stride = max(1, L // 4)
-        skip_map = {}
-        for m in range(3):
-            i = L - 3 + m
-            j = i - stride * (m + 1)
-            if 0 <= j < i < L:
-                skip_map[i] = j
-
+        skip_map = _get_skip_map(L)
         scalars = self.scalars
         skip_weights = scalars[:L]
         lambdas = scalars[1 * L:3 * L].view(-1, 2)
