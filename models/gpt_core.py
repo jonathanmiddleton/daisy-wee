@@ -103,6 +103,8 @@ class GPTCore(nn.Module):
             skip_connections.append(x)
 
         x = norm(x)
+        # for parity testing via tests/test_generate_step_equals_forward.py
+        # return F.linear(x.flatten(end_dim=1), self.lm_head_w.bfloat16()).float()
         if self.training:
             logits: Tensor = F.linear(x.flatten(end_dim=1), self.lm_head_w.bfloat16()).float()
             loss = F.cross_entropy(15 * logits * torch.rsqrt(logits.square() + 225), target_seq)
@@ -113,6 +115,7 @@ class GPTCore(nn.Module):
             logits: Tensor = F.linear(x.flatten(end_dim=1).chunk(4)[i], self.lm_head_w.bfloat16()).float()
             loss += F.cross_entropy(15 * logits * torch.rsqrt(logits.square() + 225), target_seq.chunk(4)[i]) / 4
         return loss
+
 
 
     @torch.no_grad()

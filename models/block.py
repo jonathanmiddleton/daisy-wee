@@ -20,9 +20,9 @@ class Block(nn.Module):
         return x
 
     def step(self, x, ve, x0, k_ctx, v_ctx, pos, lambdas, sa_lambdas, window):
-        xm = lambdas[0] * x + lambdas[1] * x0
+        x = lambdas[0] * x + lambdas[1] * x0
         if self.attn is not None:
-            y_att, k_new, v_new = self.attn.step(norm(xm), k_ctx, v_ctx, pos, ve, sa_lambdas, window=window)
+            y_att, k_new, v_new = self.attn.step(x, k_ctx, v_ctx, pos, ve, sa_lambdas, window=window)
             x = x + y_att
         else:
             k_new = v_new = None

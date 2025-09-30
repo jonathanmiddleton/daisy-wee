@@ -108,9 +108,11 @@ class CausalSelfAttention(nn.Module):
         else: # skip mid-layers token value embeddings by @YouJiacheng
             lambdas = lambdas.to(target_dtype)
             v = lambdas[0] * v
-        start = max(0, pos - window + 1)
-        k_all = torch.cat([k_ctx[:, start:pos], k], 1)
-        v_all = torch.cat([v_ctx[:, start:pos], v], 1)
+        n = k_ctx.size(1)
+        # r = tokens to take from cache = last window-1 tokens (or all if fewer)
+        r = n if window is None else min(n, max(window - 1, 0))
+        k_all = torch.cat([k_ctx[:, n - r:n], k], 1)
+        v_all = torch.cat([v_ctx[:, n - r:n], v], 1)
 
         # SDPA expects (..., L, E) where L is the sequence length; put heads before time
         q_ = q.transpose(1, 2)      # (B, H, 1, D)
