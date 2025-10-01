@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 from dataclasses import dataclass, fields as dataclass_fields, asdict
 
-from models.gpt_core import GPTCore
+from models import get_model_class
 from training.data_gen import distributed_data_generator
 from training.optim import Muon
 from training.optim import get_lr, get_window_size_blocks
@@ -52,6 +52,8 @@ class Hyperparameters:
     scalar_params_lr: float = 0.015
     hidden_matrix_params_lr: float = 0.025
     adamw_weight_decay: float = 0.01
+    # Model selection
+    model_type: str = "gpt2"
 
 def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
     """
@@ -196,6 +198,7 @@ def _build_hparams_from_args(args: Hyperparameters) -> dict:
         "max_seq_len": args.max_seq_len,
         "val_seq_len": args.val_seq_len,
         "eos_token_id": 50256,
+        "model_type": getattr(args, "model_type", "gpt2"),
     }
 
 
@@ -262,14 +265,15 @@ if args.init_checkpoint:
     if isinstance(_saved_hparams, dict):
         # Only adopt architecture/sequence related fields required to restore the model
         for k in [
-            "vocab_size", "num_layers", "num_heads", "model_dim", "head_dim", "max_seq_len", "val_seq_len"
+            "vocab_size", "num_layers", "num_heads", "model_dim", "head_dim", "max_seq_len", "val_seq_len", "model_type"
         ]:
             if k in _saved_hparams and _saved_hparams[k] is not None:
                 setattr(args, k, _saved_hparams[k])
         print0("Rehydrated model hyperparameters from checkpoint.")
 
 # Now we can safely build the model with possibly rehydrated args
-model: nn.Module = GPTCore(
+_ModelClass = get_model_class(getattr(args, "model_type", "gpt2"))
+model: nn.Module = _ModelClass(
     vocab_size=args.vocab_size,
     num_layers=args.num_layers,
     num_heads=args.num_heads,

@@ -23,3 +23,5 @@ num_layers: 48
 head_dim: 64              # default: 128
 num_heads: 25
 model_dim: 1600
+
+model_type: gpt2
