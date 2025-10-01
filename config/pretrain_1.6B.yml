@@ -2,7 +2,7 @@
 train_files: "data/fineweb/fineweb_train_*.bin"
 val_files: "data/fineweb/fineweb_val_*.bin"
 val_seq_len: 65536        # N * 1024
-num_iterations: 9000
+num_iterations: 12000
 cooldown_frac: 0.5
 embed_params_lr: 0.002          #adamw: default 0.3
 scalar_params_lr: 0.002         #adamw: default 0.015
