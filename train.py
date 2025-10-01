@@ -238,8 +238,7 @@ for step in range(train_steps + 1):
                     and val_iter % args.val_snapshot_every == 0
                     and val_iter > args.snapshot_skip):
                 os.makedirs("checkpoints", exist_ok=True)
-                ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-                fname = f"checkpoints/{ts}-step{step:06d}-run{run_id}-{best_val:.2f}.pt"
+                fname = f"checkpoints/checkpoint-run{run_id}.pt"
                 _model_to_state = model._orig_mod if hasattr(model, "_orig_mod") else model
                 log = dict(
                     step=step,
@@ -248,7 +247,7 @@ for step in range(train_steps + 1):
                     best_val=best_val,
                 )
                 torch.save(log, fname)
-                print0(f"Saved checkpoint to {fname}")
+                print0(f"Saved checkpoint to {fname} with val loss {cur_val:.6f}")
 
 
         model.train()
