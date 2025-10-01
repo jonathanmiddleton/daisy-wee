@@ -122,3 +122,32 @@ class CausalSelfAttention(nn.Module):
         y = y.transpose(1, 2).reshape(B, 1, self.num_heads * self.head_dim)
         y = F.linear(y, self.qkvo_w[3])
         return y, k, v
+
+    def prefill(self, x: torch.Tensor, ve: torch.Tensor | None, lambdas: torch.Tensor,
+                attn_mask: torch.Tensor | None = None):
+        B, T, _ = x.shape
+        qkv = torch.nn.functional.linear(x, self.qkvo_w[:3].flatten(end_dim=1)).view(B, T, 3 * self.num_heads, self.head_dim)
+        q, k, v = qkv.chunk(3, dim=-2)
+        q, k = norm(q), norm(k)
+        q, k = self.rotary(q), self.rotary(k)
+        v = norm(v)
+        target_dtype = q.dtype
+        v = v.to(target_dtype)
+        if ve is not None:
+            ve = ve.to(target_dtype).view(B, T, self.num_heads, self.head_dim)
+            lambdas = lambdas.to(target_dtype)
+            v = lambdas[0] * v + lambdas[1] * ve
+        else:
+            lambdas = lambdas.to(target_dtype)
+            v = lambdas[0] * v
+        q_ = q.transpose(1, 2)
+        k_ = k.transpose(1, 2)
+        v_ = v.transpose(1, 2)
+        if attn_mask is not None:
+            y = torch.nn.functional.scaled_dot_product_attention(q_, k_, v_, attn_mask=attn_mask, is_causal=False,
+                                                                 scale=self.attn_scale)
+        else:
+            y = torch.nn.functional.scaled_dot_product_attention(q_, k_, v_, is_causal=True, scale=self.attn_scale)
+        y = y.transpose(1, 2).reshape(B, T, self.num_heads * self.head_dim)
+        y = torch.nn.functional.linear(y, self.qkvo_w[3])
+        return y, k_, v_

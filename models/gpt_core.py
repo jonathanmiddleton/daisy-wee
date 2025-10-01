@@ -153,3 +153,62 @@ class GPT2Core(nn.Module):
         x = norm(x)
         logits = F.linear(x.flatten(end_dim=1), self.lm_head_w.bfloat16()).float()
         return logits, k_new_list, v_new_list
+
+    @torch.no_grad()
+    def prefill_batch(self, input_ids: Tensor, window: int | None = None):
+        assert input_ids.ndim == 2
+        B, T = input_ids.shape
+        L = len(self.blocks)
+
+        x = norm(self.embed(input_ids))
+        x0 = x
+
+        ve0, ve1, ve2 = [emb(input_ids) for emb in self.value_embeds]
+        ve = [ve0, ve1, ve2] + [None] * (L - 6) + [ve0, ve1, ve2]
+
+        skip_map = _get_skip_map(L)
+        skip_weights = self.scalars[:L]
+        lambdas = self.scalars[1 * L:3 * L].view(-1, 2)
+        sa_lambdas = self.scalars[3 * L:5 * L].view(-1, 2)
+
+        if window is not None:
+            i = torch.arange(T, device=input_ids.device)
+            j = torch.arange(T, device=input_ids.device)
+            d = i[None, :] - j[:, None]
+            m = torch.zeros(T, T, device=input_ids.device, dtype=torch.float32)
+            m[d < 0] = float("-inf")
+            m[d >= window] = float("-inf")
+            attn_mask = m[None, None, :, :]
+        else:
+            attn_mask = None
+
+        k_list, v_list, skip_connections = [], [], []
+        for i in range(L):
+            if i in skip_map:
+                x = x + skip_weights[skip_map[i]] * skip_connections[skip_map[i]]
+            x, k, v = self.blocks[i].prefill(x, ve[i], x0, lambdas[i], sa_lambdas[i], attn_mask)
+            skip_connections.append(x)
+            k_list.append(k)
+            v_list.append(v)
+
+        x = norm(x)
+        logits = torch.nn.functional.linear(x[:, -1], self.lm_head_w.bfloat16()).float()
+
+        attn = next(b.attn for b in self.blocks if b.attn is not None)
+        H, D = attn.num_heads, attn.head_dim
+        device = x.device
+        dtype = x.dtype
+
+        K = []
+        V = []
+        for k, v in zip(k_list, v_list):
+            if k is None:
+                K.append(torch.zeros(B, H, T, D, device=device, dtype=dtype))
+                V.append(torch.zeros(B, H, T, D, device=device, dtype=dtype))
+            else:
+                K.append(k)
+                V.append(v)
+        K = torch.stack(K, dim=0)
+        V = torch.stack(V, dim=0)
+        kv = torch.stack([K, V], dim=0)
+        return logits, kv

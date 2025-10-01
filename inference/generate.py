@@ -52,27 +52,13 @@ class Generator:
 
     @torch.no_grad()
     def prefill(self, prompt_ids):
-        # TODO horrible tmp method, replace with full-sequence pass
         self.reset()
-        if isinstance(prompt_ids, torch.Tensor):
-            ids = prompt_ids.tolist()
-        else:
-            ids = list(prompt_ids)
-        logits = None
-        for tok in ids:
-            k_ctxs, v_ctxs = [], []
-            for i in range(len(self.model.blocks)):
-                kc, vc = self.cache.view(i)
-                k_ctxs.append(kc); v_ctxs.append(vc)
-            token = torch.tensor(tok, device=self.device, dtype=torch.long)
-            logits, k_new, v_new = self.model.step(token, k_ctxs, v_ctxs, self.cache.t, self.window)
-            logits = logits[..., :self.vocab_size]
-            for i in range(len(self.model.blocks)):
-                if k_new[i] is not None:
-                    self.cache.write(i, k_new[i], v_new[i])
-            self.cache.advance()
-            self.history = torch.cat([self.history, token.view(1)], dim=0)
+        logits, kv = self.model.prefill_batch(prompt_ids[None,:], window=self.window)
+        self.cache.bulk_write_packed(kv.bfloat16(), len(prompt_ids), window=self.window)
+        self.history = prompt_ids
+
         return logits
+
 
     @torch.no_grad()
     def step(self, token_id):
@@ -106,6 +92,7 @@ class Generator:
             out.append(int(next_id))
         return out
 
+    @torch.no_grad()
     def _sample(self, logits_1xb):
         x = logits_1xb.float().view(-1)
         x = _apply_repetition_penalty(x, self.history, self.repetition_penalty)

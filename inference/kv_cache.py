@@ -44,3 +44,16 @@ class KVCache:
     def advance(self):
         self.t += 1
         self._staged = [False] * self.L
+
+    def bulk_write_packed(self, kv, pos, window=None):
+        k, v = kv[0], kv[1]
+        r = pos if window is None else min(pos, max(window - 1, 0))
+        if r == 0:
+            self.t = pos
+            self._staged = [False] * self.L
+            return
+        idx = torch.arange(pos - r, pos, device=self.k.device) % self.W
+        self.k[:, :, :, idx, :] = k[:, :, :, pos - r:pos, :]
+        self.v[:, :, :, idx, :] = v[:, :, :, pos - r:pos, :]
+        self.t = pos
+        self._staged = [False] * self.L

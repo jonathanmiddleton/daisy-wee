@@ -14,9 +14,10 @@ MAX_SEQ_LEN = 16*1024
 parser = argparse.ArgumentParser(description="Generate text with a GPT model from a checkpoint.")
 parser.add_argument("checkpoint", type=str, help="Path to model checkpoint (.pt)")
 parser.add_argument("--max_tokens", type=int, default=100, help="Number of new tokens to generate")
-parser.add_argument("--repetition_penalty", type=float, default=1.35, help="Repetition penalty")
+parser.add_argument("--repetition_penalty", type=float, default=1.05, help="Repetition penalty")
 parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
 parser.add_argument("--top_k", type=int, default=50, help="Top-k sampling")
+parser.add_argument("--top_p", type=float, default=0.95, help="Top-p sampling")
 parser.add_argument("--max_seq_len", type=int, default=MAX_SEQ_LEN, help="Maximum sequence length")
 parser.add_argument("--seed", type=int, default=None, help="Random seed for deterministic sampling")
 parser.add_argument(
@@ -84,7 +85,7 @@ ctx = torch.amp.autocast(device_type=devtype, dtype=torch.bfloat16)
 with torch.no_grad():
     with ctx:
         eos_id = int(hparams.get('eos_token_id', 50256))
-        gen = Generator(model=model, window=1024, eos_token_id=eos_id, temperature=cli.temperature, top_k=cli.top_k, top_p=0.95,
+        gen = Generator(model=model, window=1024, eos_token_id=eos_id, temperature=cli.temperature, top_k=cli.top_k, top_p=cli.top_p,
                         repetition_penalty=cli.repetition_penalty, seed=cli.seed)
         tokens = gen.generate(x[0], max_new_tokens=cli.max_tokens)
 
