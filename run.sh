@@ -9,7 +9,7 @@ CHECKPOINT=""
 
 # Require positional CONFIG first
 if [ $# -lt 1 ]; then
-  echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH]" >&2
+  echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [key=value ...]" >&2
   exit 1
 fi
 
@@ -28,12 +28,12 @@ while getopts ":n:p:" opt; do
       ;;
     \?)
       echo "Invalid option: -$OPTARG" >&2
-      echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH]" >&2
+      echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [key=value ...]" >&2
       exit 1
       ;;
     :)
       echo "Option -$OPTARG requires an argument." >&2
-      echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH]" >&2
+      echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [key=value ...]" >&2
       exit 1
       ;;
   esac
@@ -45,7 +45,21 @@ export OMP_NUM_THREADS=8
 
 CMD=(torchrun --standalone --nproc_per_node="$NPROC" train.py "$CONFIG")
 if [ -n "$CHECKPOINT" ]; then
-  CMD+=("--checkpoint=$CHECKPOINT")
-endif
+  CMD+=("--init_checkpoint=$CHECKPOINT")
+fi
+
+# Forward any remaining args as overrides. Accept either key=value or --key=value.
+for arg in "$@"; do
+  if [[ "$arg" == --* ]]; then
+    CMD+=("$arg")
+  else
+    # if it's key=value without leading dashes, prepend --
+    if [[ "$arg" == *"="* ]]; then
+      CMD+=("--$arg")
+    else
+      echo "Ignoring unexpected argument: $arg (expected key=value or --key=value)" >&2
+    fi
+  fi
+done
 
 "${CMD[@]}"

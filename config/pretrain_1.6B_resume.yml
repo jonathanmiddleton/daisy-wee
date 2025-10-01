@@ -1,0 +1,23 @@
+# Pretraining configuration
+train_files: "data/fineweb/fineweb_train_*.bin"
+val_files: "data/fineweb/fineweb_val_*.bin"
+val_seq_len: 65536        # N * 1024
+num_iterations: 12000
+cooldown_frac: 0.5
+embed_params_lr: 0.02          #adamw: default 0.3
+scalar_params_lr: 0.02         #adamw: default 0.015
+hidden_matrix_params_lr: 0.04   #muon: default 0.025
+adamw_weight_decay: 0.01        # default 0.01
+# Common settings
+val_tokens: 10485760
+val_loss_every: 250
+val_snapshot_every: 2     # in terms of val iterations, not steps
+snapshot_skip: 10         # skip snaps for the first N val iterations
+save_checkpoint: true
+# Model settings
+max_seq_len: 16384        # N * 1024, max_sequence_length
+vocab_size: 50257
+num_layers: 48
+head_dim: 64              # default: 128
+num_heads: 25
+model_dim: 1600           # num_heads * head_dim
