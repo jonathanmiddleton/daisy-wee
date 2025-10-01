@@ -171,16 +171,14 @@ class GPT2Core(nn.Module):
         lambdas = self.scalars[1 * L:3 * L].view(-1, 2)
         sa_lambdas = self.scalars[3 * L:5 * L].view(-1, 2)
 
-        if window is not None:
-            i = torch.arange(T, device=input_ids.device)
-            j = torch.arange(T, device=input_ids.device)
-            d = i[None, :] - j[:, None]
-            m = torch.zeros(T, T, device=input_ids.device, dtype=torch.float32)
-            m[d < 0] = float("-inf")
-            m[d >= window] = float("-inf")
-            attn_mask = m[None, None, :, :]
-        else:
-            attn_mask = None
+        q = torch.arange(T, device=input_ids.device)[:, None]  # (T, 1)
+        k = torch.arange(T, device=input_ids.device)[None, :]  # (1, T)
+        d = q - k  # d[q, k] = q - k
+
+        m = torch.zeros(T, T, device=input_ids.device, dtype=torch.float32)
+        m[d < 0] = float("-inf")  # forbid future (k > q)
+        m[d >= window] = float("-inf")  # forbid too-far past
+        attn_mask = m[None, None, :, :]
 
         k_list, v_list, skip_connections = [], [], []
         for i in range(L):

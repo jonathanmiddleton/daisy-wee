@@ -33,13 +33,11 @@ class Generator:
         self.history = torch.empty(0, dtype=torch.long, device=self.device)
         self.window = window
         self.vocab_size = self.model.embed.num_embeddings
-        # Optional random generator for deterministic sampling
         self.rng = None
         if seed is not None:
             self.set_seed(seed)
 
     def set_seed(self, seed: int):
-        """Set or reset the RNG used for sampling to a deterministic state."""
         g = torch.Generator(device=self.device)
         g.manual_seed(int(seed))
         self.rng = g
@@ -55,7 +53,6 @@ class Generator:
         logits, kv = self.model.prefill_batch(prompt_ids[None,:], window=self.window)
         self.cache.bulk_write_packed(kv.bfloat16(), len(prompt_ids), window=self.window)
         self.history = torch.cat([self.history, prompt_ids], dim=0)
-
         return logits
 
     @torch.no_grad()
@@ -116,4 +113,3 @@ class Generator:
             return int(torch.multinomial(probs, 1, generator=self.rng))
         else:
             return int(torch.multinomial(probs, 1))
-
