@@ -24,6 +24,7 @@ class GPTCore(nn.Module):
         self.embed = nn.Embedding(vocab_size, model_dim)
         self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(3)])
         self.blocks = nn.ModuleList([Block(model_dim, num_heads, max_seq_len, i, head_dim) for i in range(num_layers)])
+        self.lm_head_w = nn.Parameter(torch.zeros(next_multiple_of_n(vocab_size, n=128), model_dim))
         assert num_layers % 2 == 0
         self.scalars = nn.Parameter(torch.cat([
             torch.ones(num_layers),
@@ -102,13 +103,13 @@ class GPTCore(nn.Module):
 
         x = norm(x)
         if self.training:
-            logits: Tensor = F.linear(x.flatten(end_dim=1), self.embed.weight.bfloat16()).float()
+            logits: Tensor = F.linear(x.flatten(end_dim=1), self.lm_head_w.bfloat16()).float()
             loss = F.cross_entropy(15 * logits * torch.rsqrt(logits.square() + 225), target_seq)
             return loss
 
         loss = 0
         for i in range(4):
-            logits: Tensor = F.linear(x.flatten(end_dim=1).chunk(4)[i], self.embed.weight.bfloat16()).float()
+            logits: Tensor = F.linear(x.flatten(end_dim=1).chunk(4)[i], self.lm_head_w.bfloat16()).float()
             loss += F.cross_entropy(15 * logits * torch.rsqrt(logits.square() + 225), target_seq.chunk(4)[i]) / 4
         return loss
 
@@ -150,5 +151,5 @@ class GPTCore(nn.Module):
             k_new_list.append(k_new)
             v_new_list.append(v_new)
         x = norm(x)
-        logits = F.linear(x.flatten(end_dim=1), self.embed.weight.bfloat16()).float()
+        logits = F.linear(x.flatten(end_dim=1), self.lm_head_w.bfloat16()).float()
         return logits, k_new_list, v_new_list

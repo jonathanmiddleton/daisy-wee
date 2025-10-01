@@ -137,15 +137,17 @@ hidden_matrix_params = sorted((p for p in model.blocks.parameters() if p.ndim >=
                               reverse=True)
 embed_params = [*model.embed.parameters(), *model.value_embeds.parameters()]
 scalar_params = [model.scalars]
+# noinspection PyTypeChecker
+head_params: list[nn.Parameter] = [model.lm_head_w]
 # sanity check
-params_collections = [hidden_matrix_params, embed_params, scalar_params]
+params_collections = [hidden_matrix_params, embed_params, scalar_params, head_params]
 optimized_parameters_set = {p for params in params_collections for p in params}
 assert optimized_parameters_set == {*model.parameters()}
 assert len(optimized_parameters_set) == sum(len(lst) for lst in params_collections)
 
 # init the optimizer(s)
-adam_param_groups = [dict(params=embed_params, lr=args.embed_params_lr),
-                     dict(params=scalar_params, lr=args.scalar_params_lr),]
+adam_param_groups = [dict(params=head_params, lr=1 / 320), dict(params=embed_params, lr=args.embed_params_lr),
+                     dict(params=scalar_params, lr=args.scalar_params_lr)]
 # small adam epsilon by @YouJiacheng. this is an alternate method of fixing the world_size dependence
 # discovered by @fernbear.bsky.social https://x.com/hi_tysam/status/1879692937589875094
 optimizer1 = torch.optim.AdamW(adam_param_groups, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.0, fused=True)
