@@ -202,5 +202,5 @@ def write_shards(out_dir, split="train", target_tokens=200_000_000, max_tokens_p
 if __name__ == "__main__":
     out_dir = "data/instruct_mix"
     summarize_sources(VAL_FRAC)
-    write_shards(out_dir, split="train", target_tokens=200_000_000, max_tokens_per_shard=50_000_000)
-    write_shards(out_dir, split="val",   target_tokens=10_485_760,   max_tokens_per_shard=50_000_000)
+    write_shards(out_dir, split="train", target_tokens=2_000_000_000, max_tokens_per_shard=50_000_000)
+    write_shards(out_dir, split="val",   target_tokens=100_485_760,   max_tokens_per_shard=50_000_000)
