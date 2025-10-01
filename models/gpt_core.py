@@ -98,7 +98,7 @@ class GPTCore(nn.Module):
         for i in range(L):
             if i in skip_map:
                 x = x + skip_weights[skip_map[i]] * skip_connections[skip_map[i]]
-                x = self.blocks[i](x, ve[i], x0, block_masks[i], lambdas[i], sa_lambdas[i])
+            x = self.blocks[i](x, ve[i], x0, block_masks[i], lambdas[i], sa_lambdas[i])
             skip_connections.append(x)
 
         x = norm(x)
