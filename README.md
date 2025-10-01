@@ -11,14 +11,24 @@
   </tr>
 </table>
 
+
+## Highlights
+
+- Efficient attention with sliding‑window and block‑sparse masking for long contexts.
+- Rotary positional embeddings (RoPE).
+- Fused QKV(+O) projections for speed.
+- Learned residual gating/scaling to stabilize deeper networks.
+- Parameter grouping and optimizer specialization (including a matrix‑preconditioned optimizer) for convergence and throughput.
+- BF16‑first training with careful casting at hot spots.
+- Data sharding pipeline for instruction‑tuning corpora.
  
 ---
 
-## Usage: run.sh, sample.py, and configs
+## Training and Inference
 
 Below are the current, tested ways to launch training, run inference sampling, and work with the provided YAML configuration files.
 
-### Run: run.sh (recommended wrapper)
+### Training: run.sh (recommended wrapper)
 - Syntax
   ```sh
   ./run.sh CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [--ignore-prior-schedule] [key=value ...]
@@ -53,7 +63,7 @@ Below are the current, tested ways to launch training, run inference sampling, a
     ./run.sh config/instruct_sft.yml -n 8 -p checkpoints/state_step_200000.pt --ignore-prior-schedule
     ```
 
-### Sampling: sample.py
+### Inference: sample.py
 - Syntax
   ```sh
   python sample.py /path/to/checkpoint.pt [--device DEVICE] [--max_tokens N] [--temperature T] [--top_k K] [--repetition_penalty RP] [--seed SEED] [--max_seq_len L]
@@ -111,17 +121,6 @@ Below are the current, tested ways to launch training, run inference sampling, a
     ```
 
 
-
-
-## Highlights
-
-- Efficient attention with sliding‑window and block‑sparse masking for long contexts.
-- Rotary positional embeddings (RoPE).
-- Fused QKV(+O) projections for speed.
-- Learned residual gating/scaling to stabilize deeper networks.
-- Parameter grouping and optimizer specialization (including a matrix‑preconditioned optimizer) for convergence and throughput.
-- BF16‑first training with careful casting at hot spots.
-- Data sharding pipeline for instruction‑tuning corpora.
 
 ---
 
