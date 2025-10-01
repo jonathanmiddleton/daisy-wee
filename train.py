@@ -52,6 +52,8 @@ class Hyperparameters:
     scalar_params_lr: float = 0.015
     hidden_matrix_params_lr: float = 0.025
     adamw_weight_decay: float = 0.01
+    # Control resumption behavior
+    ignore_prior_steps: bool = False
     # Model selection
     model_type: str = "gpt2"
 
@@ -290,8 +292,12 @@ if args.init_checkpoint:
         raise ValueError(f"init_checkpoint:{args.init_checkpoint} missing:{_missing} unexpected:{_unexpected}")
     best_val_from_ckpt = float(_ckpt_obj.best_val) if _ckpt_obj.best_val is not None else None
     resume_from_step = int(_ckpt_obj.step) if _ckpt_obj.step is not None else None
-    print0(f"Resuming from step {resume_from_step} with best val {best_val_from_ckpt}.")
     _resume_tokens_per_step = int(_ckpt_obj.tokens_per_step) if getattr(_ckpt_obj, 'tokens_per_step', None) is not None else None
+    if getattr(args, "ignore_prior_steps", False):
+        print0("Ignoring prior steps from checkpoint due to --ignore-prior-steps flag.")
+        resume_from_step = None
+    else:
+        print0(f"Resuming from step {resume_from_step} with best val {best_val_from_ckpt}.")
 
 
 for m in model.modules():
