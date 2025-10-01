@@ -271,12 +271,8 @@ if args.init_checkpoint:
         # Only adopt architecture/sequence related fields required to restore the model
         for k in [
             "vocab_size", "num_layers", "num_heads", "model_dim", "head_dim", "max_seq_len", "val_seq_len", "model_type",
-            "schedule_total_iters",
         ]:
             if k in _saved_hparams and _saved_hparams[k] is not None:
-                if k == "schedule_total_iters" and getattr(args, "ignore_prior_schedule", False):
-                    # When fine-tuning or starting a new schedule, do not adopt the checkpoint's schedule length
-                    continue
                 setattr(args, k, _saved_hparams[k])
         print0("Rehydrated model hyperparameters from checkpoint.")
 
@@ -301,10 +297,7 @@ if args.init_checkpoint:
     _missing, _unexpected = apply_model_state(model, _sd, strict=False)
     if _missing or _unexpected:
         raise ValueError(f"init_checkpoint:{args.init_checkpoint} missing:{_missing} unexpected:{_unexpected}")
-    best_val_from_ckpt = float(_ckpt_obj.best_val) if _ckpt_obj.best_val is not None else None
-    resume_from_step = int(_ckpt_obj.step) if _ckpt_obj.step is not None else None
-    _resume_tokens_per_step = int(_ckpt_obj.tokens_per_step) if getattr(_ckpt_obj, 'tokens_per_step', None) is not None else None
-    print0(f"Resuming from step {resume_from_step} with best val {best_val_from_ckpt}.")
+    # Weights-only init: do not adopt training metadata (step, best_val, tokens_per_step)
 
 
 for m in model.modules():
@@ -396,26 +389,25 @@ for step in range(start_step, train_steps + 1):
         assert args.val_tokens % val_batch_size == 0
         val_steps = args.val_tokens // val_batch_size
         val_loader = distributed_data_generator(args.val_files, val_batch_size, rank, world_size)
-        val_loss = 0
+        val_loss = torch.zeros((), device="cuda", dtype=torch.float32)
         with torch.no_grad():
             for _ in range(val_steps):
                 inputs, targets = next(val_loader)
-                val_loss += model(inputs, get_window_size_blocks(step, _schedule_total_iters_den), targets)
-        val_loss /= val_steps
+                val_loss = val_loss + model(inputs, get_window_size_blocks(step, _schedule_total_iters_den), targets)
+        val_loss = val_loss / val_steps
         del val_loader
-        tokens_since_last = tokens_seen - last_val_tokens
-        if last_val_loss is not None and tokens_since_last > 0:
-            dpt = (val_loss.item() - last_val_loss) / tokens_since_last
-            ema_dloss_per_token = dpt if ema_dloss_per_token is None else 0.7 * ema_dloss_per_token + 0.3 * dpt
-            print0(f"delta loss per 1e9 tokens:{dpt * 1e9:.6f} [ema:{(ema_dloss_per_token or 0.0) * 1e9:.6f}]")
-        last_val_loss = float(val_loss.item())
-        last_val_tokens = tokens_seen
-
+        # Average across ranks before using the value
         if use_distributed:
             dist.all_reduce(val_loss, op=dist.ReduceOp.AVG)
-        print0( f"step:{step}/{train_steps} val_loss:{val_loss:.6f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms")
-
         cur_val = float(val_loss.item())
+        tokens_since_last = tokens_seen - last_val_tokens
+        if last_val_loss is not None and tokens_since_last > 0:
+            dpt = (cur_val - last_val_loss) / tokens_since_last
+            ema_dloss_per_token = dpt if ema_dloss_per_token is None else 0.7 * ema_dloss_per_token + 0.3 * dpt
+            print0(f"delta loss per 1e9 tokens:{dpt * 1e9:.6f} [ema:{(ema_dloss_per_token or 0.0) * 1e9:.6f}]")
+        last_val_loss = cur_val
+        last_val_tokens = tokens_seen
+        print0( f"step:{step}/{train_steps} val_loss:{val_loss:.6f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms")
 
         if master_process:
             val_iter += 1

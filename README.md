@@ -31,26 +31,25 @@ Below are the current, tested ways to launch training, run inference sampling, a
 ### Training: run.sh (recommended wrapper)
 - Syntax
   ```sh
-  ./run.sh CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [--ignore-prior-schedule] [key=value ...]
+  ./run.sh CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [key=value ...]
   ```
 - Arguments
   - CONFIG_FILE: Path to a YAML config (e.g., config/pretrain_350m.yml, config/pretrain_1.6B.yml, config/instruct_sft.yml, or config/instruct_sft_1.6B.yml). Required.
   - -n NUM_PROCS: Number of processes per node (passed to torchrun --nproc_per_node). Default: 8.
-  - -p CHECKPOINT_PATH: Optional checkpoint to load as --init_checkpoint for train.py (resume or warm-start).
+  - -p CHECKPOINT_PATH: Optional checkpoint to initialize model weights only (fresh schedule; no steps/optimizer/best-val are resumed).
   - -s BEGIN_SHARD: Optional starting shard index for training data (exported as BEGIN_SHARD). Useful for resuming data traversal.
-  - --ignore-prior-schedule: When warm-starting from a checkpoint for SFT or domain adaptation, ignore the checkpoint's saved schedule length (schedule_total_iters) so LR and sliding-window schedules start fresh for this run. Aliases: --ignore_prior_schedule, and legacy --ignore-prior-steps/--ignore_prior_steps are accepted and mapped to this behavior. Weights are still loaded; step counters may continue for logging unless otherwise overridden.
   - key=value or --key=value: Any additional overrides forwarded to train.py as --key=value. Examples: num_iterations=6000, global_batch_size=8, max_seq_len=32768.
 - Notes
   - run.sh requires CONFIG_FILE as the first positional argument. Options -n/-p must appear after CONFIG_FILE.
   - Overrides without a leading -- are automatically rewritten to --key=value.
-  - The bare flag --ignore-prior-schedule (or --ignore_prior_schedule; legacy --ignore-prior-steps/--ignore_prior_steps) is accepted and normalized to --ignore_prior_schedule=true under the hood.
+  - By default, every run starts a fresh schedule. Passing -p only loads weights (no steps/optimizer/best-val are resumed). Legacy --ignore-prior-schedule (and aliases) are accepted for backward compatibility but are deprecated and treated as no-ops.
   - The script sets sensible environment defaults (e.g., OMP_NUM_THREADS) and launches torchrun in standalone mode.
 - Examples
   - Pretraining (350M), 8 GPUs:
     ```sh
     ./run.sh config/pretrain_350m.yml -n 8 num_iterations=6000
     ```
-  - Pretraining (1.6B), resume from checkpoint on 8 GPUs:
+  - Pretraining (1.6B), warm-start from checkpoint on 8 GPUs:
     ```sh
     ./run.sh config/pretrain_1.6B.yml -n 8 -p checkpoints/state_step_100000.pt
     ```
@@ -60,7 +59,7 @@ Below are the current, tested ways to launch training, run inference sampling, a
     ```
   - Supervised fine-tuning (SFT) from a pretraining checkpoint, starting a fresh schedule (recommended):
     ```sh
-    ./run.sh config/instruct_sft.yml -n 8 -p checkpoints/state_step_200000.pt --ignore-prior-schedule
+    ./run.sh config/instruct_sft.yml -n 8 -p checkpoints/state_step_200000.pt
     ```
 
 ### Inference: sample.py
@@ -111,8 +110,8 @@ Below are the current, tested ways to launch training, run inference sampling, a
   - embed_params_lr, scalar_params_lr, hidden_matrix_params_lr: Parameter-group learning rates.
   - adamw_weight_decay: Weight decay for AdamW-style optimizers.
 - SFT-specific
-  - init_checkpoint: Path to a pretraining checkpoint used to warm-start SFT.
-  - ignore_prior_schedule: Boolean. When true, ignore the checkpoint's saved schedule_total_iters so LR and sliding-window schedules start fresh for this run (weights are still loaded). Can also be set via CLI as --ignore-prior-schedule (or --ignore_prior_schedule). Legacy --ignore-prior-steps/--ignore_prior_steps are accepted as aliases.
+  - init_checkpoint: Path to a pretraining checkpoint used to warm-start SFT. Weights are loaded; optimizer state, steps, and best-val are not resumed; schedules start fresh.
+  - schedule_total_iters: Optional schedule-length override for LR/window schedules; if omitted, num_iterations is used.
 - Overriding config values at launch
   - Any YAML key can be overridden on the command line via run.sh using key=value (or --key=value), for example:
     ```sh
