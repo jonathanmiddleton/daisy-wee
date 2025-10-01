@@ -130,9 +130,19 @@ def next_multiple_of_n(v: float | int, *, n: int):
 @lru_cache(1)
 def get_window_size_blocks_helper(window_size: int):
     return torch.tensor(window_size // 128, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
+
+# Global flag to force full-sized attention windows regardless of training progress
+_force_full_windows: bool = False
+
+def set_full_windows(flag: bool):
+    global _force_full_windows
+    _force_full_windows = bool(flag)
+
 def get_window_size_blocks(step: int, num_iterations: int):
     # num_iterations here is the schedule_total_iters denominator
-    if num_iterations <= 0:
+    if _force_full_windows:
+        x = 1.0
+    elif num_iterations <= 0:
         x = 1.0
     else:
         x = step / num_iterations  # progress in training

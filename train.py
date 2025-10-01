@@ -13,7 +13,7 @@ from dataclasses import dataclass, fields as dataclass_fields, asdict
 from models import get_model_class
 from training.data_gen import distributed_data_generator
 from training.optim import Muon
-from training.optim import get_lr, get_window_size_blocks
+from training.optim import get_lr, get_window_size_blocks, set_full_windows
 from tools.checkpoint import load_checkpoint, save_checkpoint, apply_model_state
 
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
@@ -54,6 +54,8 @@ class Hyperparameters:
     adamw_weight_decay: float = 0.01
     # Control schedule behavior on resume/warm-start
     ignore_prior_schedule: bool = False
+    # Force full attention windows (useful when resuming after smaller windows)
+    full_windows: bool = False
     # Schedule control (decouple from stop condition)
     schedule_total_iters: int | None = None
     # Model selection
@@ -162,6 +164,9 @@ for s in sys.argv[2:]:
     f = field_map[k]
     coerced = _coerce_value(v.strip(), f.type)
     setattr(args, k, coerced)
+
+# Apply scheduling toggle for attention windows
+set_full_windows(getattr(args, "full_windows", False))
 
 run_id = int(os.environ.get("RUN_ID", 0))
 # torchrun sets these env variables
