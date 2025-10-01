@@ -18,22 +18,22 @@
 
 Below are the current, tested ways to launch training, run inference sampling, and work with the provided YAML configuration files.
 
-Run: run.sh (recommended wrapper)
+### Run: run.sh (recommended wrapper)
 - Syntax
   ```sh
-  ./run.sh CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [--ignore-prior-steps] [key=value ...]
+  ./run.sh CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [--ignore-prior-schedule] [key=value ...]
   ```
 - Arguments
   - CONFIG_FILE: Path to a YAML config (e.g., config/pretrain_350m.yml, config/pretrain_1.6B.yml, config/instruct_sft.yml, or config/instruct_sft_1.6B.yml). Required.
   - -n NUM_PROCS: Number of processes per node (passed to torchrun --nproc_per_node). Default: 8.
   - -p CHECKPOINT_PATH: Optional checkpoint to load as --init_checkpoint for train.py (resume or warm-start).
   - -s BEGIN_SHARD: Optional starting shard index for training data (exported as BEGIN_SHARD). Useful for resuming data traversal.
-  - --ignore-prior-steps: When warm-starting from a checkpoint for SFT or domain adaptation, ignore the serialized training step count in the checkpoint and start at step 0. Alias: --ignore_prior_steps. This only affects step/tokens_seen; weights are still loaded.
+  - --ignore-prior-schedule: When warm-starting from a checkpoint for SFT or domain adaptation, ignore the checkpoint's saved schedule length (schedule_total_iters) so LR and sliding-window schedules start fresh for this run. Aliases: --ignore_prior_schedule, and legacy --ignore-prior-steps/--ignore_prior_steps are accepted and mapped to this behavior. Weights are still loaded; step counters may continue for logging unless otherwise overridden.
   - key=value or --key=value: Any additional overrides forwarded to train.py as --key=value. Examples: num_iterations=6000, global_batch_size=8, max_seq_len=32768.
 - Notes
   - run.sh requires CONFIG_FILE as the first positional argument. Options -n/-p must appear after CONFIG_FILE.
   - Overrides without a leading -- are automatically rewritten to --key=value.
-  - The bare flag --ignore-prior-steps (or --ignore_prior_steps) is accepted and normalized to --ignore-prior-steps=true under the hood.
+  - The bare flag --ignore-prior-schedule (or --ignore_prior_schedule; legacy --ignore-prior-steps/--ignore_prior_steps) is accepted and normalized to --ignore_prior_schedule=true under the hood.
   - The script sets sensible environment defaults (e.g., OMP_NUM_THREADS) and launches torchrun in standalone mode.
 - Examples
   - Pretraining (350M), 8 GPUs:
@@ -48,12 +48,12 @@ Run: run.sh (recommended wrapper)
     ```sh
     ./run.sh config/pretrain_350m.yml -n 1 val_loss_every=200
     ```
-  - Supervised fine-tuning (SFT) from a pretraining checkpoint, ignoring prior steps:
+  - Supervised fine-tuning (SFT) from a pretraining checkpoint, starting a fresh schedule (recommended):
     ```sh
-    ./run.sh config/instruct_sft.yml -n 8 -p checkpoints/state_step_200000.pt --ignore-prior-steps
+    ./run.sh config/instruct_sft.yml -n 8 -p checkpoints/state_step_200000.pt --ignore-prior-schedule
     ```
 
-Sampling: sample.py
+### Sampling: sample.py
 - Syntax
   ```sh
   python sample.py /path/to/checkpoint.pt [--device DEVICE] [--max_tokens N] [--temperature T] [--top_k K] [--repetition_penalty RP] [--seed SEED] [--max_seq_len L]
@@ -82,7 +82,7 @@ Sampling: sample.py
     python sample.py checkpoints/state_step_100000.pt --device cuda --max_tokens 256 --temperature 0.7 --top_k 50 --repetition_penalty 1.15 --seed 123
     ```
 
-Configuration files: YAML (config/*.yml)
+### Configuration files: YAML (config/*.yml)
 - Common fields
   - train_files, val_files: Glob patterns for tokenized shard files used for training/validation.
   - num_iterations: Total training iterations (global steps).
@@ -102,7 +102,7 @@ Configuration files: YAML (config/*.yml)
   - adamw_weight_decay: Weight decay for AdamW-style optimizers.
 - SFT-specific
   - init_checkpoint: Path to a pretraining checkpoint used to warm-start SFT.
-  - ignore_prior_steps: Boolean. When true, ignore the serialized step count in the init checkpoint and start SFT from step 0 (weights are still loaded). Use this when fine-tuning on new data or domains. Can also be set via CLI as --ignore-prior-steps (or --ignore_prior_steps).
+  - ignore_prior_schedule: Boolean. When true, ignore the checkpoint's saved schedule_total_iters so LR and sliding-window schedules start fresh for this run (weights are still loaded). Can also be set via CLI as --ignore-prior-schedule (or --ignore_prior_schedule). Legacy --ignore-prior-steps/--ignore_prior_steps are accepted as aliases.
 - Overriding config values at launch
   - Any YAML key can be overridden on the command line via run.sh using key=value (or --key=value), for example:
     ```sh
@@ -246,9 +246,9 @@ MoE will be introduced incrementally and benchmarked against the dense baseline 
   ```sh
   python -u train.py config/instruct_sft.yml
   ```
-- Start SFT from a pretraining checkpoint and ignore prior steps (recommended for fine-tuning on new data):
+- Start SFT from a pretraining checkpoint and start a fresh schedule (recommended for fine-tuning on new data):
   ```sh
-  python -u train.py config/instruct_sft.yml --init_checkpoint=checkpoints/state_step_200000.pt --ignore-prior-steps=true
+  python -u train.py config/instruct_sft.yml --init_checkpoint=checkpoints/state_step_200000.pt --ignore_prior_schedule=true
   ```
 
 

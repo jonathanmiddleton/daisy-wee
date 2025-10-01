@@ -52,8 +52,10 @@ class Hyperparameters:
     scalar_params_lr: float = 0.015
     hidden_matrix_params_lr: float = 0.025
     adamw_weight_decay: float = 0.01
-    # Control resumption behavior
-    ignore_prior_steps: bool = False
+    # Control schedule behavior on resume/warm-start
+    ignore_prior_schedule: bool = False
+    # Schedule control (decouple from stop condition)
+    schedule_total_iters: int | None = None
     # Model selection
     model_type: str = "gpt2"
 
@@ -189,7 +191,7 @@ def print0(st):
         print(st)
 
 
-def _build_hparams_from_args(args: Hyperparameters) -> dict:
+def _build_hparams_from_args(args: Hyperparameters, schedule_total_iters_den: int) -> dict:
     """Build a checkpoint hparams dict from training args."""
     return {
         "vocab_size": args.vocab_size,
@@ -201,6 +203,7 @@ def _build_hparams_from_args(args: Hyperparameters) -> dict:
         "val_seq_len": args.val_seq_len,
         "eos_token_id": 50256,
         "model_type": getattr(args, "model_type", "gpt2"),
+        "schedule_total_iters": int(schedule_total_iters_den),
     }
 
 
@@ -216,6 +219,7 @@ def _save_run_checkpoint(
     run_id: int,
     last_ckpt_path: str | None,
     best_val: float | int | None,
+    schedule_total_iters_den: int,
     print_message: bool = True,
 ) -> tuple[str | None, str]:
     """
@@ -231,7 +235,7 @@ def _save_run_checkpoint(
             os.remove(last_ckpt_path)
         except OSError:
             pass
-    hparams = _build_hparams_from_args(args)
+    hparams = _build_hparams_from_args(args, schedule_total_iters_den)
     save_checkpoint(
         fname,
         model=model,
@@ -250,7 +254,6 @@ def _save_run_checkpoint(
             print0(f"Saved checkpoint to {fname}")
     return fname, fname
 
-print0(json.dumps(asdict(args), indent=2, sort_keys=True))
 
 ########################################
 #    Construct model and optimizer     #
@@ -267,11 +270,19 @@ if args.init_checkpoint:
     if isinstance(_saved_hparams, dict):
         # Only adopt architecture/sequence related fields required to restore the model
         for k in [
-            "vocab_size", "num_layers", "num_heads", "model_dim", "head_dim", "max_seq_len", "val_seq_len", "model_type"
+            "vocab_size", "num_layers", "num_heads", "model_dim", "head_dim", "max_seq_len", "val_seq_len", "model_type",
+            "schedule_total_iters",
         ]:
             if k in _saved_hparams and _saved_hparams[k] is not None:
+                if k == "schedule_total_iters" and getattr(args, "ignore_prior_schedule", False):
+                    # When fine-tuning or starting a new schedule, do not adopt the checkpoint's schedule length
+                    continue
                 setattr(args, k, _saved_hparams[k])
         print0("Rehydrated model hyperparameters from checkpoint.")
+
+# Determine schedule denominator (decoupled from stop condition) after (optional) checkpoint rehydration
+_schedule_total_iters_den = int(args.schedule_total_iters) if getattr(args, "schedule_total_iters", None) not in (None, 0) else int(args.num_iterations)
+print0(json.dumps({**asdict(args), "_schedule_total_iters_den": _schedule_total_iters_den}, indent=2, sort_keys=True))
 
 # Now we can safely build the model with possibly rehydrated args
 _ModelClass = get_model_class(getattr(args, "model_type", "gpt2"))
@@ -293,11 +304,7 @@ if args.init_checkpoint:
     best_val_from_ckpt = float(_ckpt_obj.best_val) if _ckpt_obj.best_val is not None else None
     resume_from_step = int(_ckpt_obj.step) if _ckpt_obj.step is not None else None
     _resume_tokens_per_step = int(_ckpt_obj.tokens_per_step) if getattr(_ckpt_obj, 'tokens_per_step', None) is not None else None
-    if getattr(args, "ignore_prior_steps", False):
-        print0("Ignoring prior steps from checkpoint due to --ignore-prior-steps flag.")
-        resume_from_step = None
-    else:
-        print0(f"Resuming from step {resume_from_step} with best val {best_val_from_ckpt}.")
+    print0(f"Resuming from step {resume_from_step} with best val {best_val_from_ckpt}.")
 
 
 for m in model.modules():
@@ -393,7 +400,7 @@ for step in range(start_step, train_steps + 1):
         with torch.no_grad():
             for _ in range(val_steps):
                 inputs, targets = next(val_loader)
-                val_loss += model(inputs, get_window_size_blocks(step, train_steps), targets)
+                val_loss += model(inputs, get_window_size_blocks(step, _schedule_total_iters_den), targets)
         val_loss /= val_steps
         del val_loader
         tokens_since_last = tokens_seen - last_val_tokens
@@ -432,6 +439,7 @@ for step in range(start_step, train_steps + 1):
                     run_id=run_id,
                     last_ckpt_path=_last_run_ckpt_path,
                     best_val=best_val,
+                    schedule_total_iters_den=_schedule_total_iters_den,
                     print_message=True,
                 )
 
@@ -455,6 +463,7 @@ for step in range(start_step, train_steps + 1):
                 run_id=run_id,
                 last_ckpt_path=_last_run_ckpt_path,
                 best_val=best_val,
+                schedule_total_iters_den=_schedule_total_iters_den,
                 print_message=False,
             )
 
@@ -462,7 +471,7 @@ for step in range(start_step, train_steps + 1):
 
     # --------------- TRAINING SECTION -----------------
     inputs, targets = next(train_loader)
-    model(inputs,get_window_size_blocks(step, train_steps), targets).backward()
+    model(inputs, get_window_size_blocks(step, _schedule_total_iters_den), targets).backward()
     opt2futures = {
         opt: ([dist.all_reduce(p.grad, op=dist.ReduceOp.AVG, async_op=True).get_future() for p in params if p.grad is not None]
               if use_distributed else [])
@@ -471,7 +480,7 @@ for step in range(start_step, train_steps + 1):
     # set optimization hyperparameters
     for opt in optimizers:
         for group in opt.param_groups:
-            group["lr"] = group["initial_lr"] * get_lr(step, args.num_iterations, args.cooldown_frac)
+            group["lr"] = group["initial_lr"] * get_lr(step, _schedule_total_iters_den, args.cooldown_frac)
     for group in optimizer2.param_groups:
         frac = min(step / 300, 1)  # momentum warmup for muon
         group["momentum"] = (1 - frac) * 0.85 + frac * 0.95

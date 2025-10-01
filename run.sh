@@ -10,7 +10,7 @@ BEGIN_SHARD=""
 
 # Require positional CONFIG first
 if [ $# -lt 1 ]; then
-  echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [--ignore-prior-steps] [key=value ...]" >&2
+  echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [--ignore-prior-schedule] [key=value ...]" >&2
   exit 1
 fi
 
@@ -33,8 +33,8 @@ while getopts ":-:n:p:s:" opt; do
       ;;
     -)
       case "$OPTARG" in
-        ignore-prior-steps|ignore_prior_steps)
-          EXTRA_ARGS+=("--ignore-prior-steps=true")
+        ignore-prior-schedule|ignore_prior_schedule|ignore-prior-steps|ignore_prior_steps)
+          EXTRA_ARGS+=("--ignore_prior_schedule=true")
           ;;
         *)
           # Preserve other long options (with or without =)
@@ -44,12 +44,12 @@ while getopts ":-:n:p:s:" opt; do
       ;;
     \?)
       echo "Invalid option: -$OPTARG" >&2
-      echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [--ignore-prior-steps] [key=value ...]" >&2
+      echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [--ignore-prior-schedule] [key=value ...]" >&2
       exit 1
       ;;
     :)
       echo "Option -$OPTARG requires an argument." >&2
-      echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [--ignore-prior-steps] [key=value ...]" >&2
+      echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [--ignore-prior-schedule] [key=value ...]" >&2
       exit 1
       ;;
   esac
@@ -75,9 +75,9 @@ fi
 
 # Forward any remaining args as overrides. Accept key=value, --key=value, and supported bare flags.
 for arg in "$@"; do
-  if [[ "$arg" == --ignore-prior-steps || "$arg" == --ignore_prior_steps ]]; then
-    # Normalize bare flag to key=value for train.py parser
-    CMD+=("--ignore-prior-steps=true")
+  if [[ "$arg" == --ignore-prior-schedule || "$arg" == --ignore_prior_schedule || "$arg" == --ignore-prior-steps || "$arg" == --ignore_prior_steps ]]; then
+    # Normalize bare flag to key=value for train.py parser (new flag name)
+    CMD+=("--ignore_prior_schedule=true")
   elif [[ "$arg" == --* ]]; then
     CMD+=("$arg")
   else
