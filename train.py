@@ -184,6 +184,67 @@ def print0(st):
     if master_process:
         print(st)
 
+
+def _build_hparams_from_args(args: Hyperparameters) -> dict:
+    """Build a checkpoint hparams dict from training args."""
+    return {
+        "vocab_size": args.vocab_size,
+        "num_layers": args.num_layers,
+        "num_heads": args.num_heads,
+        "model_dim": args.model_dim,
+        "head_dim": args.head_dim,
+        "max_seq_len": args.max_seq_len,
+        "val_seq_len": args.val_seq_len,
+        "eos_token_id": 50256,
+    }
+
+
+def _save_run_checkpoint(
+    *,
+    val_value: float | int | None,
+    step: int,
+    args: Hyperparameters,
+    model: nn.Module,
+    optimizers: list[torch.optim.Optimizer],
+    tokens_per_step: int,
+    run_start_minute: str,
+    run_id: int,
+    last_ckpt_path: str | None,
+    best_val: float | int | None,
+    print_message: bool = True,
+) -> tuple[str | None, str]:
+    """
+    Save a checkpoint file for the current run, replacing the previous one from the same run if present.
+    Returns (new_last_ckpt_path, filename).
+    """
+    os.makedirs("checkpoints", exist_ok=True)
+    _val = float("nan") if val_value is None else val_value
+    _val_trunc = math.trunc(_val * 100) / 100 if isinstance(_val, (int, float)) else float("nan")
+    fname = f"checkpoints/{run_start_minute}-val{_val_trunc:.2f}-step{step:06d}-run{run_id}.pt"
+    if last_ckpt_path and os.path.exists(last_ckpt_path) and last_ckpt_path != fname:
+        try:
+            os.remove(last_ckpt_path)
+        except OSError:
+            pass
+    hparams = _build_hparams_from_args(args)
+    save_checkpoint(
+        fname,
+        model=model,
+        optimizers=optimizers,
+        step=step,
+        best_val=best_val,
+        hparams=hparams,
+        tokens_per_step=tokens_per_step,
+    )
+    if print_message:
+        # Only print if we have an actual numeric val_value
+        try:
+            _vv = float(val_value) if val_value is not None else float("nan")
+            print0(f"Saved checkpoint to {fname} with val loss {_vv:.6f}")
+        except Exception:
+            print0(f"Saved checkpoint to {fname}")
+    return fname, fname
+
 print0(json.dumps(asdict(args), indent=2, sort_keys=True))
 
 ########################################
@@ -347,37 +408,19 @@ for step in range(train_steps + 1):
                     and val_iter % args.val_snapshot_every == 0
                     and val_iter > args.snapshot_skip
                     and not last_step):
-                os.makedirs("checkpoints", exist_ok=True)
-                # build filename with run start minute, truncated val loss (2 decimals), and step
-                _val_trunc = math.trunc(cur_val * 100) / 100 if isinstance(cur_val, (int, float)) else float("nan")
-                fname = f"checkpoints/{run_start_minute}-val{_val_trunc:.2f}-step{step:06d}-run{run_id}.pt"
-                # replace previously saved checkpoint from the same run
-                if _last_run_ckpt_path and os.path.exists(_last_run_ckpt_path) and _last_run_ckpt_path != fname:
-                    try:
-                        os.remove(_last_run_ckpt_path)
-                    except OSError:
-                        pass
-                hparams = {
-                    "vocab_size": args.vocab_size,
-                    "num_layers": args.num_layers,
-                    "num_heads": args.num_heads,
-                    "model_dim": args.model_dim,
-                    "head_dim": args.head_dim,
-                    "max_seq_len": args.max_seq_len,
-                    "val_seq_len": args.val_seq_len,
-                    "eos_token_id": 50256,
-                }
-                save_checkpoint(
-                    fname,
+                _last_run_ckpt_path, _ = _save_run_checkpoint(
+                    val_value=cur_val,
+                    step=step,
+                    args=args,
                     model=model,
                     optimizers=optimizers,
-                    step=step,
-                    best_val=best_val,
-                    hparams=hparams,
                     tokens_per_step=tokens_per_step,
+                    run_start_minute=run_start_minute,
+                    run_id=run_id,
+                    last_ckpt_path=_last_run_ckpt_path,
+                    best_val=best_val,
+                    print_message=True,
                 )
-                _last_run_ckpt_path = fname
-                print0(f"Saved checkpoint to {fname} with val loss {cur_val:.6f}")
 
 
         model.train()
@@ -388,37 +431,19 @@ for step in range(train_steps + 1):
 
     if last_step:
         if master_process and args.save_checkpoint:
-            os.makedirs(f"checkpoints", exist_ok=True)
-            # Use the same run-start timestamp minute and include last known validation loss
-            _val_for_final = last_val_loss if last_val_loss is not None else float("nan")
-            _val_trunc = math.trunc(_val_for_final * 100) / 100 if isinstance(_val_for_final, (int, float)) else float("nan")
-            fname = f"checkpoints/{run_start_minute}-val{_val_trunc:.2f}-step{step:06d}-run{run_id}.pt"
-            # Replace previous checkpoint from this run
-            if _last_run_ckpt_path and os.path.exists(_last_run_ckpt_path) and _last_run_ckpt_path != fname:
-                try:
-                    os.remove(_last_run_ckpt_path)
-                except OSError:
-                    pass
-            hparams = {
-                "vocab_size": args.vocab_size,
-                "num_layers": args.num_layers,
-                "num_heads": args.num_heads,
-                "model_dim": args.model_dim,
-                "head_dim": args.head_dim,
-                "max_seq_len": args.max_seq_len,
-                "val_seq_len": args.val_seq_len,
-                "eos_token_id": 50256,
-            }
-            save_checkpoint(
-                fname,
+            _last_run_ckpt_path, _ = _save_run_checkpoint(
+                val_value=last_val_loss,
+                step=step,
+                args=args,
                 model=model,
                 optimizers=optimizers,
-                step=step,
-                best_val=best_val,
-                hparams=hparams,
                 tokens_per_step=tokens_per_step,
+                run_start_minute=run_start_minute,
+                run_id=run_id,
+                last_ckpt_path=_last_run_ckpt_path,
+                best_val=best_val,
+                print_message=False,
             )
-            _last_run_ckpt_path = fname
 
         break
 
