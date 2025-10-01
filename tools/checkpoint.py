@@ -25,6 +25,7 @@ class LoadedCheckpoint:
     step: Optional[int]
     best_val: Optional[float]
     optimizers: Optional[List[Dict[str, Any]]]
+    tokens_per_step: Optional[int] = None
 
 
 def _strip_prefix(state_dict: Dict[str, Any], prefix: str = UNWANTED_PREFIX) -> Dict[str, Any]:
@@ -49,6 +50,7 @@ def _normalize(obj: Any) -> LoadedCheckpoint:
         step = obj.get("step")
         best_val = obj.get("best_val")
         optimizers = obj.get("optimizers")
+        tokens_per_step = obj.get("tokens_per_step")
         if not isinstance(hparams, dict):
             hparams = {}
         if not isinstance(optimizers, list):
@@ -59,7 +61,7 @@ def _normalize(obj: Any) -> LoadedCheckpoint:
                 model_sd = model_sd.state_dict()  # type: ignore[attr-defined]
             except Exception:
                 raise TypeError("Unsupported checkpoint format: 'model' field is not a state_dict or module")
-        return LoadedCheckpoint(model=model_sd, hparams=hparams, step=step, best_val=best_val, optimizers=optimizers)
+        return LoadedCheckpoint(model=model_sd, hparams=hparams, step=step, best_val=best_val, optimizers=optimizers, tokens_per_step=tokens_per_step)
 
     # Fallback: treat as a raw state_dict
     if isinstance(obj, dict):
@@ -88,6 +90,7 @@ def save_checkpoint(
     step: Optional[int] = None,
     best_val: Optional[float] = None,
     hparams: Optional[Dict[str, Any]] = None,
+    tokens_per_step: Optional[int] = None,
 ) -> None:
     # Accept either a module or a state_dict for model
     if isinstance(model, nn.Module):
@@ -114,6 +117,7 @@ def save_checkpoint(
         optimizers=opt_states,
         best_val=best_val,
         hparams=hparams or {},
+        tokens_per_step=tokens_per_step,
     )
     torch.save(payload, path)
 

@@ -193,6 +193,7 @@ print0(json.dumps(asdict(args), indent=2, sort_keys=True))
 # Rehydrate critical hyperparameters from checkpoint if available
 best_val_from_ckpt = None
 resume_from_step = None
+_resume_tokens_per_step: int | None = None
 _ckpt_obj = None
 if args.init_checkpoint:
     _ckpt_obj = load_checkpoint(args.init_checkpoint, map_location=device)
@@ -225,6 +226,7 @@ if args.init_checkpoint:
     best_val_from_ckpt = float(_ckpt_obj.best_val) if _ckpt_obj.best_val is not None else None
     resume_from_step = int(_ckpt_obj.step) if _ckpt_obj.step is not None else None
     print0(f"Resuming from step {resume_from_step} with best val {best_val_from_ckpt}.")
+    _resume_tokens_per_step = int(_ckpt_obj.tokens_per_step) if getattr(_ckpt_obj, 'tokens_per_step', None) is not None else None
 
 
 for m in model.modules():
@@ -295,7 +297,9 @@ t0 = time.perf_counter()
 train_steps = args.num_iterations
 if resume_from_step is not None:
     train_steps = resume_from_step + args.num_iterations
-    tokens_seen = resume_from_step * tokens_per_step
+    # Use tokens_per_step from the checkpoint if available to compute accurate tokens_seen
+    _tps_for_resume = _resume_tokens_per_step if _resume_tokens_per_step is not None else tokens_per_step
+    tokens_seen = resume_from_step * _tps_for_resume
     last_val_tokens = tokens_seen - last_val_tokens
 for step in range(train_steps + 1):
     last_step = (step == train_steps)
@@ -370,6 +374,7 @@ for step in range(train_steps + 1):
                     step=step,
                     best_val=best_val,
                     hparams=hparams,
+                    tokens_per_step=tokens_per_step,
                 )
                 _last_run_ckpt_path = fname
                 print0(f"Saved checkpoint to {fname} with val loss {cur_val:.6f}")
@@ -411,6 +416,7 @@ for step in range(train_steps + 1):
                 step=step,
                 best_val=best_val,
                 hparams=hparams,
+                tokens_per_step=tokens_per_step,
             )
             _last_run_ckpt_path = fname
 
