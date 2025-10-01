@@ -223,7 +223,7 @@ def _save_run_checkpoint(
     os.makedirs("checkpoints", exist_ok=True)
     _val = float("nan") if val_value is None else val_value
     _val_trunc = math.trunc(_val * 100) / 100 if isinstance(_val, (int, float)) else float("nan")
-    fname = f"checkpoints/{run_start_minute}-val{_val_trunc:.2f}-step{step:06d}-run{run_id}.pt"
+    fname = f"checkpoints/{run_start_minute}-val{_val_trunc:.3f}-step{step:06d}-run{run_id}.pt"
     if last_ckpt_path and os.path.exists(last_ckpt_path) and last_ckpt_path != fname:
         try:
             os.remove(last_ckpt_path)
@@ -345,7 +345,10 @@ else:
 ########################################
 
 torch.cuda.reset_peak_memory_stats()
-train_loader = distributed_data_generator(args.train_files, world_size * args.max_seq_len, rank, world_size)
+# Optional beginning shard (1-based) from environment
+_begin_shard_env = os.environ.get("BEGIN_SHARD")
+_begin_shard = int(_begin_shard_env) if _begin_shard_env not in (None, "",) else None
+train_loader = distributed_data_generator(args.train_files, world_size * args.max_seq_len, rank, world_size, start_shard=_begin_shard)
 tokens_per_step = world_size * args.max_seq_len
 tokens_seen = 0
 last_val_loss = None
