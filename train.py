@@ -117,6 +117,7 @@ print0(json.dumps(asdict(args), indent=2, sort_keys=True))
 model: nn.Module = GPTCore(vocab_size=args.vocab_size, num_layers=args.num_layers, num_heads=args.num_heads, model_dim=args.model_dim,
                            max_seq_len=max(args.max_seq_len, args.val_seq_len), head_dim=args.head_dim).cuda()
 best_val_from_ckpt = None
+resume_from_step = None
 if args.init_checkpoint:
     _obj = torch.load(args.init_checkpoint, map_location=device)
     _sd = _obj.get('model', _obj) if isinstance(_obj, dict) else _obj
@@ -126,6 +127,9 @@ if args.init_checkpoint:
     print0(f"init_checkpoint:{args.init_checkpoint} missing:{len(_missing)} unexpected:{len(_unexpected)}")
     if isinstance(_obj, dict) and "best_val" in _obj:
         best_val_from_ckpt = float(_obj["best_val"])
+    if isinstance(_obj, dict) and "step" in _obj:
+        resume_from_step = int(_obj["step"])
+    print(f"Resuming from step {resume_from_step} with best val {best_val_from_ckpt}")
 
 for m in model.modules():
     if isinstance(m, nn.Embedding):
@@ -193,6 +197,10 @@ if use_distributed:
 t0 = time.perf_counter()
 # begin training
 train_steps = args.num_iterations
+if resume_from_step is not None:
+    train_steps = resume_from_step + args.num_iterations
+    tokens_seen = resume_from_step * tokens_per_step
+    last_val_tokens = tokens_seen - last_val_tokens
 for step in range(train_steps + 1):
     last_step = (step == train_steps)
 
