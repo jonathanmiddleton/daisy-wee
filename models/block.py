@@ -6,7 +6,7 @@ from torch import Tensor
 from torch.nn.attention.flex_attention import BlockMask
 
 class Block(nn.Module):
-    def __init__(self, dim: int, num_heads: int, max_seq_len: int, layer_idx: int, head_dim=128):
+    def __init__(self, dim: int, num_heads: int, max_seq_len: int, layer_idx: int, head_dim):
         super().__init__()
         # skip attention for layers mod 8
         self.attn = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim) if (layer_idx + 1) % 8 != 0 else None

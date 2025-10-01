@@ -360,13 +360,13 @@ if use_distributed:
 t0 = time.perf_counter()
 # begin training
 train_steps = args.num_iterations
+start_step = resume_from_step if resume_from_step is not None else 0
 if resume_from_step is not None:
-    train_steps = resume_from_step + args.num_iterations
     # Use tokens_per_step from the checkpoint if available to compute accurate tokens_seen
     _tps_for_resume = _resume_tokens_per_step if _resume_tokens_per_step is not None else tokens_per_step
     tokens_seen = resume_from_step * _tps_for_resume
-    last_val_tokens = tokens_seen - last_val_tokens
-for step in range(train_steps + 1):
+    last_val_tokens = tokens_seen  # we've validated up to resume step
+for step in range(start_step, train_steps + 1):
     last_step = (step == train_steps)
 
     # --------------- VALIDATION SECTION -----------------

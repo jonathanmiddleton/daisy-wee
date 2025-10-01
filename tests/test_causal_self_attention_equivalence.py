@@ -13,6 +13,7 @@ def _make_block_mask(T: int, H: int, W: int, device: torch.device):
 @pytest.mark.parametrize("T,W", [(9,9), (13,5)])
 @pytest.mark.parametrize("use_ve", [False, True])
 def test_causal_self_attention_forward_equals_step(T, W, use_ve, monkeypatch):
+    # TODO fix this test since it will spuriously fail for small T,W
     monkeypatch.setenv("DISABLE_O_ZERO_INIT", "1")
     torch.manual_seed(0)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

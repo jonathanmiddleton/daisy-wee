@@ -3,7 +3,7 @@ import sys
 import torch
 from torch import nn, tensor
 import tiktoken
-from models.gpt_core import GPTCore
+from models import get_model_class
 from inference.generate import Generator
 from tools.checkpoint import load_checkpoint, apply_model_state
 
@@ -38,15 +38,23 @@ ckpt = load_checkpoint(cli.checkpoint, map_location=device)
 state_dict = ckpt.model
 hparams = ckpt.hparams or {}
 
-vocab_size = int(hparams.get('vocab_size', VOCAB_SIZE))
-num_layers = int(hparams.get('num_layers', 48))
-num_heads = int(hparams.get('num_heads', 25))
-model_dim = int(hparams.get('model_dim', 1600))
-head_dim = int(hparams.get('head_dim', 64))
+vocab_size = int(hparams.get('vocab_size'))
+num_layers = int(hparams.get('num_layers'))
+num_heads = int(hparams.get('num_heads'))
+model_dim = int(hparams.get('model_dim'))
+head_dim = int(hparams.get('head_dim'))
 max_seq_len = int(hparams.get('max_seq_len', cli.max_seq_len))
+model_type = str(hparams.get('model_type', 'gpt2'))
 
-model: nn.Module = GPTCore(vocab_size=vocab_size, num_layers=num_layers, num_heads=num_heads, model_dim=model_dim,
-                           max_seq_len=max_seq_len, head_dim=head_dim).to(device)
+ModelClass = get_model_class(model_type)
+model: nn.Module = ModelClass(
+    vocab_size=vocab_size,
+    num_layers=num_layers,
+    num_heads=num_heads,
+    model_dim=model_dim,
+    max_seq_len=max_seq_len,
+    head_dim=head_dim,
+).to(device)
 
 # Load checkpoint weights into model
 apply_model_state(model, state_dict, strict=False)
