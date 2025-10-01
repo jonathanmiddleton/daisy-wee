@@ -10,7 +10,7 @@ BEGIN_SHARD=""
 
 # Require positional CONFIG first
 if [ $# -lt 1 ]; then
-  echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [key=value ...]" >&2
+  echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [--ignore-prior-steps] [key=value ...]" >&2
   exit 1
 fi
 
@@ -32,12 +32,12 @@ while getopts ":n:p:s:" opt; do
       ;;
     \?)
       echo "Invalid option: -$OPTARG" >&2
-      echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [key=value ...]" >&2
+      echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [--ignore-prior-steps] [key=value ...]" >&2
       exit 1
       ;;
     :)
       echo "Option -$OPTARG requires an argument." >&2
-      echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [key=value ...]" >&2
+      echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [--ignore-prior-steps] [key=value ...]" >&2
       exit 1
       ;;
   esac
@@ -57,16 +57,19 @@ if [ -n "$CHECKPOINT" ]; then
   CMD+=("--init_checkpoint=$CHECKPOINT")
 fi
 
-# Forward any remaining args as overrides. Accept either key=value or --key=value.
+# Forward any remaining args as overrides. Accept key=value, --key=value, and supported bare flags.
 for arg in "$@"; do
-  if [[ "$arg" == --* ]]; then
+  if [[ "$arg" == --ignore-prior-steps || "$arg" == --ignore_prior_steps ]]; then
+    # Normalize bare flag to key=value for train.py parser
+    CMD+=("--ignore-prior-steps=true")
+  elif [[ "$arg" == --* ]]; then
     CMD+=("$arg")
   else
     # if it's key=value without leading dashes, prepend --
     if [[ "$arg" == *"="* ]]; then
       CMD+=("--$arg")
     else
-      echo "Ignoring unexpected argument: $arg (expected key=value or --key=value)" >&2
+      echo "Ignoring unexpected argument: $arg (expected key=value, --key=value, or a supported bare flag)" >&2
     fi
   fi
 done

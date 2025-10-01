@@ -14,6 +14,7 @@ val_snapshot_every: 2     # in terms of val iterations, not steps
 snapshot_skip: 20         # skip snaps for the first N val iterations
 save_checkpoint: true
 # Model settings
+model_type: gpt2
 max_seq_len: 65536        # N * 1024, max_sequence_length
 vocab_size: 50257
 num_layers: 16
@@ -21,4 +22,4 @@ head_dim: 128             # documented here as static
 num_heads: 8
 model_dim: 1024           # num_heads * head_dim
 
-model_type: gpt2
+
