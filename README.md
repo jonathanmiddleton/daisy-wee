@@ -43,7 +43,7 @@ Below are the current, tested ways to launch training, run inference sampling, a
   - run.sh requires CONFIG_FILE as the first positional argument. Options -n/-p must appear after CONFIG_FILE.
   - Overrides without a leading -- are automatically rewritten to --key=value.
   - To force full attention windows (useful when resuming after training on smaller windows), pass the bare flag --full_windows (or --full-windows). run.sh will normalize this to --full_windows=true for train.py.
-  - By default, every run starts a fresh schedule. Passing -p only loads weights (no steps/optimizer/best-val are resumed). Legacy --ignore-prior-schedule (and aliases) are accepted for backward compatibility but are deprecated and treated as no-ops.
+  - By default, every run starts a fresh schedule. Passing -p only loads weights (no steps/optimizer/best-val are resumed).
   - The script sets sensible environment defaults (e.g., OMP_NUM_THREADS) and launches torchrun in standalone mode.
 - Examples
   - Pretraining (350M), 8 GPUs:
@@ -251,10 +251,6 @@ MoE will be introduced incrementally and benchmarked against the dense baseline 
 - Start an SFT run:
   ```sh
   python -u train.py config/instruct_sft.yml
-  ```
-- Start SFT from a pretraining checkpoint and start a fresh schedule (recommended for fine-tuning on new data):
-  ```sh
-  python -u train.py config/instruct_sft.yml --init_checkpoint=checkpoints/state_step_200000.pt --ignore_prior_schedule=true
   ```
 
 

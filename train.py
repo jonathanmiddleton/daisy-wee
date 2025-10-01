@@ -52,8 +52,6 @@ class Hyperparameters:
     scalar_params_lr: float = 0.015
     hidden_matrix_params_lr: float = 0.025
     adamw_weight_decay: float = 0.01
-    # Control schedule behavior on resume/warm-start
-    ignore_prior_schedule: bool = False
     # Force full attention windows (useful when resuming after smaller windows)
     full_windows: bool = False
     # Schedule control (decouple from stop condition)
