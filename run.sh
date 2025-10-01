@@ -36,6 +36,9 @@ while getopts ":-:n:p:s:" opt; do
         ignore-prior-schedule|ignore_prior_schedule|ignore-prior-steps|ignore_prior_steps)
           EXTRA_ARGS+=("--ignore_prior_schedule=true")
           ;;
+        full_windows|full-windows)
+          EXTRA_ARGS+=("--full_windows=true")
+          ;;
         *)
           # Preserve other long options (with or without =)
           EXTRA_ARGS+=("--$OPTARG")
@@ -78,6 +81,8 @@ for arg in "$@"; do
   if [[ "$arg" == --ignore-prior-schedule || "$arg" == --ignore_prior_schedule || "$arg" == --ignore-prior-steps || "$arg" == --ignore_prior_steps ]]; then
     # Normalize bare flag to key=value for train.py parser (new flag name)
     CMD+=("--ignore_prior_schedule=true")
+  elif [[ "$arg" == --full_windows || "$arg" == --full-windows ]]; then
+    CMD+=("--full_windows=true")
   elif [[ "$arg" == --* ]]; then
     CMD+=("$arg")
   else
