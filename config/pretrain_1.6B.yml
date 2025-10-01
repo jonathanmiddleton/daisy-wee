@@ -6,7 +6,7 @@ num_iterations: 12000
 cooldown_frac: 0.5
 embed_params_lr: 0.02          #adamw: default 0.3
 scalar_params_lr: 0.02         #adamw: default 0.015
-hidden_matrix_params_lr: 0.04   #muon: default 0.025
+hidden_matrix_params_lr: 0.03   #muon: default 0.025
 adamw_weight_decay: 0.01        # default 0.01
 # Common settings
 val_tokens: 10485760
