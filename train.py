@@ -49,6 +49,7 @@ class Hyperparameters:
     embed_params_lr: float = 0.3
     scalar_params_lr: float = 0.015
     hidden_matrix_params_lr: float = 0.025
+    adamw_weight_decay: float = 0.01
 
 def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
     """
@@ -150,7 +151,7 @@ adam_param_groups = [dict(params=head_params, lr=1 / 320), dict(params=embed_par
                      dict(params=scalar_params, lr=args.scalar_params_lr)]
 # small adam epsilon by @YouJiacheng. this is an alternate method of fixing the world_size dependence
 # discovered by @fernbear.bsky.social https://x.com/hi_tysam/status/1879692937589875094
-optimizer1 = torch.optim.AdamW(adam_param_groups, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.0, fused=True)
+optimizer1 = torch.optim.AdamW(adam_param_groups, betas=(0.8, 0.95), eps=1e-10, weight_decay=args.adamw_weight_decay, fused=True)
 optimizer2 = Muon(hidden_matrix_params, lr=args.hidden_matrix_params_lr, momentum=0.95, rank=rank, world_size=world_size)
 optimizers: list[torch.optim.Optimizer] = [optimizer1, optimizer2]
 
