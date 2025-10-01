@@ -17,9 +17,10 @@ fi
 CONFIG="$1"
 shift
 
-# Parse options appearing AFTER CONFIG
+# Parse options appearing AFTER CONFIG (accept short and long options)
 OPTIND=1
-while getopts ":n:p:s:" opt; do
+EXTRA_ARGS=()
+while getopts ":-:n:p:s:" opt; do
   case "$opt" in
     n)
       NPROC="$OPTARG"
@@ -29,6 +30,17 @@ while getopts ":n:p:s:" opt; do
       ;;
     s)
       BEGIN_SHARD="$OPTARG"
+      ;;
+    -)
+      case "$OPTARG" in
+        ignore-prior-steps|ignore_prior_steps)
+          EXTRA_ARGS+=("--ignore-prior-steps=true")
+          ;;
+        *)
+          # Preserve other long options (with or without =)
+          EXTRA_ARGS+=("--$OPTARG")
+          ;;
+      esac
       ;;
     \?)
       echo "Invalid option: -$OPTARG" >&2
@@ -55,6 +67,10 @@ fi
 CMD=(torchrun --standalone --nproc_per_node="$NPROC" train.py "$CONFIG")
 if [ -n "$CHECKPOINT" ]; then
   CMD+=("--init_checkpoint=$CHECKPOINT")
+fi
+# Include any parsed long options handled by getopts
+if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
+  CMD+=("${EXTRA_ARGS[@]}")
 fi
 
 # Forward any remaining args as overrides. Accept key=value, --key=value, and supported bare flags.
