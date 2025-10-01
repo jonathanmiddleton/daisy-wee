@@ -169,6 +169,79 @@ MoE will be introduced incrementally and benchmarked against the dense baseline 
 
 ---
 
+## Usage: run.sh, sample.py, and configs
+
+Below are the current, tested ways to launch training, run inference sampling, and work with the provided YAML configuration files.
+
+Run: run.sh (recommended wrapper)
+- Syntax
+  - ./run.sh CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [key=value ...]
+- Arguments
+  - CONFIG_FILE: Path to a YAML config (e.g., config/pretrain_350m.yml, config/pretrain_1.6B.yml, config/instruct_sft.yml, or config/instruct_sft_1.6B.yml). Required.
+  - -n NUM_PROCS: Number of processes per node (passed to torchrun --nproc_per_node). Default: 8.
+  - -p CHECKPOINT_PATH: Optional checkpoint to load as --init_checkpoint for train.py (resume or warm-start).
+  - key=value or --key=value: Any additional overrides forwarded to train.py as --key=value. Examples: num_iterations=6000, global_batch_size=8, max_seq_len=32768.
+- Notes
+  - run.sh requires CONFIG_FILE as the first positional argument. Options -n/-p must appear after CONFIG_FILE.
+  - Overrides without a leading -- are automatically rewritten to --key=value.
+  - The script sets sensible environment defaults (e.g., OMP_NUM_THREADS) and launches torchrun in standalone mode.
+- Examples
+  - Pretraining (350M), 8 GPUs:
+    - ./run.sh config/pretrain_350m.yml -n 8 num_iterations=6000
+  - Pretraining (1.6B), resume from checkpoint on 8 GPUs:
+    - ./run.sh config/pretrain_1.6B.yml -n 8 -p checkpoints/state_step_100000.pt
+  - Single-GPU debug run:
+    - ./run.sh config/pretrain_350m.yml -n 1 val_loss_every=200
+  - Supervised fine-tuning (SFT) with an init checkpoint:
+    - ./run.sh config/instruct_sft.yml -n 8
+
+Sampling: sample.py
+- Syntax
+  - python sample.py /path/to/checkpoint.pt [--device DEVICE] [--max_tokens N] [--temperature T] [--top_k K] [--repetition_penalty RP] [--seed SEED] [--max_seq_len L]
+- Behavior
+  - Loads the model class and hparams from the checkpoint and constructs the model accordingly.
+  - Uses tiktoken (gpt2) encoding and an instruction-style prompt template:
+    """
+    ### Instruction:
+    {your prompt}
+
+    ### Response:
+    """
+  - The default prompt string is defined in sample.py; edit the variable prompt in the file to change it, or adapt the script to accept a CLI prompt.
+  - Generation runs under torch.bfloat16 autocast when available and stops on eos_token_id (from hparams, default 50256).
+- Examples
+  - Minimal GPU example:
+    - python sample.py checkpoints/state_step_100000.pt --device cuda
+  - Deterministic sampling with a longer continuation:
+    - python sample.py checkpoints/state_step_100000.pt --device cuda --max_tokens 256 --temperature 0.7 --top_k 50 --repetition_penalty 1.15 --seed 123
+
+Configuration files: YAML (config/*.yml)
+- Common fields
+  - train_files, val_files: Glob patterns for tokenized shard files used for training/validation.
+  - num_iterations: Total training iterations (global steps).
+  - cooldown_frac: Fraction of the schedule spent in cooldown/decay.
+  - val_tokens: Number of tokens to evaluate during each validation pass.
+  - val_loss_every: Validate every N iterations.
+  - val_snapshot_every: Save a validation snapshot every M validations.
+  - snapshot_skip: Skip snapshots for the first K validations.
+  - save_checkpoint: Whether to write training checkpoints.
+- Model fields
+  - max_seq_len: Maximum context length for training/inference.
+  - vocab_size: Vocabulary size (e.g., 50257 for GPT-2 BPE).
+  - num_layers, num_heads, head_dim, model_dim: Transformer depth/width and per-head/overall dimensions.
+  - model_type: Dispatcher key passed to models.get_model_class (default: gpt2).
+- Optimizer-related (when present)
+  - embed_params_lr, scalar_params_lr, hidden_matrix_params_lr: Parameter-group learning rates.
+  - adamw_weight_decay: Weight decay for AdamW-style optimizers.
+- SFT-specific
+  - init_checkpoint: Path to a pretraining checkpoint used to warm-start SFT.
+- Overriding config values at launch
+  - Any YAML key can be overridden on the command line via run.sh using key=value (or --key=value), for example:
+    - ./run.sh config/pretrain_350m.yml -n 8 num_iterations=8000 max_seq_len=32768
+    - ./run.sh config/instruct_sft_1.6B.yml -n 8 -p checkpoints/state_step_200000.pt val_loss_every=100
+
+---
+
 ## Repository Structure (high level)
 
 - Model definition: GPT blocks with RoPE, fused attention projections, block masks for sliding windows, and learned residual gating/scaling.
