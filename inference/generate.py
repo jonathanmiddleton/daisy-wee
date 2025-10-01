@@ -52,13 +52,11 @@ class Generator:
 
     @torch.no_grad()
     def prefill(self, prompt_ids):
-        self.reset()
         logits, kv = self.model.prefill_batch(prompt_ids[None,:], window=self.window)
         self.cache.bulk_write_packed(kv.bfloat16(), len(prompt_ids), window=self.window)
-        self.history = prompt_ids
+        self.history = torch.cat([self.history, prompt_ids], dim=0)
 
         return logits
-
 
     @torch.no_grad()
     def step(self, token_id):
