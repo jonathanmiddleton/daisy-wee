@@ -15,7 +15,7 @@ def _apply_repetition_penalty(logits, prev_ids, rep_p, rep_w=128, rep_h=140.0, c
 
 
 class Generator:
-    def __init__(self, model, window, device=None, dtype=torch.bfloat16, temperature=1.0, top_k=None, top_p=None, repetition_penalty=1.0, eos_token_id=None):
+    def __init__(self, model, window, device=None, dtype=torch.bfloat16, temperature=1.0, top_k=None, top_p=None, repetition_penalty=1.0, eos_token_id=None, seed=None):
         self.model = model.eval()
         self.device = next(model.parameters()).device if device is None else device
         assert self.device is not None
@@ -33,6 +33,17 @@ class Generator:
         self.history = torch.empty(0, dtype=torch.long, device=self.device)
         self.window = window
         self.vocab_size = self.model.embed.num_embeddings
+        # Optional random generator for deterministic sampling
+        self.rng = None
+        if seed is not None:
+            self.set_seed(seed)
+
+    def set_seed(self, seed: int):
+        """Set or reset the RNG used for sampling to a deterministic state."""
+        g = torch.Generator(device=self.device)
+        g.manual_seed(int(seed))
+        self.rng = g
+        return self
 
     @torch.no_grad()
     def reset(self):
@@ -80,7 +91,9 @@ class Generator:
         return logits
 
     @torch.no_grad()
-    def generate(self, prompt_ids, max_new_tokens):
+    def generate(self, prompt_ids, max_new_tokens, seed=None):
+        if seed is not None:
+            self.set_seed(seed)
         assert prompt_ids.ndim == 1
         assert prompt_ids.size(0) > 0 # must have at least one token
         logits = self.prefill(prompt_ids)
@@ -114,5 +127,8 @@ class Generator:
             new_x[keep] = x[keep]
             x = new_x
         probs = F.softmax(x, dim=-1)
-        return int(torch.multinomial(probs, 1))
+        if self.rng is not None:
+            return int(torch.multinomial(probs, 1, generator=self.rng))
+        else:
+            return int(torch.multinomial(probs, 1))
 

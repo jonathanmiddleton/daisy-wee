@@ -18,6 +18,7 @@ parser.add_argument("--repetition_penalty", type=float, default=1.35, help="Repe
 parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
 parser.add_argument("--top_k", type=int, default=50, help="Top-k sampling")
 parser.add_argument("--max_seq_len", type=int, default=MAX_SEQ_LEN, help="Maximum sequence length")
+parser.add_argument("--seed", type=int, default=None, help="Random seed for deterministic sampling")
 parser.add_argument(
     "--device",
     type=str,
@@ -76,7 +77,7 @@ with torch.no_grad():
     with ctx:
         eos_id = int(hparams.get('eos_token_id', 50256))
         gen = Generator(model=model, window=1024, eos_token_id=eos_id, temperature=cli.temperature, top_k=cli.top_k, top_p=0.95,
-                        repetition_penalty=cli.repetition_penalty)
+                        repetition_penalty=cli.repetition_penalty, seed=cli.seed)
         tokens = gen.generate(x[0], max_new_tokens=cli.max_tokens)
 
         print(decode(tokens))
