@@ -3,6 +3,7 @@ import os
 import sys
 import time
 import json
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -173,6 +174,12 @@ if use_distributed:
     dist.barrier()
 master_process = (rank == 0)  # this process will do logging, checkpointing etc.
 
+# Run start timestamp truncated to the minute (UTC)
+_run_start_dt = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+run_start_minute = _run_start_dt.strftime("%Y%m%dT%H%M")
+# Track last checkpoint file saved for this run so we can replace it
+_last_run_ckpt_path: str | None = None
+
 def print0(st):
     if master_process:
         print(st)
@@ -334,9 +341,18 @@ for step in range(train_steps + 1):
 
             if (args.save_checkpoint and improved
                     and val_iter % args.val_snapshot_every == 0
-                    and val_iter > args.snapshot_skip):
+                    and val_iter > args.snapshot_skip
+                    and not last_step):
                 os.makedirs("checkpoints", exist_ok=True)
-                fname = f"checkpoints/checkpoint-run{run_id}.pt"
+                # build filename with run start minute, truncated val loss (2 decimals), and step
+                _val_trunc = math.trunc(cur_val * 100) / 100 if isinstance(cur_val, (int, float)) else float("nan")
+                fname = f"checkpoints/{run_start_minute}-val{_val_trunc:.2f}-step{step:06d}-run{run_id}.pt"
+                # replace previously saved checkpoint from the same run
+                if _last_run_ckpt_path and os.path.exists(_last_run_ckpt_path) and _last_run_ckpt_path != fname:
+                    try:
+                        os.remove(_last_run_ckpt_path)
+                    except OSError:
+                        pass
                 hparams = {
                     "vocab_size": args.vocab_size,
                     "num_layers": args.num_layers,
@@ -355,6 +371,7 @@ for step in range(train_steps + 1):
                     best_val=best_val,
                     hparams=hparams,
                 )
+                _last_run_ckpt_path = fname
                 print0(f"Saved checkpoint to {fname} with val loss {cur_val:.6f}")
 
 
@@ -367,8 +384,16 @@ for step in range(train_steps + 1):
     if last_step:
         if master_process and args.save_checkpoint:
             os.makedirs(f"checkpoints", exist_ok=True)
-            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-            fname = f"checkpoints/{ts}-step{step:06d}-run{run_id}.pt"
+            # Use the same run-start timestamp minute and include last known validation loss
+            _val_for_final = last_val_loss if last_val_loss is not None else float("nan")
+            _val_trunc = math.trunc(_val_for_final * 100) / 100 if isinstance(_val_for_final, (int, float)) else float("nan")
+            fname = f"checkpoints/{run_start_minute}-val{_val_trunc:.2f}-step{step:06d}-run{run_id}.pt"
+            # Replace previous checkpoint from this run
+            if _last_run_ckpt_path and os.path.exists(_last_run_ckpt_path) and _last_run_ckpt_path != fname:
+                try:
+                    os.remove(_last_run_ckpt_path)
+                except OSError:
+                    pass
             hparams = {
                 "vocab_size": args.vocab_size,
                 "num_layers": args.num_layers,
@@ -387,6 +412,7 @@ for step in range(train_steps + 1):
                 best_val=best_val,
                 hparams=hparams,
             )
+            _last_run_ckpt_path = fname
 
         break
 
