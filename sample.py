@@ -1,10 +1,11 @@
 import argparse
 import sys
 import torch
-from torch import nn, load, tensor
+from torch import nn, tensor
 import tiktoken
 from models.gpt_core import GPTCore
 from inference.generate import Generator
+from tools.checkpoint import load_checkpoint, apply_model_state
 
 VOCAB_SIZE = 50257
 MAX_SEQ_LEN = 16*1024
@@ -32,14 +33,9 @@ if len(sys.argv) == 1:
 cli = parser.parse_args()
 
 device = cli.device
-ckpt = load(cli.checkpoint, map_location=device)
-# Extract state dict and hyperparameters (if present)
-if isinstance(ckpt, dict) and 'model' in ckpt:
-    state_dict = ckpt['model']
-    hparams = ckpt.get('hparams', {}) or {}
-else:
-    state_dict = ckpt
-    hparams = {}
+ckpt = load_checkpoint(cli.checkpoint, map_location=device)
+state_dict = ckpt.model
+hparams = ckpt.hparams or {}
 
 vocab_size = int(hparams.get('vocab_size', VOCAB_SIZE))
 num_layers = int(hparams.get('num_layers', 48))
@@ -51,12 +47,8 @@ max_seq_len = int(hparams.get('max_seq_len', cli.max_seq_len))
 model: nn.Module = GPTCore(vocab_size=vocab_size, num_layers=num_layers, num_heads=num_heads, model_dim=model_dim,
                            max_seq_len=max_seq_len, head_dim=head_dim).to(device)
 
-# Remove DDP/compile prefix if present
-unwanted_prefix = '_orig_mod.'
-for k, v in list(state_dict.items()):
-    if k.startswith(unwanted_prefix):
-        state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-model.load_state_dict(state_dict, strict=False)
+# Load checkpoint weights into model
+apply_model_state(model, state_dict, strict=False)
 
 model.eval()
 if device != 'cpu':

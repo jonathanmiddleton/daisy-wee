@@ -13,6 +13,7 @@ from models.gpt_core import GPTCore
 from training.data_gen import distributed_data_generator
 from training.optim import Muon
 from training.optim import get_lr, get_window_size_blocks
+from tools.checkpoint import load_checkpoint, save_checkpoint, apply_model_state
 
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import torch
@@ -118,17 +119,16 @@ best_val_from_ckpt = None
 resume_from_step = None
 _ckpt_obj = None
 if args.init_checkpoint:
-    _ckpt_obj = torch.load(args.init_checkpoint, map_location=device)
-    if isinstance(_ckpt_obj, dict):
-        _saved_hparams = _ckpt_obj.get("hparams")
-        if isinstance(_saved_hparams, dict):
-            # Only adopt architecture/sequence related fields required to restore the model
-            for k in [
-                "vocab_size", "num_layers", "num_heads", "model_dim", "head_dim", "max_seq_len", "val_seq_len"
-            ]:
-                if k in _saved_hparams and _saved_hparams[k] is not None:
-                    setattr(args, k, _saved_hparams[k])
-            print0("Rehydrated model hyperparameters from checkpoint.")
+    _ckpt_obj = load_checkpoint(args.init_checkpoint, map_location=device)
+    _saved_hparams = _ckpt_obj.hparams if _ckpt_obj is not None else None
+    if isinstance(_saved_hparams, dict):
+        # Only adopt architecture/sequence related fields required to restore the model
+        for k in [
+            "vocab_size", "num_layers", "num_heads", "model_dim", "head_dim", "max_seq_len", "val_seq_len"
+        ]:
+            if k in _saved_hparams and _saved_hparams[k] is not None:
+                setattr(args, k, _saved_hparams[k])
+        print0("Rehydrated model hyperparameters from checkpoint.")
 
 # Now we can safely build the model with possibly rehydrated args
 model: nn.Module = GPTCore(
@@ -142,16 +142,11 @@ model: nn.Module = GPTCore(
 
 # If a checkpoint was provided, load weights and training metadata
 if args.init_checkpoint:
-    _obj = _ckpt_obj if isinstance(_ckpt_obj, dict) else _ckpt_obj
-    _sd = _obj.get('model', _obj) if isinstance(_obj, dict) else _obj
-    if isinstance(_sd, dict) and any(k.startswith('_orig_mod.') for k in _sd.keys()):
-        _sd = {k.replace('_orig_mod.', '', 1): v for k, v in _sd.items()}
-    _missing, _unexpected = model.load_state_dict(_sd, strict=False)
+    _sd = _ckpt_obj.model
+    _missing, _unexpected = apply_model_state(model, _sd, strict=False)
     print0(f"init_checkpoint:{args.init_checkpoint} missing:{len(_missing)} unexpected:{len(_unexpected)}")
-    if isinstance(_obj, dict) and "best_val" in _obj:
-        best_val_from_ckpt = float(_obj["best_val"])
-    if isinstance(_obj, dict) and "step" in _obj:
-        resume_from_step = int(_obj["step"])
+    best_val_from_ckpt = float(_ckpt_obj.best_val) if _ckpt_obj.best_val is not None else None
+    resume_from_step = int(_ckpt_obj.step) if _ckpt_obj.step is not None else None
     print0(f"Resuming from step {resume_from_step} with best val {best_val_from_ckpt}")
 
 for m in model.modules():
@@ -271,24 +266,24 @@ for step in range(train_steps + 1):
                     and val_iter > args.snapshot_skip):
                 os.makedirs("checkpoints", exist_ok=True)
                 fname = f"checkpoints/checkpoint-run{run_id}.pt"
-                _model_to_state = model._orig_mod if hasattr(model, "_orig_mod") else model
-                log = dict(
+                hparams = {
+                    "vocab_size": args.vocab_size,
+                    "num_layers": args.num_layers,
+                    "num_heads": args.num_heads,
+                    "model_dim": args.model_dim,
+                    "head_dim": args.head_dim,
+                    "max_seq_len": args.max_seq_len,
+                    "val_seq_len": args.val_seq_len,
+                    "eos_token_id": 50256,
+                }
+                save_checkpoint(
+                    fname,
+                    model=model,
+                    optimizers=optimizers,
                     step=step,
-                    model=_model_to_state.state_dict(),
-                    optimizers=[opt.state_dict() for opt in optimizers],
                     best_val=best_val,
-                    hparams={
-                        "vocab_size": args.vocab_size,
-                        "num_layers": args.num_layers,
-                        "num_heads": args.num_heads,
-                        "model_dim": args.model_dim,
-                        "head_dim": args.head_dim,
-                        "max_seq_len": args.max_seq_len,
-                        "val_seq_len": args.val_seq_len,
-                        "eos_token_id": 50256,
-                    },
+                    hparams=hparams,
                 )
-                torch.save(log, fname)
                 print0(f"Saved checkpoint to {fname} with val loss {cur_val:.6f}")
 
 
@@ -300,24 +295,27 @@ for step in range(train_steps + 1):
 
     if last_step:
         if master_process and args.save_checkpoint:
-            _model_to_state = model._orig_mod if hasattr(model, "_orig_mod") else model
-            log = dict(step=step, model=_model_to_state.state_dict(),
-                       optimizers=[opt.state_dict() for opt in optimizers],
-                       best_val=best_val,
-                       hparams={
-                           "vocab_size": args.vocab_size,
-                           "num_layers": args.num_layers,
-                           "num_heads": args.num_heads,
-                           "model_dim": args.model_dim,
-                           "head_dim": args.head_dim,
-                           "max_seq_len": args.max_seq_len,
-                           "val_seq_len": args.val_seq_len,
-                           "eos_token_id": 50256,
-                       })
             os.makedirs(f"checkpoints", exist_ok=True)
             ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
             fname = f"checkpoints/{ts}-step{step:06d}-run{run_id}.pt"
-            torch.save(log, fname)
+            hparams = {
+                "vocab_size": args.vocab_size,
+                "num_layers": args.num_layers,
+                "num_heads": args.num_heads,
+                "model_dim": args.model_dim,
+                "head_dim": args.head_dim,
+                "max_seq_len": args.max_seq_len,
+                "val_seq_len": args.val_seq_len,
+                "eos_token_id": 50256,
+            }
+            save_checkpoint(
+                fname,
+                model=model,
+                optimizers=optimizers,
+                step=step,
+                best_val=best_val,
+                hparams=hparams,
+            )
 
         break
 
