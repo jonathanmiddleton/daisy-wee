@@ -13,11 +13,11 @@ MAX_SEQ_LEN = 16*1024
 # Command line interface
 parser = argparse.ArgumentParser(description="Generate text with a GPT model from a checkpoint.")
 parser.add_argument("checkpoint", type=str, help="Path to model checkpoint (.pt)")
-parser.add_argument("--max_tokens", type=int, default=100, help="Number of new tokens to generate")
-parser.add_argument("--repetition_penalty", type=float, default=1.35, help="Repetition penalty")
+parser.add_argument("--max_tokens", type=int, default=256, help="Number of new tokens to generate")
+parser.add_argument("--repetition_penalty", type=float, default=1.10, help="Repetition penalty")
 parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
 parser.add_argument("--top_k", type=int, default=100, help="Top-k sampling")
-parser.add_argument("--top_p", type=float, help="Top-p sampling")
+parser.add_argument("--top_p", type=float, default=0.95, help="Top-p sampling")
 parser.add_argument("--max_seq_len", type=int, default=MAX_SEQ_LEN, help="Maximum sequence length")
 parser.add_argument("--seed", type=int, default=None, help="Random seed for deterministic sampling")
 parser.add_argument(
@@ -26,6 +26,7 @@ parser.add_argument(
     default="cuda",
     help="Device to run on: e.g., 'cpu', 'cuda', 'cuda:0'"
 )
+parser.add_argument("--chat", action="store_true", help="Start an interactive turn-based CLI chat")
 
 if len(sys.argv) == 1:
     parser.print_usage()
@@ -57,7 +58,6 @@ model: nn.Module = ModelClass(
     head_dim=head_dim,
 ).to(device)
 
-# Load checkpoint weights into model
 apply_model_state(model, state_dict, strict=False)
 
 model.eval()
@@ -75,18 +75,55 @@ decode = lambda l: enc.decode(l)
 ### Response:
 '''
 template = "### Instruction:\n{prompt}\n\n### Response:\n"
-prompt = template.format(prompt="Write a short story about a child who is playing with a ball.")
-
-start_ids = encode(prompt)
-x = tensor(start_ids, dtype=torch.long, device=device)[None, ...]
 
 devtype = "cuda" if str(device).startswith("cuda") else ("mps" if str(device).startswith("mps") else "cpu")
 ctx = torch.amp.autocast(device_type=devtype, dtype=torch.bfloat16)
-with torch.no_grad():
-    with ctx:
-        eos_id = int(hparams.get('eos_token_id', 50256))
-        gen = Generator(model=model, window=1024, eos_token_id=eos_id, temperature=cli.temperature, top_k=cli.top_k, top_p=cli.top_p,
-                        repetition_penalty=cli.repetition_penalty, seed=cli.seed)
-        tokens = gen.generate(x[0], max_new_tokens=cli.max_tokens)
 
-        print(decode(tokens))
+eos_id = int(hparams.get('eos_token_id', 50256))
+gen = Generator(
+    model=model,
+    window=4096,
+    eos_token_id=eos_id,
+    temperature=cli.temperature,
+    top_k=cli.top_k,
+    top_p=cli.top_p,
+    repetition_penalty=cli.repetition_penalty,
+    seed=cli.seed,
+)
+
+if cli.chat:
+    print("Starting turn-based chat. Type 'exit', 'quit', or press Ctrl-D/Ctrl-C to end.\n")
+    transcript = ""
+    while True:
+        try:
+            user = input("You: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if not user:
+            continue
+        if user.lower() in {"exit", "quit", "q"}:
+            break
+
+        prompt_text = transcript + template.format(prompt=user)
+        start_ids = encode(prompt_text)
+        x = tensor(start_ids, dtype=torch.long, device=device)
+        with torch.no_grad():
+            with ctx:
+                gen.reset()
+                out_ids = gen.generate(x, max_new_tokens=cli.max_tokens)
+        new_ids = out_ids[len(start_ids):]
+        reply = decode(new_ids).strip()
+        print(f"Assistant: {reply}\n")
+
+        transcript = prompt_text + reply + "\n\n"
+    sys.exit(0)
+else:
+    # Single-shot sample
+    prompt = template.format(prompt="Write a short story about a child who is playing with a ball.")
+    start_ids = encode(prompt)
+    x = tensor(start_ids, dtype=torch.long, device=device)
+    with torch.no_grad():
+        with ctx:
+            out_ids = gen.generate(x, max_new_tokens=cli.max_tokens)
+    print(decode(out_ids))
