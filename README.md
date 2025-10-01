@@ -42,6 +42,7 @@ Below are the current, tested ways to launch training, run inference sampling, a
 - Notes
   - run.sh requires CONFIG_FILE as the first positional argument. Options -n/-p must appear after CONFIG_FILE.
   - Overrides without a leading -- are automatically rewritten to --key=value.
+  - To force full attention windows (useful when resuming after training on smaller windows), pass the bare flag --full_windows (or --full-windows). run.sh will normalize this to --full_windows=true for train.py.
   - By default, every run starts a fresh schedule. Passing -p only loads weights (no steps/optimizer/best-val are resumed). Legacy --ignore-prior-schedule (and aliases) are accepted for backward compatibility but are deprecated and treated as no-ops.
   - The script sets sensible environment defaults (e.g., OMP_NUM_THREADS) and launches torchrun in standalone mode.
 - Examples
@@ -56,6 +57,12 @@ Below are the current, tested ways to launch training, run inference sampling, a
   - Single-GPU debug run:
     ```sh
     ./run.sh config/pretrain_350m.yml -n 1 val_loss_every=200
+    ```
+  - Resume training after earlier small windows, now force full attention windows:
+    ```sh
+    ./run.sh config/pretrain_350m.yml -n 8 --full_windows
+    # or equivalently
+    ./run.sh config/pretrain_350m.yml -n 8 --full_windows=true
     ```
   - Supervised fine-tuning (SFT) from a pretraining checkpoint, starting a fresh schedule (recommended):
     ```sh
@@ -101,6 +108,7 @@ Below are the current, tested ways to launch training, run inference sampling, a
   - val_snapshot_every: Save a validation snapshot every M validations.
   - snapshot_skip: Skip snapshots for the first K validations.
   - save_checkpoint: Whether to write training checkpoints.
+  - full_windows: If true, force full attention windows for the entire run (useful when resuming after training with smaller windows).
 - Model fields
   - max_seq_len: Maximum context length for training/inference.
   - vocab_size: Vocabulary size (e.g., 50257 for GPT-2 BPE).
