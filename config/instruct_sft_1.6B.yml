@@ -1,20 +1,25 @@
+# Logging
+wandb_log: true
+wandb_project: 'daisy-wee'
+wandb_run_name: 'instruct_sft_1.6B'
 # Pretraining checkpoint path
 init_checkpoint: "checkpoints/state_step_100000.pt"
 # Instruct SFT training configuration
-train_files: "data/instruct_mix/instruct_train_*.bin"
-val_files: "data/instruct_mix/instruct_val_*.bin"
+train_shards: "data/instruct_mix/instruct_train_*.bin"
+val_shards: "data/instruct_mix/instruct_val_*.bin"
 val_seq_len: 262144             # 64 * 1024
-num_iterations: 5000            # assumes 8x GPUs, 400 for 1x GPU
+target_tokens: 700000000            # total training tokens
 cooldown_frac: 0.9
 embed_params_lr: 0.002          #adamw: default 0.3
 scalar_params_lr: 0.002         #adamw: default 0.015
 hidden_matrix_params_lr: 0.02   #muon: default 0.025
 adamw_weight_decay: 0.01        # default 0.01
+full_windows: true
 # Common settings
 val_tokens: 10485760
-val_loss_every: 200
-val_snapshot_every: 1           # in terms of val iterations, not steps
-snapshot_skip: 0                # skip snaps for the first N val iterations
+val_loss_every_tokens: 50000000
+snapshot_warmup_tokens: 0           # token warmup before snapshots
+snapshot_per_n_tokens: 200000000                # snapshot interval by tokens
 save_checkpoint: true
 # Model settings
 model_type: gpt2

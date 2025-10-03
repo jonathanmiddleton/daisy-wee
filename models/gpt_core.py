@@ -8,22 +8,26 @@ from torch.nn.attention.flex_attention import BlockMask
 def next_multiple_of_n(v: float | int, *, n: int):
     return next(x for x in range(n, int(v) + 1 + n, n) if x >= v)
 
+_skip_map = None
 def _get_skip_map(L: int):
-    skip_map = {}
-    stride = max(1, L // 4)
-    for m in range(3):
-        i = L - 3 + m
-        j = i - stride * (m + 1)
-        if 0 <= j < i < L:
-            skip_map[i] = j
-    return skip_map
+    global _skip_map
+    if _skip_map is None:
+        skip_map = {}
+        stride = max(1, L // 4)
+        for m in range(3):
+            i = L - 3 + m
+            j = i - stride * (m + 1)
+            if 0 <= j < i < L:
+                skip_map[i] = j
+        _skip_map = skip_map
+    return _skip_map
 
 class GPT2Core(nn.Module):
     def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim):
         super().__init__()
         self.embed = nn.Embedding(vocab_size, model_dim)
         self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(3)])
-        self.blocks = nn.ModuleList([Block(model_dim, num_heads, max_seq_len, i, head_dim) for i in range(num_layers)])
+        self.blocks = nn.ModuleList([Block(model_dim, num_heads, max_seq_len, i, head_dim, num_layers) for i in range(num_layers)])
         self.lm_head_w = nn.Parameter(torch.zeros(next_multiple_of_n(vocab_size, n=128), model_dim))
         assert num_layers % 2 == 0
         self.scalars = nn.Parameter(torch.cat([

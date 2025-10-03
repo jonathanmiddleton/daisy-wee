@@ -1,20 +1,25 @@
-# Pretraining configuration
-train_files: "data/fineweb/fineweb_train_*.bin"
-val_files: "data/fineweb/fineweb_val_*.bin"
-val_seq_len: 65536              # N * 1024
-num_iterations: 30000
+# Logging
+wandb_log: true
+wandb_project: 'daisy-wee'
+wandb_run_name: '350m'
+# Training
+train_shards: "data/fineweb/fineweb_train_*.bin"
+target_tokens: 4000000000
+val_loss_every_tokens: 200000000
 cooldown_frac: 0.5
 embed_params_lr: 0.02           #adamw
 scalar_params_lr: 0.02          #adamw
 hidden_matrix_params_lr: 0.03   #muon
 adamw_weight_decay: 0.01
-# Common settings
+# Evaluations
+val_shards: "data/fineweb/fineweb_val_*.bin"
+val_seq_len: 65536              # N * 1024
 val_tokens: 10485760
-val_loss_every: 250
-val_snapshot_every: 2           # in terms of val iterations, not steps
-snapshot_skip: 10               # skip snaps for the first N val iterations
+# Snapshots
+snapshot_warmup_tokens: 200000000               # token warmup before snapshots
+snapshot_per_n_tokens: 500000000           # snapshot interval by tokens
 save_checkpoint: true
-# Model settings
+# Model Definition
 model_type: gpt2
 max_seq_len: 16384              # N * 1024, max_sequence_length
 vocab_size: 50257

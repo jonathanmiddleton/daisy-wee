@@ -109,6 +109,22 @@ class Muon(torch.optim.Optimizer):
                     torch.futures.collect_all(futures).wait()
 
 # learning rate schedule: stable then decay
+# New s-based schedule variants that take normalized progress s ∈ [0,1]
+
+def get_lr_s(s: float, cooldown_frac: float) -> float:
+    """Return LR scale factor given normalized progress s in [0,1].
+    1.0 during main phase, cosine-linear or linear decay during cooldown.
+    Mirrors previous get_lr(step, num_iterations, cooldown_frac) semantics but decoupled from steps.
+    """
+    # Clamp progress to [0, 1]
+    x = 0.0 if s < 0 else (1.0 if s > 1 else s)
+    if x < 1 - cooldown_frac:
+        return 1.0
+    else:
+        # Linear decay to zero over the cooldown tail
+        return max((1 - x) / max(cooldown_frac, 1e-8), 0.0)
+
+# Backward-compatible step-based wrapper remains for callers not yet migrated
 def get_lr(step: int, num_iterations: int, cooldown_frac: float):
     # num_iterations here is the schedule_total_iters denominator
     if num_iterations <= 0:
@@ -150,6 +166,18 @@ def get_window_size_blocks(step: int, num_iterations: int):
     x = 0.0 if x < 0 else (1.0 if x > 1 else x)
     # Linearly increase the block-wise sliding window size over training 128 -> 1792
     # increase by @fernbear.bsky.social; block-wise by @YouJiacheng
+    factor = 4 * x ** 3 - 6 * x ** 2 + 3 * x  # cubic schedule by @jadenj3o
+    window_size = next_multiple_of_n(3456 * factor, n=128)  # TODO: remove magic 3456
+    return get_window_size_blocks_helper(window_size)
+
+
+def get_window_size_blocks_s(s: float):
+    """Attention window schedule driven by normalized progress s∈[0,1]."""
+    if _force_full_windows:
+        x = 1.0
+    else:
+        x = 0.0 if s < 0 else (1.0 if s > 1 else s)
+    # Linearly/cubically increase block-wise sliding window size over training 128 -> 1792
     factor = 4 * x ** 3 - 6 * x ** 2 + 3 * x  # cubic schedule by @jadenj3o
     window_size = next_multiple_of_n(3456 * factor, n=128)  # TODO: remove magic 3456
     return get_window_size_blocks_helper(window_size)

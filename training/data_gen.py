@@ -2,6 +2,7 @@ import itertools
 
 import torch
 from pathlib import Path
+import numpy as np
 
 def _load_data_shard(file: Path):
     header = torch.from_file(str(file), False, 256, dtype=torch.int32) # header is 256 int32
@@ -48,3 +49,7 @@ def distributed_data_generator(filename_pattern: str, batch_size: int, rank: int
         targets = buf[1:].to(device="cuda", dtype=torch.int64, non_blocking=True)  # H2D in another stream isn't helpful.
         pos += batch_size
         yield inputs, targets
+
+
+
+

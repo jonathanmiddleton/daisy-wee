@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 from torch import nn
 
+from models import get_model_class
 
 STANDARD_KEYS = {
     "model",         # state_dict of the model
@@ -26,6 +27,7 @@ class LoadedCheckpoint:
     best_val: Optional[float]
     optimizers: Optional[List[Dict[str, Any]]]
     tokens_per_step: Optional[int] = None
+    progress_state: Optional[Dict[str, Any]] = None
 
 
 def _strip_prefix(state_dict: Dict[str, Any], prefix: str = UNWANTED_PREFIX) -> Dict[str, Any]:
@@ -51,6 +53,7 @@ def _normalize(obj: Any) -> LoadedCheckpoint:
         best_val = obj.get("best_val")
         optimizers = obj.get("optimizers")
         tokens_per_step = obj.get("tokens_per_step")
+        progress_state = obj.get("progress_state")
         if not isinstance(hparams, dict):
             hparams = {}
         if not isinstance(optimizers, list):
@@ -61,7 +64,7 @@ def _normalize(obj: Any) -> LoadedCheckpoint:
                 model_sd = model_sd.state_dict()  # type: ignore[attr-defined]
             except Exception:
                 raise TypeError("Unsupported checkpoint format: 'model' field is not a state_dict or module")
-        return LoadedCheckpoint(model=model_sd, hparams=hparams, step=step, best_val=best_val, optimizers=optimizers, tokens_per_step=tokens_per_step)
+        return LoadedCheckpoint(model=model_sd, hparams=hparams, step=step, best_val=best_val, optimizers=optimizers, tokens_per_step=tokens_per_step, progress_state=progress_state)
 
     # Fallback: treat as a raw state_dict
     if isinstance(obj, dict):
@@ -91,6 +94,7 @@ def save_checkpoint(
     best_val: Optional[float] = None,
     hparams: Optional[Dict[str, Any]] = None,
     tokens_per_step: Optional[int] = None,
+    progress_state: Optional[Dict[str, Any]] = None,
 ) -> None:
     # Accept either a module or a state_dict for model
     if isinstance(model, nn.Module):
@@ -118,6 +122,7 @@ def save_checkpoint(
         best_val=best_val,
         hparams=hparams or {},
         tokens_per_step=tokens_per_step,
+        progress_state=progress_state,
     )
     torch.save(payload, path)
 
@@ -132,3 +137,29 @@ def peek_hparams(path: str, map_location: Any | None = None) -> Dict[str, Any]:
     obj = torch.load(path, map_location=map_location)
     ckpt = _normalize(obj)
     return ckpt.hparams or {}
+
+def model_from_checkpoint(path: str, device: torch.device | str, map_location: Any | None = None) -> nn.Module:
+    ckpt = load_checkpoint(path, map_location=map_location)
+    state_dict = ckpt.model
+    hparams = ckpt.hparams or {}
+
+    vocab_size = int(hparams.get('vocab_size'))
+    num_layers = int(hparams.get('num_layers'))
+    num_heads = int(hparams.get('num_heads'))
+    model_dim = int(hparams.get('model_dim'))
+    head_dim = int(hparams.get('head_dim'))
+    max_seq_len = int(hparams.get('max_seq_len'))
+    model_type = str(hparams.get('model_type'))
+
+    ModelClass = get_model_class(model_type)
+    model: nn.Module = ModelClass(
+        vocab_size=vocab_size,
+        num_layers=num_layers,
+        num_heads=num_heads,
+        model_dim=model_dim,
+        max_seq_len=max_seq_len,
+        head_dim=head_dim,
+    ).to(device)
+
+    apply_model_state(model, state_dict, strict=False)
+    return model

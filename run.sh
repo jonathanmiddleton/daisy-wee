@@ -7,10 +7,11 @@ export TORCH_COMPILE_OFF=0
 NPROC=8
 CHECKPOINT=""
 BEGIN_SHARD=""
+RUN_ID="1"
 
 # Require positional CONFIG first
 if [ $# -lt 1 ]; then
-  echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [key=value ...]" >&2
+  echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [-r RUN_ID] [key=value ...]" >&2
   exit 1
 fi
 
@@ -20,7 +21,7 @@ shift
 # Parse options appearing AFTER CONFIG (accept short and long options)
 OPTIND=1
 EXTRA_ARGS=()
-while getopts ":-:n:p:s:" opt; do
+while getopts ":-:n:p:s:r:" opt; do
   case "$opt" in
     n)
       NPROC="$OPTARG"
@@ -31,10 +32,25 @@ while getopts ":-:n:p:s:" opt; do
     s)
       BEGIN_SHARD="$OPTARG"
       ;;
+    r)
+      RUN_ID="$OPTARG"
+      ;;
     -)
       case "$OPTARG" in
         full_windows|full-windows)
           EXTRA_ARGS+=("--full_windows=true")
+          ;;
+        run_id)
+          RUN_ID="${!OPTIND}"; OPTIND=$((OPTIND + 1))
+          ;;
+        run-id)
+          RUN_ID="${!OPTIND}"; OPTIND=$((OPTIND + 1))
+          ;;
+        run_id=*)
+          RUN_ID="${OPTARG#run_id=}"
+          ;;
+        run-id=*)
+          RUN_ID="${OPTARG#run-id=}"
           ;;
         *)
           # Preserve other long options (with or without =)
@@ -44,19 +60,19 @@ while getopts ":-:n:p:s:" opt; do
       ;;
     \?)
       echo "Invalid option: -$OPTARG" >&2
-      echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [key=value ...]" >&2
+      echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [-r RUN_ID] [key=value ...]" >&2
       exit 1
       ;;
     :)
       echo "Option -$OPTARG requires an argument." >&2
-      echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [key=value ...]" >&2
+      echo "Usage: $0 CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [-r RUN_ID] [key=value ...]" >&2
       exit 1
       ;;
   esac
 done
 shift $((OPTIND - 1))
 
-export RUN_ID=1
+export RUN_ID
 export OMP_NUM_THREADS=8
 
 # Optionally set beginning shard index for training data

@@ -38,7 +38,7 @@ Below are the current, tested ways to launch training, run inference sampling, a
   - -n NUM_PROCS: Number of processes per node (passed to torchrun --nproc_per_node). Default: 8.
   - -p CHECKPOINT_PATH: Optional checkpoint to initialize model weights only (fresh schedule; no steps/optimizer/best-val are resumed).
   - -s BEGIN_SHARD: Optional starting shard index for training data (exported as BEGIN_SHARD). Useful for resuming data traversal.
-  - key=value or --key=value: Any additional overrides forwarded to train.py as --key=value. Examples: num_iterations=6000, global_batch_size=8, max_seq_len=32768.
+  - key=value or --key=value: Any additional overrides forwarded to train.py as --key=value. Examples: target_tokens=3000000000, max_seq_len=32768.
 - Notes
   - run.sh requires CONFIG_FILE as the first positional argument. Options -n/-p must appear after CONFIG_FILE.
   - Overrides without a leading -- are automatically rewritten to --key=value.
@@ -48,7 +48,7 @@ Below are the current, tested ways to launch training, run inference sampling, a
 - Examples
   - Pretraining (350M), 8 GPUs:
     ```sh
-    ./run.sh config/pretrain_350m.yml -n 8 num_iterations=6000
+    ./run.sh config/pretrain_350m.yml -n 8 target_tokens=3000000000
     ```
   - Pretraining (1.6B), warm-start from checkpoint on 8 GPUs:
     ```sh
@@ -56,7 +56,7 @@ Below are the current, tested ways to launch training, run inference sampling, a
     ```
   - Single-GPU debug run:
     ```sh
-    ./run.sh config/pretrain_350m.yml -n 1 val_loss_every=200
+    ./run.sh config/pretrain_350m.yml -n 1 val_loss_every_tokens=200000000
     ```
   - Resume training after earlier small windows, now force full attention windows:
     ```sh
@@ -100,13 +100,13 @@ Below are the current, tested ways to launch training, run inference sampling, a
 
 ### Configuration files: YAML (config/*.yml)
 - Common fields
-  - train_files, val_files: Glob patterns for tokenized shard files used for training/validation.
-  - num_iterations: Total training iterations (global steps).
-  - cooldown_frac: Fraction of the schedule spent in cooldown/decay.
+  - train_shards, val_shards: Glob patterns for tokenized shard files used for training/validation.
+  - target_tokens: Total number of training tokens to process before completion.
+  - cooldown_frac: Fraction of the schedule spent in cooldown/decay; drives LR/window schedules via normalized progress s in [0,1].
   - val_tokens: Number of tokens to evaluate during each validation pass.
-  - val_loss_every: Validate every N iterations.
-  - val_snapshot_every: Save a validation snapshot every M validations.
-  - snapshot_skip: Skip snapshots for the first K validations.
+  - val_loss_every_tokens: Run validation every N training tokens processed.
+  - snapshot_warmup_tokens: Minimum tokens to process before taking snapshots.
+  - snapshot_per_n_tokens: Snapshot interval measured in tokens.
   - save_checkpoint: Whether to write training checkpoints.
   - full_windows: If true, force full attention windows for the entire run (useful when resuming after training with smaller windows).
 - Model fields
@@ -119,12 +119,12 @@ Below are the current, tested ways to launch training, run inference sampling, a
   - adamw_weight_decay: Weight decay for AdamW-style optimizers.
 - SFT-specific
   - init_checkpoint: Path to a pretraining checkpoint used to warm-start SFT. Weights are loaded; optimizer state, steps, and best-val are not resumed; schedules start fresh.
-  - schedule_total_iters: Optional schedule-length override for LR/window schedules; if omitted, num_iterations is used.
+  - schedule_total_iters: Optional schedule-length denominator for LR/window schedules; independent of training stop, which is token-based.
 - Overriding config values at launch
   - Any YAML key can be overridden on the command line via run.sh using key=value (or --key=value), for example:
     ```sh
-    ./run.sh config/pretrain_350m.yml -n 8 num_iterations=8000 max_seq_len=32768
-    ./run.sh config/instruct_sft_1.6B.yml -n 8 -p checkpoints/state_step_200000.pt val_loss_every=100
+    ./run.sh config/pretrain_350m.yml -n 8 target_tokens=3000000000 max_seq_len=32768
+    ./run.sh config/instruct_sft_1.6B.yml -n 8 -p checkpoints/state_step_200000.pt val_loss_every_tokens=50000000
     ```
 
 
@@ -238,7 +238,7 @@ MoE will be introduced incrementally and benchmarked against the dense baseline 
   ```
 - Start a pretraining run:
   ```sh
-  python -u train.py config/pretrain.yml
+  python -u train.py config/pretrain_350m.yml
   ```
 - Generate samples after training:
   ```sh
@@ -246,7 +246,7 @@ MoE will be introduced incrementally and benchmarked against the dense baseline 
   ```
 - Build SFT data shards:
   ```sh
-  python build_sft_shards.py
+  python data/build_instruct_shards.py
   ```
 - Start an SFT run:
   ```sh

@@ -13,7 +13,7 @@ from dataclasses import dataclass, fields as dataclass_fields, asdict
 from models import get_model_class
 from training.data_gen import distributed_data_generator
 from training.optim import Muon
-from training.optim import get_lr, get_window_size_blocks, set_full_windows
+from training.optim import get_lr_s, get_window_size_blocks_s, set_full_windows
 from tools.checkpoint import load_checkpoint, save_checkpoint, apply_model_state
 
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
@@ -30,34 +30,38 @@ torch._dynamo.config.error_on_nested_fx_trace = False # temp workaround/diagnost
 @dataclass
 class Hyperparameters:
     # Required scenario-specific fields
-    train_files: str
-    val_files: str
+    train_shards: str
+    val_shards: str
     max_seq_len: int
     val_seq_len: int
-    num_iterations: int
+    target_tokens: int
     cooldown_frac: float
     # Common fields with defaults
     vocab_size: int = 50257
     val_tokens: int = 10485760  # how many tokens of validation data
-    val_loss_every: int = 125  # num steps between validation loss calculations
-    val_snapshot_every: int = 1000
+    val_loss_every_tokens: int = 0  # num tokens between validation passes (0 disables)
+    snapshot_warmup_tokens: int = 0  # tokens to skip before taking snapshots
+    snapshot_per_n_tokens: int | None = None  # interval in tokens between snapshots
     save_checkpoint: bool = True
     init_checkpoint: str | None = None
     num_layers: int = None
     num_heads: int = None
     model_dim: int = None
     head_dim: int = None
-    snapshot_skip: int = None
     embed_params_lr: float = 0.3
     scalar_params_lr: float = 0.015
     hidden_matrix_params_lr: float = 0.025
     adamw_weight_decay: float = 0.01
     # Force full attention windows (useful when resuming after smaller windows)
     full_windows: bool = False
-    # Schedule control (decouple from stop condition)
+    # Optional: legacy schedule control (not used for stopping)
     schedule_total_iters: int | None = None
     # Model selection
     model_type: str = "gpt2"
+    # Weights & Biases minimal logging config
+    wandb_log: bool = False
+    wandb_project: str = ""
+    wandb_run_name: str = ""
 
 def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
     """
@@ -189,6 +193,22 @@ run_start_minute = _run_start_dt.strftime("%Y%m%dT%H%M")
 # Track last checkpoint file saved for this run so we can replace it
 _last_run_ckpt_path: str | None = None
 
+# Optional Weights & Biases logging (minimal config)
+_wandb = None
+_wandb_enabled = False
+if master_process and getattr(args, "wandb_log", False):
+    try:
+        import wandb as _wandb
+        _project = args.wandb_project or "daisy-wee"
+        _name = args.wandb_run_name or f"{run_start_minute}-run{run_id}"
+        _wandb.init(project=_project, name=_name, config=asdict(args))
+        _wandb_enabled = True
+        print(f"wandb logging enabled: project={_project} name={_name}")
+    except Exception as _e:
+        print(f"[warn] Failed to initialize wandb logging: {_e}")
+        _wandb = None
+        _wandb_enabled = False
+
 def print0(st):
     if master_process:
         print(st)
@@ -212,7 +232,7 @@ def _build_hparams_from_args(args: Hyperparameters, schedule_total_iters_den: in
 
 def _save_run_checkpoint(
     *,
-    val_value: float | int | None,
+    val_value: float | None,
     step: int,
     args: Hyperparameters,
     model: nn.Module,
@@ -221,17 +241,17 @@ def _save_run_checkpoint(
     run_start_minute: str,
     run_id: int,
     last_ckpt_path: str | None,
-    best_val: float | int | None,
+    best_val: float | None,
     schedule_total_iters_den: int,
     print_message: bool = True,
+    progress_state: dict | None = None,
 ) -> tuple[str | None, str]:
     """
     Save a checkpoint file for the current run, replacing the previous one from the same run if present.
     Returns (new_last_ckpt_path, filename).
     """
     os.makedirs("checkpoints", exist_ok=True)
-    _val = float("nan") if val_value is None else val_value
-    _val_trunc = math.trunc(_val * 100) / 100 if isinstance(_val, (int, float)) else float("nan")
+    _val_trunc = math.trunc(val_value * 100) / 100 if val_value is not None else float("nan")
     fname = f"checkpoints/{run_start_minute}-val{_val_trunc:.3f}-step{step:06d}-run{run_id}.pt"
     if last_ckpt_path and os.path.exists(last_ckpt_path) and last_ckpt_path != fname:
         try:
@@ -242,11 +262,11 @@ def _save_run_checkpoint(
     save_checkpoint(
         fname,
         model=model,
-        optimizers=optimizers,
         step=step,
         best_val=best_val,
         hparams=hparams,
         tokens_per_step=tokens_per_step,
+        progress_state=progress_state,
     )
     if print_message:
         # Only print if we have an actual numeric val_value
@@ -280,7 +300,7 @@ if args.init_checkpoint:
         print0("Rehydrated model hyperparameters from checkpoint.")
 
 # Determine schedule denominator (decoupled from stop condition) after (optional) checkpoint rehydration
-_schedule_total_iters_den = int(args.schedule_total_iters) if getattr(args, "schedule_total_iters", None) not in (None, 0) else int(args.num_iterations)
+_schedule_total_iters_den = int(args.schedule_total_iters) if getattr(args, "schedule_total_iters", None) not in (None, 0) else 0
 print0(json.dumps({**asdict(args), "_schedule_total_iters_den": _schedule_total_iters_den}, indent=2, sort_keys=True))
 
 # Now we can safely build the model with possibly rehydrated args
@@ -357,98 +377,126 @@ torch.cuda.reset_peak_memory_stats()
 # Optional beginning shard (1-based) from environment
 _begin_shard_env = os.environ.get("BEGIN_SHARD")
 _begin_shard = int(_begin_shard_env) if _begin_shard_env not in (None, "",) else None
-train_loader = distributed_data_generator(args.train_files, world_size * args.max_seq_len, rank, world_size, start_shard=_begin_shard)
+train_loader = distributed_data_generator(args.train_shards, world_size * args.max_seq_len, rank, world_size, start_shard=_begin_shard)
+val_batch_size = world_size * args.val_seq_len
+if args.val_tokens % val_batch_size != 0:
+    raise ValueError(f"val_tokens ({args.val_tokens}) must be divisible by val_batch_size ({val_batch_size})")
+val_steps = args.val_tokens // val_batch_size
+
+# Tokens per training micro-step (includes padding by design)
 tokens_per_step = world_size * args.max_seq_len
-tokens_seen = 0
+
+# Progress and tracking
+progress = None
+progress = type("ProgressMeterHolder", (), {})()  # placeholder type to satisfy linters
+class ProgressMeter:
+    def __init__(self, target_tokens: int, *, eval_every_tokens: int | None, snapshot_per_n_tokens: int | None, snapshot_warmup_tokens: int = 0):
+        self.target_tokens = int(target_tokens)
+        self.tokens_processed = 0
+        self.eval_every_tokens = int(eval_every_tokens) if eval_every_tokens else None
+        self.next_eval_at = self.eval_every_tokens if self.eval_every_tokens else None
+        self.snapshot_per_n_tokens = int(snapshot_per_n_tokens) if snapshot_per_n_tokens else None
+        self.snapshot_warmup_tokens = int(snapshot_warmup_tokens or 0)
+        self.next_snapshot_at = (self.snapshot_warmup_tokens + self.snapshot_per_n_tokens) if self.snapshot_per_n_tokens else None
+    @property
+    def s(self) -> float:
+        if self.target_tokens <= 0:
+            return 0.0
+        return min(self.tokens_processed / self.target_tokens, 1.0)
+    def update(self, step_tokens: int) -> None:
+        self.tokens_processed += int(step_tokens)
+    def should_eval(self) -> bool:
+        if self.eval_every_tokens is None or self.next_eval_at is None:
+            return False
+        return self.tokens_processed >= self.next_eval_at
+    def mark_eval_done(self) -> None:
+        if self.eval_every_tokens is not None and self.next_eval_at is not None:
+            while self.tokens_processed >= self.next_eval_at:
+                self.next_eval_at += self.eval_every_tokens
+    def should_snapshot(self) -> bool:
+        if self.snapshot_per_n_tokens is None or self.next_snapshot_at is None:
+            return False
+        if self.tokens_processed < self.snapshot_warmup_tokens:
+            return False
+        return self.tokens_processed >= self.next_snapshot_at
+    def mark_snapshot_done(self) -> None:
+        if self.snapshot_per_n_tokens is not None and self.next_snapshot_at is not None:
+            while self.tokens_processed >= self.next_snapshot_at:
+                self.next_snapshot_at += self.snapshot_per_n_tokens
+    def state_dict(self):
+        return {
+            'tokens_processed': self.tokens_processed,
+            'next_eval_at': self.next_eval_at,
+            'next_snapshot_at': self.next_snapshot_at,
+            'target_tokens': self.target_tokens,
+        }
+    def load_state_dict(self, d):
+        self.tokens_processed = int(d.get('tokens_processed', 0))
+        self.next_eval_at = d.get('next_eval_at', self.eval_every_tokens)
+        self.next_snapshot_at = d.get('next_snapshot_at', self.next_snapshot_at)
+
+progress = ProgressMeter(
+    target_tokens=int(args.target_tokens),
+    eval_every_tokens=int(args.val_loss_every_tokens) if getattr(args, 'val_loss_every_tokens', 0) else None,
+    snapshot_per_n_tokens=int(args.snapshot_per_n_tokens) if getattr(args, 'snapshot_per_n_tokens', None) else None,
+    snapshot_warmup_tokens=int(getattr(args, 'snapshot_warmup_tokens', 0) or 0),
+)
+
+# Tracking for eval stats and ETA
 last_val_loss = None
 last_val_tokens = 0
 ema_dloss_per_token = None
 training_time_ms = 0
 best_val = float("inf") if best_val_from_ckpt is None else best_val_from_ckpt
-val_iter = 0
-# start the clock
+
+
 if use_distributed:
     dist.barrier()
+step = 0
 t0 = time.perf_counter()
-# begin training
-train_steps = args.num_iterations
-start_step = resume_from_step if resume_from_step is not None else 0
-if resume_from_step is not None:
-    # Use tokens_per_step from the checkpoint if available to compute accurate tokens_seen
-    _tps_for_resume = _resume_tokens_per_step if _resume_tokens_per_step is not None else tokens_per_step
-    tokens_seen = resume_from_step * _tps_for_resume
-    last_val_tokens = tokens_seen  # we've validated up to resume step
-for step in range(start_step, train_steps + 1):
-    last_step = (step == train_steps)
+warmup_end = 0.0
 
+while progress.tokens_processed < progress.target_tokens:
     # --------------- VALIDATION SECTION -----------------
-    if last_step or (args.val_loss_every > 0 and step % args.val_loss_every == 0 and step != 0):
-        # stop the clock
+    if progress.should_eval():
         if use_distributed:
             dist.barrier()
         training_time_ms += 1000 * (time.perf_counter() - t0)
         model.eval()
-        val_batch_size = world_size * args.val_seq_len
-        assert args.val_tokens % val_batch_size == 0
-        val_steps = args.val_tokens // val_batch_size
-        val_loader = distributed_data_generator(args.val_files, val_batch_size, rank, world_size)
+        val_loader = distributed_data_generator(args.val_shards, val_batch_size, rank, world_size)
         val_loss = torch.zeros((), device="cuda", dtype=torch.float32)
         with torch.no_grad():
             for _ in range(val_steps):
                 inputs, targets = next(val_loader)
-                val_loss = val_loss + model(inputs, get_window_size_blocks(step, _schedule_total_iters_den), targets)
+                val_loss = val_loss + model(inputs, get_window_size_blocks_s(progress.s), targets)
         val_loss = val_loss / val_steps
         del val_loader
-        # Average across ranks before using the value
         if use_distributed:
             dist.all_reduce(val_loss, op=dist.ReduceOp.AVG)
         cur_val = float(val_loss.item())
-        tokens_since_last = tokens_seen - last_val_tokens
+        tokens_since_last = progress.tokens_processed - last_val_tokens
         if last_val_loss is not None and tokens_since_last > 0:
             dpt = (cur_val - last_val_loss) / tokens_since_last
             ema_dloss_per_token = dpt if ema_dloss_per_token is None else 0.7 * ema_dloss_per_token + 0.3 * dpt
             print0(f"delta loss per 1e9 tokens:{dpt * 1e9:.6f} [ema:{(ema_dloss_per_token or 0.0) * 1e9:.6f}]")
         last_val_loss = cur_val
-        last_val_tokens = tokens_seen
-        print0( f"step:{step}/{train_steps} val_loss:{val_loss:.6f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms / max(step, 1):.2f}ms")
-
-        if master_process:
-            val_iter += 1
-            improved = cur_val < best_val
-
-            if improved:
-                best_val = cur_val
-
-            if (args.save_checkpoint and improved
-                    and val_iter % args.val_snapshot_every == 0
-                    and val_iter > args.snapshot_skip
-                    and not last_step):
-                _last_run_ckpt_path, _ = _save_run_checkpoint(
-                    val_value=cur_val,
-                    step=step,
-                    args=args,
-                    model=model,
-                    optimizers=optimizers,
-                    tokens_per_step=tokens_per_step,
-                    run_start_minute=run_start_minute,
-                    run_id=run_id,
-                    last_ckpt_path=_last_run_ckpt_path,
-                    best_val=best_val,
-                    schedule_total_iters_den=_schedule_total_iters_den,
-                    print_message=True,
-                )
-
-
-        model.train()
-        # start the clock again
-        if use_distributed:
-            dist.barrier()
-        t0 = time.perf_counter()
-
-    if last_step:
-        if master_process and args.save_checkpoint:
+        last_val_tokens = progress.tokens_processed
+        print0(f"step:{step} tokens:{progress.tokens_processed}/{progress.target_tokens} (s={progress.s:.4f}) val_loss:{val_loss:.6f} train_time:{training_time_ms:.0f}ms")
+        if _wandb_enabled:
+            try:
+                _wandb.log({
+                    "val/loss": cur_val,
+                    "val/ppl": math.exp(cur_val) if cur_val < 20 else float("inf"),
+                    "tokens": progress.tokens_processed,
+                    "s": progress.s,
+                    "step": step,
+                })
+            except Exception as _e:
+                print0(f"[warn] wandb.log (val) failed: {_e}")
+        # checkpoints by tokens (independent of improvement)
+        if master_process and args.save_checkpoint and progress.should_snapshot():
             _last_run_ckpt_path, _ = _save_run_checkpoint(
-                val_value=last_val_loss,
+                val_value=cur_val,
                 step=step,
                 args=args,
                 model=model,
@@ -459,25 +507,36 @@ for step in range(start_step, train_steps + 1):
                 last_ckpt_path=_last_run_ckpt_path,
                 best_val=best_val,
                 schedule_total_iters_den=_schedule_total_iters_den,
-                print_message=False,
+                print_message=True,
+                progress_state=progress.state_dict(),
             )
-
-        break
+            progress.mark_snapshot_done()
+        # resume training clock
+        model.train()
+        if use_distributed:
+            dist.barrier()
+        t0 = time.perf_counter()
+        progress.mark_eval_done()
 
     # --------------- TRAINING SECTION -----------------
     inputs, targets = next(train_loader)
-    model(inputs, get_window_size_blocks(step, _schedule_total_iters_den), targets).backward()
+
+    train_loss = model(inputs, get_window_size_blocks_s(progress.s), targets)
+    train_loss.backward()
+    train_loss_est = float(train_loss.item())
+    # collect the futures for all the optimizers
     opt2futures = {
         opt: ([dist.all_reduce(p.grad, op=dist.ReduceOp.AVG, async_op=True).get_future() for p in params if p.grad is not None]
               if use_distributed else [])
         for opt, params in opt2params.items()
     }
-    # set optimization hyperparameters
+    # set optimization hyperparameters based on s
+    s = progress.s
     for opt in optimizers:
         for group in opt.param_groups:
-            group["lr"] = group["initial_lr"] * get_lr(step, _schedule_total_iters_den, args.cooldown_frac)
+            group["lr"] = group["initial_lr"] * get_lr_s(s, args.cooldown_frac)
     for group in optimizer2.param_groups:
-        frac = min(step / 300, 1)  # momentum warmup for muon
+        frac = s  # momentum warmup for muon driven by progress
         group["momentum"] = (1 - frac) * 0.85 + frac * 0.95
     # step the optimizers
     for opt in optimizers:
@@ -486,12 +545,52 @@ for step in range(start_step, train_steps + 1):
         opt.step()
     # null the gradients
     model.zero_grad(set_to_none=True)
-    tokens_seen += tokens_per_step
+
+    # Update tokens and counters
+    progress.update(tokens_per_step)
+    step += 1
+
     # logging
     approx_training_time_ms = training_time_ms + 1000 * (time.perf_counter() - t0)
-    print0(f"step:{step + 1}/{train_steps} train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms / (step + 1):.2f}ms")
+    if step == 9:
+        warmup_end = approx_training_time_ms
+    avg_step = f"avg_step:{(approx_training_time_ms-warmup_end) / max(step-9,1):.2f}ms" if step >= 10 else "avg_step: (warmup to step 10)"
+    print0(f"step:{step} train_loss:{train_loss_est:.4f} tokens:{progress.tokens_processed}/{progress.target_tokens} (s={progress.s:.4f}) train_time:{approx_training_time_ms:.0f}ms {avg_step}")
+    if _wandb_enabled:
+        try:
+            _wandb.log({
+                "train/loss": train_loss_est,
+                "tokens": progress.tokens_processed,
+                "s": progress.s,
+                "train/time_ms": approx_training_time_ms,
+                "step": step,
+            })
+        except Exception as _e:
+            print0(f"[warn] wandb.log (train) failed: {_e}")
 
-print0(f"peak memory allocated: {torch.cuda.max_memory_allocated() // 1024 // 1024} MiB "
-      f"reserved: {torch.cuda.max_memory_reserved() // 1024 // 1024} MiB")
+# End of training: save final checkpoint
+if master_process and args.save_checkpoint:
+    _last_run_ckpt_path, _ = _save_run_checkpoint(
+        val_value=last_val_loss,
+        step=step,
+        args=args,
+        model=model,
+        optimizers=optimizers,
+        tokens_per_step=tokens_per_step,
+        run_start_minute=run_start_minute,
+        run_id=run_id,
+        last_ckpt_path=_last_run_ckpt_path,
+        best_val=best_val,
+        schedule_total_iters_den=_schedule_total_iters_den,
+        print_message=False,
+        progress_state=progress.state_dict(),
+    )
+
+print0(f"peak memory allocated: {torch.cuda.max_memory_allocated() // 1024 // 1024} MiB reserved: {torch.cuda.max_memory_reserved() // 1024 // 1024} MiB")
+if _wandb_enabled:
+    try:
+        _wandb.finish()
+    except Exception:
+        pass
 if use_distributed and dist.is_initialized():
     dist.destroy_process_group()
