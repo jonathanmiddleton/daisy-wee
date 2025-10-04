@@ -118,7 +118,19 @@ Below are the current, tested ways to launch training, run inference sampling, a
     ```
 
 ### Configuration files: YAML (config/*.yml)
-- Common fields
+
+Configuration is split into two parts:
+- Training configs (config/*.yml): contain run/training settings and reference a model spec via model_spec.
+- Model specs (model_specs/*.yml): contain model architecture settings (e.g., layers/heads/dims).
+
+How it works
+- If a training YAML contains model_spec: NAME (or a file path), train.py will load model_specs/NAME.yml (or that path) and merge it.
+- Precedence: values in the training config override the model spec; CLI overrides override both.
+- Backward compatibility: older monolithic configs without model_spec still work exactly as before.
+- Checkpoints: saved hparams are the merged set used to reconstruct models later.
+
+- Common training fields
+  - model_spec: Name of a spec under model_specs/ (e.g., gpt2_350m) or a direct path to a spec file.
   - train_shards, val_shards: Glob patterns for tokenized shard files used for training/validation.
   - target_tokens: Total number of training tokens to process before completion.
   - cooldown_frac: Fraction of the schedule spent in cooldown/decay; drives LR/window schedules via normalized progress s in [0,1].
@@ -131,23 +143,59 @@ Below are the current, tested ways to launch training, run inference sampling, a
   - wandb_log: If true, enable basic Weights & Biases logging. Defaults to false.
   - wandb_project: W&B project name; defaults to 'daisy-wee' when logging is enabled.
   - wandb_run_name: Optional run name; defaults to timestamp+run id when not provided.
-- Model fields
-  - max_seq_len: Maximum context length for training/inference.
+  - init_checkpoint: Optional weights to warm start from (weights only; schedules/resume are fresh).
+
+- Model spec fields (model_specs/*.yml)
+  - model_type: Dispatcher key passed to models.get_model_class (default: gpt2).
   - vocab_size: Vocabulary size (e.g., 50257 for GPT-2 BPE).
   - num_layers, num_heads, head_dim, model_dim: Transformer depth/width and per-head/overall dimensions.
-  - model_type: Dispatcher key passed to models.get_model_class (default: gpt2).
-- Optimizer-related (when present)
+  - max_seq_len: Maximum context length for training/inference.
+
+- Optimizer-related (when present in training configs)
   - embed_params_lr, scalar_params_lr, hidden_matrix_params_lr: Parameter-group learning rates.
   - adamw_weight_decay: Weight decay for AdamW-style optimizers.
-- SFT-specific
+
+- SFT-specific (in training configs)
   - init_checkpoint: Path to a pretraining checkpoint used to warm-start SFT. Weights are loaded; optimizer state, steps, and best-val are not resumed; schedules start fresh.
   - schedule_total_iters: Optional schedule-length denominator for LR/window schedules; independent of training stop, which is token-based.
-- Overriding config values at launch
-  - Any YAML key can be overridden on the command line via run.sh using key=value (or --key=value), for example:
-    ```sh
-    ./run.sh config/pretrain_350m.yml -n 8 target_tokens=3000000000 max_seq_len=32768
-    ./run.sh config/instruct_sft_1.6B.yml -n 8 -p checkpoints/state_step_200000.pt val_loss_every_tokens=50000000
-    ```
+
+Examples
+- Minimal SFT training config that references a named spec:
+  ```yaml
+  # config/instruct_sft.yml
+  train_shards: "data/instruct_mix/instruct_train_*.bin"
+  val_shards: "data/instruct_mix/instruct_val_*.bin"
+  val_seq_len: 262144
+  model_spec: gpt2_350m       # resolved from model_specs/gpt2_350m.yml
+  target_tokens: 30000000
+  cooldown_frac: 0.9
+  val_tokens: 10485760
+  val_loss_every_tokens: 5000000
+  save_checkpoint: true
+  ```
+
+- Example model spec file (model_specs/gpt2_350m.yml):
+  ```yaml
+  model_type: gpt2
+  vocab_size: 50257
+  num_layers: 16
+  num_heads: 8
+  head_dim: 128
+  model_dim: 1024
+  max_seq_len: 65536
+  ```
+
+- Referencing a spec by path instead of name:
+  ```yaml
+  model_spec: /abs/path/to/my_custom_spec.yml
+  ```
+
+Overriding config values at launch
+- Any YAML key can be overridden via run.sh using key=value (or --key=value). CLI overrides take precedence over both the training YAML and the model spec, e.g.:
+  ```sh
+  ./run.sh config/pretrain_350m.yml -n 8 target_tokens=3000000000 max_seq_len=32768
+  ./run.sh config/instruct_sft.yml -n 8 -p checkpoints/state_step_200000.pt val_loss_every_tokens=50000000
+  ```
 
 
 

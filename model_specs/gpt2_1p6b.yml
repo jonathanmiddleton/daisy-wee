@@ -1,0 +1,8 @@
+# GPT2 ~1.6B spec
+model_type: gpt2
+vocab_size: 50257
+num_layers: 48
+num_heads: 25
+head_dim: 64
+model_dim: 1600
+max_seq_len: 16384

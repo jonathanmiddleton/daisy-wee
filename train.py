@@ -9,6 +9,7 @@ from pathlib import Path
 
 import yaml
 from dataclasses import dataclass, fields as dataclass_fields, asdict
+from model_specs import load_model_spec
 
 from models import get_model_class
 from training.data_gen import distributed_data_generator, DistributedDataGenerator
@@ -58,6 +59,7 @@ class Hyperparameters:
     # Optional: legacy schedule control (not used for stopping)
     schedule_total_iters: int | None = None
     # Model selection
+    model_spec: str | None = None  # name of model spec under model_specs/, or a path to a spec file
     model_type: str = "gpt2"
     # Weights & Biases minimal logging config
     wandb_log: bool = False
@@ -66,8 +68,9 @@ class Hyperparameters:
 
 def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
     """
-    Load Hyperparameters from a YAML file. If no path is provided, defaults to config/instruct_sft.yml.
-    Validates keys and required fields against the Hyperparameters dataclass.
+    Load Hyperparameters from a YAML file. If a 'model_spec' key is present, also load and merge
+    the named spec from model_specs/<name>.yml (or a provided file path). Training config values
+    take precedence over spec values. Validates against the Hyperparameters dataclass.
     """
     cfg_dict = {}
     if config_path:
@@ -80,6 +83,17 @@ def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
             with open(used_path, "r") as f:
                 cfg_dict = yaml.safe_load(f) or {}
 
+    # If a model_spec name/path is provided, load the spec and merge recognized fields
+    model_spec_name = cfg_dict.get("model_spec")
+    if model_spec_name:
+        spec_dict = load_model_spec(str(model_spec_name))
+        # Only merge keys that are valid Hyperparameters fields and not explicitly set in training cfg
+        valid_names_for_merge = {f.name for f in dataclass_fields(Hyperparameters)}
+        for k, v in (spec_dict.items() if isinstance(spec_dict, dict) else []):
+            if k in valid_names_for_merge and (k not in cfg_dict or cfg_dict[k] is None):
+                cfg_dict[k] = v
+
+    # Validate keys after potential spec merge
     valid_names = {f.name for f in dataclass_fields(Hyperparameters)}
     unknown = set(cfg_dict) - valid_names
     if unknown:
