@@ -66,13 +66,14 @@ class Evaluator:
         self._last_tokens_seen = 0
 
     @torch.no_grad()
-    def eval(self, model: nn.Module, num_tokens_per_rank: int) -> Dict[str, Optional[float]]:
+    def eval(self, model: nn.Module, num_tokens_per_rank: int, tokens: Optional[int] = None) -> Dict[str, Optional[float]]:
         """
         Evaluate the model on validation data.
 
         Args:
             model: the model to evaluate. Must be in eval() mode, otherwise raises an error.
             num_tokens_per_rank: number of tokens per rank to evaluate.
+            tokens: Optional global tokens counter to log to wandb (e.g., training tokens processed).
         Returns:
             dict with keys: val_loss, val_acc, epoch, ema_dloss_per_token
         """
@@ -113,9 +114,16 @@ class Evaluator:
         # Logging to wandb (parity with train.py: log val/loss and val/ppl)
         if self._wandb_enabled and self._wandb is not None and self._rank == 0:
             try:
+                # Prefer externally provided global tokens; otherwise, fallback to cumulative eval tokens
+                if tokens is not None:
+                    _tokens_to_log = int(tokens)
+                else:
+                    _ws = dist.get_world_size() if (self._use_dist and dist.is_initialized()) else 1
+                    _tokens_to_log = int(self._last_tokens_seen * _ws)
                 self._wandb.log({
                     "val/loss": cur_val,
                     "val/ppl": math.exp(cur_val) if cur_val < 20 else float("inf"),
+                    "tokens": _tokens_to_log,
                 })
             except Exception:
                 pass

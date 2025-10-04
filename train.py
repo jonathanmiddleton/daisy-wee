@@ -400,7 +400,7 @@ while progress.tokens_processed < progress.target_tokens:
         model.eval()
         # Evaluate using the Evaluator (per-rank tokens)
         _per_rank_tokens = args.val_tokens // world_size
-        eval_out = _evaluator.eval(model, _per_rank_tokens)
+        eval_out = _evaluator.eval(model, _per_rank_tokens, tokens=progress.tokens_processed)
         cur_val = float(eval_out.get("val_loss", float("nan")))
         last_val_loss = cur_val
         ema_dloss_per_token = eval_out.get("ema_dloss_per_token", ema_dloss_per_token)
