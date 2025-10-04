@@ -11,9 +11,10 @@ import yaml
 from dataclasses import dataclass, fields as dataclass_fields, asdict
 
 from models import get_model_class
-from training.data_gen import distributed_data_generator
+from training.data_gen import distributed_data_generator, DistributedDataGenerator
 from training.optim import Muon
 from training.optim import get_lr_s, get_window_size_blocks_s, set_full_windows
+from training.eval import Evaluator
 from tools.checkpoint import load_checkpoint, save_checkpoint, apply_model_state
 
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
@@ -382,58 +383,20 @@ val_batch_size = world_size * args.val_seq_len
 if args.val_tokens % val_batch_size != 0:
     raise ValueError(f"val_tokens ({args.val_tokens}) must be divisible by val_batch_size ({val_batch_size})")
 val_steps = args.val_tokens // val_batch_size
+# Build a persistent validation data generator and evaluator
+_val_ddg = DistributedDataGenerator(args.val_shards, val_batch_size, rank, world_size)
+_evaluator = Evaluator(
+    wandb_enabled=_wandb_enabled,
+    data_generator=_val_ddg,
+    distributed_enabled=use_distributed,
+    rank=rank,
+)
 
 # Tokens per training micro-step (includes padding by design)
 tokens_per_step = world_size * args.max_seq_len
 
 # Progress and tracking
-progress = None
-progress = type("ProgressMeterHolder", (), {})()  # placeholder type to satisfy linters
-class ProgressMeter:
-    def __init__(self, target_tokens: int, *, eval_every_tokens: int | None, snapshot_per_n_tokens: int | None, snapshot_warmup_tokens: int = 0):
-        self.target_tokens = int(target_tokens)
-        self.tokens_processed = 0
-        self.eval_every_tokens = int(eval_every_tokens) if eval_every_tokens else None
-        self.next_eval_at = self.eval_every_tokens if self.eval_every_tokens else None
-        self.snapshot_per_n_tokens = int(snapshot_per_n_tokens) if snapshot_per_n_tokens else None
-        self.snapshot_warmup_tokens = int(snapshot_warmup_tokens or 0)
-        self.next_snapshot_at = (self.snapshot_warmup_tokens + self.snapshot_per_n_tokens) if self.snapshot_per_n_tokens else None
-    @property
-    def s(self) -> float:
-        if self.target_tokens <= 0:
-            return 0.0
-        return min(self.tokens_processed / self.target_tokens, 1.0)
-    def update(self, step_tokens: int) -> None:
-        self.tokens_processed += int(step_tokens)
-    def should_eval(self) -> bool:
-        if self.eval_every_tokens is None or self.next_eval_at is None:
-            return False
-        return self.tokens_processed >= self.next_eval_at
-    def mark_eval_done(self) -> None:
-        if self.eval_every_tokens is not None and self.next_eval_at is not None:
-            while self.tokens_processed >= self.next_eval_at:
-                self.next_eval_at += self.eval_every_tokens
-    def should_snapshot(self) -> bool:
-        if self.snapshot_per_n_tokens is None or self.next_snapshot_at is None:
-            return False
-        if self.tokens_processed < self.snapshot_warmup_tokens:
-            return False
-        return self.tokens_processed >= self.next_snapshot_at
-    def mark_snapshot_done(self) -> None:
-        if self.snapshot_per_n_tokens is not None and self.next_snapshot_at is not None:
-            while self.tokens_processed >= self.next_snapshot_at:
-                self.next_snapshot_at += self.snapshot_per_n_tokens
-    def state_dict(self):
-        return {
-            'tokens_processed': self.tokens_processed,
-            'next_eval_at': self.next_eval_at,
-            'next_snapshot_at': self.next_snapshot_at,
-            'target_tokens': self.target_tokens,
-        }
-    def load_state_dict(self, d):
-        self.tokens_processed = int(d.get('tokens_processed', 0))
-        self.next_eval_at = d.get('next_eval_at', self.eval_every_tokens)
-        self.next_snapshot_at = d.get('next_snapshot_at', self.next_snapshot_at)
+from training.progress import ProgressMeter
 
 progress = ProgressMeter(
     target_tokens=int(args.target_tokens),
@@ -457,42 +420,18 @@ t0 = time.perf_counter()
 warmup_end = 0.0
 
 while progress.tokens_processed < progress.target_tokens:
-    # --------------- VALIDATION SECTION -----------------
+    # --------------- Evaluation -----------------
     if progress.should_eval():
         if use_distributed:
             dist.barrier()
         training_time_ms += 1000 * (time.perf_counter() - t0)
         model.eval()
-        val_loader = distributed_data_generator(args.val_shards, val_batch_size, rank, world_size)
-        val_loss = torch.zeros((), device="cuda", dtype=torch.float32)
-        with torch.no_grad():
-            for _ in range(val_steps):
-                inputs, targets = next(val_loader)
-                val_loss = val_loss + model(inputs, get_window_size_blocks_s(progress.s), targets)
-        val_loss = val_loss / val_steps
-        del val_loader
-        if use_distributed:
-            dist.all_reduce(val_loss, op=dist.ReduceOp.AVG)
-        cur_val = float(val_loss.item())
-        tokens_since_last = progress.tokens_processed - last_val_tokens
-        if last_val_loss is not None and tokens_since_last > 0:
-            dpt = (cur_val - last_val_loss) / tokens_since_last
-            ema_dloss_per_token = dpt if ema_dloss_per_token is None else 0.7 * ema_dloss_per_token + 0.3 * dpt
-            print0(f"delta loss per 1e9 tokens:{dpt * 1e9:.6f} [ema:{(ema_dloss_per_token or 0.0) * 1e9:.6f}]")
-        last_val_loss = cur_val
-        last_val_tokens = progress.tokens_processed
-        print0(f"step:{step} tokens:{progress.tokens_processed}/{progress.target_tokens} (s={progress.s:.4f}) val_loss:{val_loss:.6f} train_time:{training_time_ms:.0f}ms")
-        if _wandb_enabled:
-            try:
-                _wandb.log({
-                    "val/loss": cur_val,
-                    "val/ppl": math.exp(cur_val) if cur_val < 20 else float("inf"),
-                    "tokens": progress.tokens_processed,
-                    "s": progress.s,
-                    "step": step,
-                })
-            except Exception as _e:
-                print0(f"[warn] wandb.log (val) failed: {_e}")
+        # Evaluate using the Evaluator (per-rank tokens)
+        _per_rank_tokens = args.val_tokens // world_size
+        eval_out = _evaluator.eval(model, _per_rank_tokens)
+        cur_val = float(eval_out.get("val_loss", float("nan")))
+        ema_dloss_per_token = eval_out.get("ema_dloss_per_token", ema_dloss_per_token)
+        print0(f"step:{step} tokens:{progress.tokens_processed}/{progress.target_tokens} (s={progress.s:.4f}) val_loss:{cur_val:.6f} train_time:{training_time_ms:.0f}ms")
         # checkpoints by tokens (independent of improvement)
         if master_process and args.save_checkpoint and progress.should_snapshot():
             _last_run_ckpt_path, _ = _save_run_checkpoint(
