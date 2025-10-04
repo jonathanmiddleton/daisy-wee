@@ -1,8 +1,8 @@
 import torch
 from torch import nn, Tensor
 import torch.nn.functional as F
-from models.block import Block
-from models.functional import norm
+from models.gpt2.block import Block
+from models.gpt2.functional import norm
 from torch.nn.attention.flex_attention import BlockMask
 
 def next_multiple_of_n(v: float | int, *, n: int):

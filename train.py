@@ -17,6 +17,7 @@ from training.optim import Muon
 from training.optim import get_lr_s, get_window_size_blocks_s, set_full_windows
 from training.eval import Evaluator
 from tools.checkpoint import load_checkpoint, save_checkpoint, apply_model_state
+from tools.helpers import _coerce_value
 
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import torch
@@ -108,59 +109,7 @@ def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
 
     return Hyperparameters(**cfg_dict)
 
-from typing import get_origin, get_args
 
-def _coerce_value(val_str: str, typ):
-    # Support Optional[...] and unions with None
-    origin = get_origin(typ)
-    args_ = get_args(typ)
-    is_optional = False
-    target_types = ()
-    if origin is None:
-        target_types = (typ,)
-    elif origin is list or origin is tuple or origin is dict:
-        # Simple YAML-like JSON parsing for collections
-        # Fall back to YAML safe_load for flexible parsing
-        return yaml.safe_load(val_str)
-    elif origin is type(None):
-        # Only NoneType
-        is_optional = True
-        target_types = (type(None),)
-    else:
-        # Assume Union
-        target_types = args_
-        if type(None) in target_types:
-            is_optional = True
-    # None coercion
-    if val_str.lower() in ("none", "null"):
-        if is_optional:
-            return None
-        # If not optional but asked for None, keep as string 'None'
-        return val_str
-    # Try booleans explicitly
-    if bool in target_types or typ is bool:
-        if val_str.lower() in ("1", "true", "t", "yes", "y", "on"):
-            return True
-        if val_str.lower() in ("0", "false", "f", "no", "n", "off"):
-            return False
-        # Fall through to attempt other conversions
-    # Numeric conversions
-    if int in target_types or typ is int:
-        try:
-            return int(val_str)
-        except ValueError:
-            pass
-    if float in target_types or typ is float:
-        try:
-            return float(val_str)
-        except ValueError:
-            pass
-    # Fallback: try YAML to parse literals, else string
-    try:
-        parsed = yaml.safe_load(val_str)
-        return parsed
-    except Exception:
-        return val_str
 
 # Load config from YAML (first CLI arg if provided)
 _config_path = sys.argv[1] if len(sys.argv) > 1 else None
@@ -444,25 +393,33 @@ while progress.tokens_processed < progress.target_tokens:
         _per_rank_tokens = args.val_tokens // world_size
         eval_out = _evaluator.eval(model, _per_rank_tokens)
         cur_val = float(eval_out.get("val_loss", float("nan")))
+        last_val_loss = cur_val
         ema_dloss_per_token = eval_out.get("ema_dloss_per_token", ema_dloss_per_token)
         print0(f"step:{step} tokens:{progress.tokens_processed}/{progress.target_tokens} (s={progress.s:.4f}) val_loss:{cur_val:.6f} train_time:{training_time_ms:.0f}ms")
-        # checkpoints by tokens (independent of improvement)
+        # checkpoints by tokens (save only if validation improves)
         if master_process and args.save_checkpoint and progress.should_snapshot():
-            _last_run_ckpt_path, _ = _save_run_checkpoint(
-                val_value=cur_val,
-                step=step,
-                args=args,
-                model=model,
-                optimizers=optimizers,
-                tokens_per_step=tokens_per_step,
-                run_start_minute=run_start_minute,
-                run_id=run_id,
-                last_ckpt_path=_last_run_ckpt_path,
-                best_val=best_val,
-                schedule_total_iters_den=_schedule_total_iters_den,
-                print_message=True,
-                progress_state=progress.state_dict(),
-            )
+            if cur_val < best_val:
+                best_val = cur_val
+                _last_run_ckpt_path, _ = _save_run_checkpoint(
+                    val_value=cur_val,
+                    step=step,
+                    args=args,
+                    model=model,
+                    optimizers=optimizers,
+                    tokens_per_step=tokens_per_step,
+                    run_start_minute=run_start_minute,
+                    run_id=run_id,
+                    last_ckpt_path=_last_run_ckpt_path,
+                    best_val=best_val,
+                    schedule_total_iters_den=_schedule_total_iters_den,
+                    print_message=True,
+                    progress_state=progress.state_dict(),
+                )
+            else:
+                try:
+                    print0(f"No improvement in val loss: best={best_val:.6f}, current={cur_val:.6f}. Skipping checkpoint.")
+                except Exception:
+                    print0("No improvement in val loss. Skipping checkpoint.")
             progress.mark_snapshot_done()
         # resume training clock
         model.train()

@@ -171,7 +171,7 @@ def build_report(model: nn.Module, hparams: Optional[Dict[str, Any]] = None, zer
 
     # GPT2Core-specific info if available
     try:
-        from models.gpt_core import GPT2Core  # local import
+        from models.gpt2.gpt_core import GPT2Core  # local import
         if isinstance(model, GPT2Core):
             L = len(model.blocks)
             report.setdefault("model", {})

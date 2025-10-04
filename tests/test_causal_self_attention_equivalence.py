@@ -2,7 +2,7 @@
 import pytest
 import torch
 from torch.nn.attention.flex_attention import create_block_mask
-from models.attention import CausalSelfAttention
+from models.gpt2.attention import CausalSelfAttention
 
 def _make_block_mask(T: int, H: int, W: int, device: torch.device):
     dev_str = "cuda" if device.type == "cuda" else "cpu"
@@ -10,7 +10,7 @@ def _make_block_mask(T: int, H: int, W: int, device: torch.device):
         return (kv_idx <= q_idx) & (kv_idx >= q_idx - (W - 1))
     return create_block_mask(mask_mod, 1, H, T, T, device=dev_str)
 
-@pytest.mark.parametrize("T,W", [(9,9), (13,5)])
+@pytest.mark.parametrize("T,W", [(128,128), (131,128)])
 @pytest.mark.parametrize("use_ve", [False, True])
 def test_causal_self_attention_forward_equals_step(T, W, use_ve, monkeypatch):
     # TODO fix this test since it will spuriously fail for small T,W
@@ -18,7 +18,7 @@ def test_causal_self_attention_forward_equals_step(T, W, use_ve, monkeypatch):
     torch.manual_seed(0)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     H, D = 4, 8
-    dim, max_seq_len = H * D, 64
+    dim, max_seq_len = H * D, 128
     m = CausalSelfAttention(dim=dim, num_heads=H, max_seq_len=max_seq_len, head_dim=D).to(device).eval()
     dtype = torch.bfloat16
     x = torch.randn(1, T, dim, device=device, dtype=dtype)

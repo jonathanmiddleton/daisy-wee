@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Dict, Type
 
-from .gpt_core import GPT2Core
+# Prefer the migrated path under models.gpt2
+from .gpt2.gpt_core import GPT2Core
 
 # Registry mapping model_type keys in configs/checkpoints to concrete model classes
 MODEL_REGISTRY: Dict[str, Type[GPT2Core]] = {
