@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
-from models.functional import init_linear
+from models.gpt2.functional import init_linear
 
 
 class MLP(nn.Module):

@@ -1,7 +1,7 @@
 import torch.nn as nn
-from models.attention import CausalSelfAttention
-from models.mlp import MLP
-from models.functional import norm
+from models.gpt2.attention import CausalSelfAttention
+from models.gpt2.mlp import MLP
+from models.gpt2.functional import norm
 from torch import Tensor
 from torch.nn.attention.flex_attention import BlockMask
 

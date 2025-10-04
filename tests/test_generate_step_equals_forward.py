@@ -5,7 +5,7 @@ import pytest
 
 os.environ["DISABLE_O_ZERO_INIT"] = "1"  # ensure attention output proj isn't zeroed
 
-from models.gpt_core import GPT2Core
+from models.gpt2.gpt_core import GPT2Core
 from inference.generate import Generator
 
 @pytest.mark.skip(reason="Disabled - requires changing GPT2Core.forward to return logits for testing")
@@ -19,8 +19,8 @@ def test_step_equals_forward_when_window_covers_all(T, window):
     model_dim   = 256
     max_seq_len = 2048
 
-    model = GPT2Core(vocab_size, num_layers, num_heads, model_dim, max_seq_len).eval()
-    device = "cpu"
+    model = GPT2Core(vocab_size, num_layers, num_heads, model_dim, max_seq_len, model_dim/num_heads).eval()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
     ctx = torch.amp.autocast(device_type=device, dtype=torch.bfloat16)

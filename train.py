@@ -9,12 +9,15 @@ from pathlib import Path
 
 import yaml
 from dataclasses import dataclass, fields as dataclass_fields, asdict
+from model_specs import load_model_spec
 
 from models import get_model_class
-from training.data_gen import distributed_data_generator
+from training.data_gen import distributed_data_generator, DistributedDataGenerator
 from training.optim import Muon
 from training.optim import get_lr_s, get_window_size_blocks_s, set_full_windows
+from training.eval import Evaluator
 from tools.checkpoint import load_checkpoint, save_checkpoint, apply_model_state
+from tools.helpers import _coerce_value
 
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import torch
@@ -48,6 +51,7 @@ class Hyperparameters:
     num_heads: int = None
     model_dim: int = None
     head_dim: int = None
+    head_params_lr: float = 0.008
     embed_params_lr: float = 0.3
     scalar_params_lr: float = 0.015
     hidden_matrix_params_lr: float = 0.025
@@ -56,7 +60,10 @@ class Hyperparameters:
     full_windows: bool = False
     # Optional: legacy schedule control (not used for stopping)
     schedule_total_iters: int | None = None
+    # Gradient accumulation
+    grad_acc_steps: int = 1
     # Model selection
+    model_spec: str | None = None  # name of model spec under model_specs/, or a path to a spec file
     model_type: str = "gpt2"
     # Weights & Biases minimal logging config
     wandb_log: bool = False
@@ -65,8 +72,9 @@ class Hyperparameters:
 
 def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
     """
-    Load Hyperparameters from a YAML file. If no path is provided, defaults to config/instruct_sft.yml.
-    Validates keys and required fields against the Hyperparameters dataclass.
+    Load Hyperparameters from a YAML file. If a 'model_spec' key is present, also load and merge
+    the named spec from model_specs/<name>.yml (or a provided file path). Training config values
+    take precedence over spec values. Validates against the Hyperparameters dataclass.
     """
     cfg_dict = {}
     if config_path:
@@ -79,6 +87,17 @@ def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
             with open(used_path, "r") as f:
                 cfg_dict = yaml.safe_load(f) or {}
 
+    # If a model_spec name/path is provided, load the spec and merge recognized fields
+    model_spec_name = cfg_dict.get("model_spec")
+    if model_spec_name:
+        spec_dict = load_model_spec(str(model_spec_name))
+        # Only merge keys that are valid Hyperparameters fields and not explicitly set in training cfg
+        valid_names_for_merge = {f.name for f in dataclass_fields(Hyperparameters)}
+        for k, v in (spec_dict.items() if isinstance(spec_dict, dict) else []):
+            if k in valid_names_for_merge and (k not in cfg_dict or cfg_dict[k] is None):
+                cfg_dict[k] = v
+
+    # Validate keys after potential spec merge
     valid_names = {f.name for f in dataclass_fields(Hyperparameters)}
     unknown = set(cfg_dict) - valid_names
     if unknown:
@@ -92,60 +111,6 @@ def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
         raise ValueError(f"Missing required hyperparameter(s) in {used_path}: {missing}")
 
     return Hyperparameters(**cfg_dict)
-
-from typing import get_origin, get_args
-
-def _coerce_value(val_str: str, typ):
-    # Support Optional[...] and unions with None
-    origin = get_origin(typ)
-    args_ = get_args(typ)
-    is_optional = False
-    target_types = ()
-    if origin is None:
-        target_types = (typ,)
-    elif origin is list or origin is tuple or origin is dict:
-        # Simple YAML-like JSON parsing for collections
-        # Fall back to YAML safe_load for flexible parsing
-        return yaml.safe_load(val_str)
-    elif origin is type(None):
-        # Only NoneType
-        is_optional = True
-        target_types = (type(None),)
-    else:
-        # Assume Union
-        target_types = args_
-        if type(None) in target_types:
-            is_optional = True
-    # None coercion
-    if val_str.lower() in ("none", "null"):
-        if is_optional:
-            return None
-        # If not optional but asked for None, keep as string 'None'
-        return val_str
-    # Try booleans explicitly
-    if bool in target_types or typ is bool:
-        if val_str.lower() in ("1", "true", "t", "yes", "y", "on"):
-            return True
-        if val_str.lower() in ("0", "false", "f", "no", "n", "off"):
-            return False
-        # Fall through to attempt other conversions
-    # Numeric conversions
-    if int in target_types or typ is int:
-        try:
-            return int(val_str)
-        except ValueError:
-            pass
-    if float in target_types or typ is float:
-        try:
-            return float(val_str)
-        except ValueError:
-            pass
-    # Fallback: try YAML to parse literals, else string
-    try:
-        parsed = yaml.safe_load(val_str)
-        return parsed
-    except Exception:
-        return val_str
 
 # Load config from YAML (first CLI arg if provided)
 _config_path = sys.argv[1] if len(sys.argv) > 1 else None
@@ -302,6 +267,14 @@ if args.init_checkpoint:
 # Determine schedule denominator (decoupled from stop condition) after (optional) checkpoint rehydration
 _schedule_total_iters_den = int(args.schedule_total_iters) if getattr(args, "schedule_total_iters", None) not in (None, 0) else 0
 print0(json.dumps({**asdict(args), "_schedule_total_iters_den": _schedule_total_iters_den}, indent=2, sort_keys=True))
+# Ensure wandb sees the final effective hyperparameters (after overrides and any rehydration)
+if _wandb_enabled:
+    try:
+        _wandb.config.update(asdict(args), allow_val_change=True)
+        # Also log derived scheduling denominator for transparency
+        _wandb.config.update({"_schedule_total_iters_den": _schedule_total_iters_den}, allow_val_change=True)
+    except Exception as _e:
+        print0(f"[warn] Failed to update wandb config: {_e}")
 
 # Now we can safely build the model with possibly rehydrated args
 _ModelClass = get_model_class(getattr(args, "model_type", "gpt2"))
@@ -343,11 +316,11 @@ assert optimized_parameters_set == {*model.parameters()}
 assert len(optimized_parameters_set) == sum(len(lst) for lst in params_collections)
 
 # init the optimizer(s)
-adam_param_groups = [dict(params=head_params, lr=1 / 320), dict(params=embed_params, lr=args.embed_params_lr),
+adam_param_groups = [dict(params=head_params, lr=args.head_params_lr), dict(params=embed_params, lr=args.embed_params_lr),
                      dict(params=scalar_params, lr=args.scalar_params_lr)]
 # small adam epsilon by @YouJiacheng. this is an alternate method of fixing the world_size dependence
 # discovered by @fernbear.bsky.social https://x.com/hi_tysam/status/1879692937589875094
-optimizer1 = torch.optim.AdamW(adam_param_groups, betas=(0.8, 0.95), eps=1e-10, weight_decay=args.adamw_weight_decay, fused=True)
+optimizer1 = torch.optim.AdamW(adam_param_groups, betas=(0.9, 0.95), eps=1e-10, weight_decay=args.adamw_weight_decay, fused=True)
 optimizer2 = Muon(hidden_matrix_params, lr=args.hidden_matrix_params_lr, momentum=0.95, rank=rank, world_size=world_size)
 optimizers: list[torch.optim.Optimizer] = [optimizer1, optimizer2]
 
@@ -382,58 +355,20 @@ val_batch_size = world_size * args.val_seq_len
 if args.val_tokens % val_batch_size != 0:
     raise ValueError(f"val_tokens ({args.val_tokens}) must be divisible by val_batch_size ({val_batch_size})")
 val_steps = args.val_tokens // val_batch_size
+# Build a persistent validation data generator and evaluator
+_val_ddg = DistributedDataGenerator(args.val_shards, val_batch_size, rank, world_size)
+_evaluator = Evaluator(
+    wandb_enabled=_wandb_enabled,
+    data_generator=_val_ddg,
+    distributed_enabled=use_distributed,
+    rank=rank,
+)
 
 # Tokens per training micro-step (includes padding by design)
 tokens_per_step = world_size * args.max_seq_len
 
 # Progress and tracking
-progress = None
-progress = type("ProgressMeterHolder", (), {})()  # placeholder type to satisfy linters
-class ProgressMeter:
-    def __init__(self, target_tokens: int, *, eval_every_tokens: int | None, snapshot_per_n_tokens: int | None, snapshot_warmup_tokens: int = 0):
-        self.target_tokens = int(target_tokens)
-        self.tokens_processed = 0
-        self.eval_every_tokens = int(eval_every_tokens) if eval_every_tokens else None
-        self.next_eval_at = self.eval_every_tokens if self.eval_every_tokens else None
-        self.snapshot_per_n_tokens = int(snapshot_per_n_tokens) if snapshot_per_n_tokens else None
-        self.snapshot_warmup_tokens = int(snapshot_warmup_tokens or 0)
-        self.next_snapshot_at = (self.snapshot_warmup_tokens + self.snapshot_per_n_tokens) if self.snapshot_per_n_tokens else None
-    @property
-    def s(self) -> float:
-        if self.target_tokens <= 0:
-            return 0.0
-        return min(self.tokens_processed / self.target_tokens, 1.0)
-    def update(self, step_tokens: int) -> None:
-        self.tokens_processed += int(step_tokens)
-    def should_eval(self) -> bool:
-        if self.eval_every_tokens is None or self.next_eval_at is None:
-            return False
-        return self.tokens_processed >= self.next_eval_at
-    def mark_eval_done(self) -> None:
-        if self.eval_every_tokens is not None and self.next_eval_at is not None:
-            while self.tokens_processed >= self.next_eval_at:
-                self.next_eval_at += self.eval_every_tokens
-    def should_snapshot(self) -> bool:
-        if self.snapshot_per_n_tokens is None or self.next_snapshot_at is None:
-            return False
-        if self.tokens_processed < self.snapshot_warmup_tokens:
-            return False
-        return self.tokens_processed >= self.next_snapshot_at
-    def mark_snapshot_done(self) -> None:
-        if self.snapshot_per_n_tokens is not None and self.next_snapshot_at is not None:
-            while self.tokens_processed >= self.next_snapshot_at:
-                self.next_snapshot_at += self.snapshot_per_n_tokens
-    def state_dict(self):
-        return {
-            'tokens_processed': self.tokens_processed,
-            'next_eval_at': self.next_eval_at,
-            'next_snapshot_at': self.next_snapshot_at,
-            'target_tokens': self.target_tokens,
-        }
-    def load_state_dict(self, d):
-        self.tokens_processed = int(d.get('tokens_processed', 0))
-        self.next_eval_at = d.get('next_eval_at', self.eval_every_tokens)
-        self.next_snapshot_at = d.get('next_snapshot_at', self.next_snapshot_at)
+from training.progress import ProgressMeter
 
 progress = ProgressMeter(
     target_tokens=int(args.target_tokens),
@@ -457,59 +392,43 @@ t0 = time.perf_counter()
 warmup_end = 0.0
 
 while progress.tokens_processed < progress.target_tokens:
-    # --------------- VALIDATION SECTION -----------------
+    # --------------- Evaluation -----------------
     if progress.should_eval():
         if use_distributed:
             dist.barrier()
         training_time_ms += 1000 * (time.perf_counter() - t0)
         model.eval()
-        val_loader = distributed_data_generator(args.val_shards, val_batch_size, rank, world_size)
-        val_loss = torch.zeros((), device="cuda", dtype=torch.float32)
-        with torch.no_grad():
-            for _ in range(val_steps):
-                inputs, targets = next(val_loader)
-                val_loss = val_loss + model(inputs, get_window_size_blocks_s(progress.s), targets)
-        val_loss = val_loss / val_steps
-        del val_loader
-        if use_distributed:
-            dist.all_reduce(val_loss, op=dist.ReduceOp.AVG)
-        cur_val = float(val_loss.item())
-        tokens_since_last = progress.tokens_processed - last_val_tokens
-        if last_val_loss is not None and tokens_since_last > 0:
-            dpt = (cur_val - last_val_loss) / tokens_since_last
-            ema_dloss_per_token = dpt if ema_dloss_per_token is None else 0.7 * ema_dloss_per_token + 0.3 * dpt
-            print0(f"delta loss per 1e9 tokens:{dpt * 1e9:.6f} [ema:{(ema_dloss_per_token or 0.0) * 1e9:.6f}]")
+        # Evaluate using the Evaluator (per-rank tokens)
+        _per_rank_tokens = args.val_tokens // world_size
+        eval_out = _evaluator.eval(model, _per_rank_tokens, tokens=progress.tokens_processed)
+        cur_val = float(eval_out.get("val_loss", float("nan")))
         last_val_loss = cur_val
-        last_val_tokens = progress.tokens_processed
-        print0(f"step:{step} tokens:{progress.tokens_processed}/{progress.target_tokens} (s={progress.s:.4f}) val_loss:{val_loss:.6f} train_time:{training_time_ms:.0f}ms")
-        if _wandb_enabled:
-            try:
-                _wandb.log({
-                    "val/loss": cur_val,
-                    "val/ppl": math.exp(cur_val) if cur_val < 20 else float("inf"),
-                    "tokens": progress.tokens_processed,
-                    "s": progress.s,
-                    "step": step,
-                })
-            except Exception as _e:
-                print0(f"[warn] wandb.log (val) failed: {_e}")
-        # checkpoints by tokens (independent of improvement)
+        ema_dloss_per_token = eval_out.get("ema_dloss_per_token", ema_dloss_per_token)
+        print0(f"step:{step} tokens:{progress.tokens_processed}/{progress.target_tokens} (s={progress.s:.4f}) val_loss:{cur_val:.6f} train_time:{training_time_ms:.0f}ms")
+        # checkpoints by tokens (save only if validation improves)
         if master_process and args.save_checkpoint and progress.should_snapshot():
-            _last_run_ckpt_path, _ = _save_run_checkpoint(
-                val_value=cur_val,
-                step=step,
-                args=args,
-                model=model,
-                optimizers=optimizers,
-                tokens_per_step=tokens_per_step,
-                run_start_minute=run_start_minute,
-                run_id=run_id,
-                last_ckpt_path=_last_run_ckpt_path,
-                best_val=best_val,
-                schedule_total_iters_den=_schedule_total_iters_den,
-                print_message=True,
-                progress_state=progress.state_dict(),
-            )
+            if cur_val < best_val:
+                best_val = cur_val
+                _last_run_ckpt_path, _ = _save_run_checkpoint(
+                    val_value=cur_val,
+                    step=step,
+                    args=args,
+                    model=model,
+                    optimizers=optimizers,
+                    tokens_per_step=tokens_per_step,
+                    run_start_minute=run_start_minute,
+                    run_id=run_id,
+                    last_ckpt_path=_last_run_ckpt_path,
+                    best_val=best_val,
+                    schedule_total_iters_den=_schedule_total_iters_den,
+                    print_message=True,
+                    progress_state=progress.state_dict(),
+                )
+            else:
+                try:
+                    print0(f"No improvement in val loss: best={best_val:.6f}, current={cur_val:.6f}. Skipping checkpoint.")
+                except Exception:
+                    print0("No improvement in val loss. Skipping checkpoint.")
             progress.mark_snapshot_done()
         # resume training clock
         model.train()
@@ -519,12 +438,20 @@ while progress.tokens_processed < progress.target_tokens:
         progress.mark_eval_done()
 
     # --------------- TRAINING SECTION -----------------
-    inputs, targets = next(train_loader)
+    ga_steps = max(1, int(getattr(args, "grad_acc_steps", 1) or 1))
+    total_train_loss = 0.0
 
-    train_loss = model(inputs, get_window_size_blocks_s(progress.s), targets)
-    train_loss.backward()
-    train_loss_est = float(train_loss.item())
-    # collect the futures for all the optimizers
+    for micro_step in range(ga_steps):
+        inputs, targets = next(train_loader)
+        loss = model(inputs, get_window_size_blocks_s(progress.s), targets)
+        # scale loss so that gradients are averaged across micro-steps
+        loss_to_backward = loss / ga_steps
+        if use_distributed:
+            model.require_backward_grad_sync = (micro_step == ga_steps - 1)
+        loss_to_backward.backward()
+        total_train_loss += float(loss.item())
+
+    # collect the futures for all the optimizers (do distributed grad average once after accumulation)
     opt2futures = {
         opt: ([dist.all_reduce(p.grad, op=dist.ReduceOp.AVG, async_op=True).get_future() for p in params if p.grad is not None]
               if use_distributed else [])
@@ -546,11 +473,12 @@ while progress.tokens_processed < progress.target_tokens:
     # null the gradients
     model.zero_grad(set_to_none=True)
 
-    # Update tokens and counters
-    progress.update(tokens_per_step)
+    # Update tokens and counters (only once per accumulation cycle)
+    progress.update(tokens_per_step * ga_steps)
     step += 1
 
-    # logging
+    # logging (only at accumulation boundary)
+    train_loss_est = total_train_loss / ga_steps
     approx_training_time_ms = training_time_ms + 1000 * (time.perf_counter() - t0)
     if step == 9:
         warmup_end = approx_training_time_ms
@@ -560,6 +488,7 @@ while progress.tokens_processed < progress.target_tokens:
         try:
             _wandb.log({
                 "train/loss": train_loss_est,
+                "train/ppl": math.exp(train_loss_est) if train_loss_est < 20 else float("inf"),
                 "tokens": progress.tokens_processed,
                 "s": progress.s,
                 "train/time_ms": approx_training_time_ms,

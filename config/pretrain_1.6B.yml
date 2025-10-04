@@ -7,10 +7,13 @@ train_shards: "data/fineweb/fineweb_train_*.bin"
 target_tokens: 4000000000
 val_loss_every_tokens: 200000000
 cooldown_frac: 0.5
-embed_params_lr: 0.02           #adamw
-scalar_params_lr: 0.02          #adamw
-hidden_matrix_params_lr: 0.03   #muon
+head_params_lr: 0.0027            #adamw
+embed_params_lr: 0.02             #adamw
+scalar_params_lr: 0.013           #adamw
+hidden_matrix_params_lr: 0.013    #muon
 adamw_weight_decay: 0.01
+# Gradient accumulation
+grad_acc_steps: 8
 # Evaluations
 val_shards: "data/fineweb/fineweb_val_*.bin"
 val_seq_len: 65536              # N * 1024

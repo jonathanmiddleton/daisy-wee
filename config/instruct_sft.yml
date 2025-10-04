@@ -3,19 +3,16 @@ init_checkpoint: "checkpoints/state_step_100000.pt"
 # Instruct SFT training configuration
 train_shards: "data/instruct_mix/instruct_train_*.bin"
 val_shards: "data/instruct_mix/instruct_val_*.bin"
-max_seq_len: 65536      # 64 * 1024
-val_seq_len: 262144       # 64 * 1024
+val_seq_len: 262144       # validation sequence length
+# Reference a named model spec from model_specs/
+model_spec: gpt2_350m
+# Training targets
 target_tokens: 30000000        # total training tokens
 cooldown_frac: 0.9
 
 # Common settings
-model_type: gpt2
-vocab_size: 50257
 val_tokens: 10485760
 val_loss_every_tokens: 5000000
 save_checkpoint: true
-num_layers: 16
-num_heads: 8
-model_dim: 1024
 
 
