@@ -267,6 +267,14 @@ if args.init_checkpoint:
 # Determine schedule denominator (decoupled from stop condition) after (optional) checkpoint rehydration
 _schedule_total_iters_den = int(args.schedule_total_iters) if getattr(args, "schedule_total_iters", None) not in (None, 0) else 0
 print0(json.dumps({**asdict(args), "_schedule_total_iters_den": _schedule_total_iters_den}, indent=2, sort_keys=True))
+# Ensure wandb sees the final effective hyperparameters (after overrides and any rehydration)
+if _wandb_enabled:
+    try:
+        _wandb.config.update(asdict(args), allow_val_change=True)
+        # Also log derived scheduling denominator for transparency
+        _wandb.config.update({"_schedule_total_iters_den": _schedule_total_iters_den}, allow_val_change=True)
+    except Exception as _e:
+        print0(f"[warn] Failed to update wandb config: {_e}")
 
 # Now we can safely build the model with possibly rehydrated args
 _ModelClass = get_model_class(getattr(args, "model_type", "gpt2"))
