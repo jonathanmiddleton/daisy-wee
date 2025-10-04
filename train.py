@@ -60,6 +60,8 @@ class Hyperparameters:
     full_windows: bool = False
     # Optional: legacy schedule control (not used for stopping)
     schedule_total_iters: int | None = None
+    # Gradient accumulation
+    grad_acc_steps: int = 1
     # Model selection
     model_spec: str | None = None  # name of model spec under model_specs/, or a path to a spec file
     model_type: str = "gpt2"
@@ -428,12 +430,20 @@ while progress.tokens_processed < progress.target_tokens:
         progress.mark_eval_done()
 
     # --------------- TRAINING SECTION -----------------
-    inputs, targets = next(train_loader)
+    ga_steps = max(1, int(getattr(args, "grad_acc_steps", 1) or 1))
+    total_train_loss = 0.0
 
-    train_loss = model(inputs, get_window_size_blocks_s(progress.s), targets)
-    train_loss.backward()
-    train_loss_est = float(train_loss.item())
-    # collect the futures for all the optimizers
+    for micro_step in range(ga_steps):
+        inputs, targets = next(train_loader)
+        loss = model(inputs, get_window_size_blocks_s(progress.s), targets)
+        # scale loss so that gradients are averaged across micro-steps
+        loss_to_backward = loss / ga_steps
+        if use_distributed:
+            model.require_backward_grad_sync = (micro_step == ga_steps - 1)
+        loss_to_backward.backward()
+        total_train_loss += float(loss.item())
+
+    # collect the futures for all the optimizers (do distributed grad average once after accumulation)
     opt2futures = {
         opt: ([dist.all_reduce(p.grad, op=dist.ReduceOp.AVG, async_op=True).get_future() for p in params if p.grad is not None]
               if use_distributed else [])
@@ -455,11 +465,12 @@ while progress.tokens_processed < progress.target_tokens:
     # null the gradients
     model.zero_grad(set_to_none=True)
 
-    # Update tokens and counters
-    progress.update(tokens_per_step)
+    # Update tokens and counters (only once per accumulation cycle)
+    progress.update(tokens_per_step * ga_steps)
     step += 1
 
-    # logging
+    # logging (only at accumulation boundary)
+    train_loss_est = total_train_loss / ga_steps
     approx_training_time_ms = training_time_ms + 1000 * (time.perf_counter() - t0)
     if step == 9:
         warmup_end = approx_training_time_ms
