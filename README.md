@@ -31,16 +31,17 @@ Below are the current, tested ways to launch training, run inference sampling, a
 ### Training: run.sh (recommended wrapper)
 - Syntax
   ```sh
-  ./run.sh CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [key=value ...]
+  ./run.sh CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [-r RUN_ID] [key=value ...]
   ```
 - Arguments
   - CONFIG_FILE: Path to a YAML config (e.g., config/pretrain_350m.yml, config/pretrain_1.6B.yml, config/instruct_sft.yml, or config/instruct_sft_1.6B.yml). Required.
   - -n NUM_PROCS: Number of processes per node (passed to torchrun --nproc_per_node). Default: 8.
   - -p CHECKPOINT_PATH: Optional checkpoint to initialize model weights only (fresh schedule; no steps/optimizer/best-val are resumed).
   - -s BEGIN_SHARD: Optional starting shard index for training data (exported as BEGIN_SHARD). Useful for resuming data traversal.
+  - -r RUN_ID: Optional run identifier. Exported as RUN_ID and used in checkpoint filenames and the default wandb run name.
   - key=value or --key=value: Any additional overrides forwarded to train.py as --key=value. Examples: target_tokens=3000000000, max_seq_len=32768.
 - Notes
-  - run.sh requires CONFIG_FILE as the first positional argument. Options -n/-p must appear after CONFIG_FILE.
+  - run.sh requires CONFIG_FILE as the first positional argument. Options -n/-p/-s/-r must appear after CONFIG_FILE.
   - Overrides without a leading -- are automatically rewritten to --key=value.
   - To force full attention windows (useful when resuming after training on smaller windows), pass the bare flag --full_windows (or --full-windows). run.sh will normalize this to --full_windows=true for train.py.
   - By default, every run starts a fresh schedule. Passing -p only loads weights (no steps/optimizer/best-val are resumed).
@@ -68,6 +69,24 @@ Below are the current, tested ways to launch training, run inference sampling, a
     ```sh
     ./run.sh config/instruct_sft.yml -n 8 -p checkpoints/state_step_200000.pt
     ```
+
+### Weights & Biases logging (optional)
+- Enable logging by setting wandb_log: true in your YAML or by passing CLI overrides via run.sh.
+- Defaults:
+  - Project defaults to 'daisy-wee' if wandb_project is not provided.
+  - Run name defaults to {YYYYMMDD-HHMM}-run{RUN_ID} if wandb_run_name is not provided. RUN_ID is set via -r or --run_id and is exported to the environment.
+- Examples:
+  ```sh
+  ./run.sh config/pretrain_350m.yml -n 8 wandb_log=true wandb_project=myproj wandb_run_name=exp1
+  ./run.sh config/pretrain_350m.yml -n 8 -r 2 wandb_log=true
+  # or using long option
+  ./run.sh config/pretrain_350m.yml -n 8 --run_id=2 wandb_log=true
+  ```
+- Logged metrics:
+  - train/loss, tokens, s, train/time_ms, step
+  - val/loss, val/ppl
+- Notes:
+  - wandb is optional; if not installed or initialization fails, training continues without logging.
 
 ### Inference: sample.py
 - Syntax
@@ -109,6 +128,9 @@ Below are the current, tested ways to launch training, run inference sampling, a
   - snapshot_per_n_tokens: Snapshot interval measured in tokens.
   - save_checkpoint: Whether to write training checkpoints.
   - full_windows: If true, force full attention windows for the entire run (useful when resuming after training with smaller windows).
+  - wandb_log: If true, enable basic Weights & Biases logging. Defaults to false.
+  - wandb_project: W&B project name; defaults to 'daisy-wee' when logging is enabled.
+  - wandb_run_name: Optional run name; defaults to timestamp+run id when not provided.
 - Model fields
   - max_seq_len: Maximum context length for training/inference.
   - vocab_size: Vocabulary size (e.g., 50257 for GPT-2 BPE).
