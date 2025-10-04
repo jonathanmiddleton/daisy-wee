@@ -6,10 +6,10 @@ wandb_run_name: '350m'
 train_shards: "data/fineweb/fineweb_train_*.bin"
 target_tokens: 1000000000
 cooldown_frac: 0.5
-embed_params_lr: 0.02
-head_params_lr: 0.008
-scalar_params_lr: 0.02
-hidden_matrix_params_lr: 0.025
+embed_params_lr: 0.025
+head_params_lr: 0.0085
+scalar_params_lr: 0.025
+hidden_matrix_params_lr: 0.03
 adamw_weight_decay: 0.01
 # Gradient accumulation
 grad_acc_steps: 8
