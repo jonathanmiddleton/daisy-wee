@@ -51,6 +51,7 @@ class Hyperparameters:
     num_heads: int = None
     model_dim: int = None
     head_dim: int = None
+    head_params_lr: float = 0.008
     embed_params_lr: float = 0.3
     scalar_params_lr: float = 0.015
     hidden_matrix_params_lr: float = 0.025
@@ -108,8 +109,6 @@ def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
         raise ValueError(f"Missing required hyperparameter(s) in {used_path}: {missing}")
 
     return Hyperparameters(**cfg_dict)
-
-
 
 # Load config from YAML (first CLI arg if provided)
 _config_path = sys.argv[1] if len(sys.argv) > 1 else None
@@ -307,11 +306,11 @@ assert optimized_parameters_set == {*model.parameters()}
 assert len(optimized_parameters_set) == sum(len(lst) for lst in params_collections)
 
 # init the optimizer(s)
-adam_param_groups = [dict(params=head_params, lr=1 / 320), dict(params=embed_params, lr=args.embed_params_lr),
+adam_param_groups = [dict(params=head_params, lr=args.head_params_lr), dict(params=embed_params, lr=args.embed_params_lr),
                      dict(params=scalar_params, lr=args.scalar_params_lr)]
 # small adam epsilon by @YouJiacheng. this is an alternate method of fixing the world_size dependence
 # discovered by @fernbear.bsky.social https://x.com/hi_tysam/status/1879692937589875094
-optimizer1 = torch.optim.AdamW(adam_param_groups, betas=(0.8, 0.95), eps=1e-10, weight_decay=args.adamw_weight_decay, fused=True)
+optimizer1 = torch.optim.AdamW(adam_param_groups, betas=(0.9, 0.95), eps=1e-10, weight_decay=args.adamw_weight_decay, fused=True)
 optimizer2 = Muon(hidden_matrix_params, lr=args.hidden_matrix_params_lr, momentum=0.95, rank=rank, world_size=world_size)
 optimizers: list[torch.optim.Optimizer] = [optimizer1, optimizer2]
 
