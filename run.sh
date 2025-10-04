@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Setup logging to logs/<timestamp>.log while still printing to console
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG_DIR="${SCRIPT_DIR}/logs"
+mkdir -p "$LOG_DIR"
+TIMESTAMP="$(date +"%Y%m%d_%H%M%S")"
+LOG_FILE="${LOG_DIR}/${TIMESTAMP}.log"
+# Redirect all stdout/stderr to tee (append) so it prints and saves
+exec > >(tee -a "$LOG_FILE") 2>&1
+echo "Logging to $LOG_FILE"
+
 export TORCH_COMPILE_OFF=0
 
 # Defaults
