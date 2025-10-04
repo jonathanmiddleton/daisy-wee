@@ -488,6 +488,7 @@ while progress.tokens_processed < progress.target_tokens:
         try:
             _wandb.log({
                 "train/loss": train_loss_est,
+                "train/ppl": math.exp(train_loss_est) if train_loss_est < 20 else float("inf"),
                 "tokens": progress.tokens_processed,
                 "s": progress.s,
                 "train/time_ms": approx_training_time_ms,
