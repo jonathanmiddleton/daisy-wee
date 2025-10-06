@@ -180,7 +180,7 @@ def lr_sweep(
     print(
         f"[lr_sweep] num_scales={num_scales}, scale_min={scale_min:.3e}, scale_max={scale_max:.3e}, "
         f"steps_per_scale={steps_per_scale}, accum_steps={accum_steps}, smooth={smooth}, "
-        f"blowup_pct={blowup_pct*100:.1f}%, metric=EMA(delta_loss)",
+        f"blowup_pct={blowup_pct*100:.1f}%, metric=EMA(delta_loss, debiased)",
         flush=True,
     )
     print("[lr_sweep] Groups:", flush=True)
@@ -199,6 +199,7 @@ def lr_sweep(
     global_best = float("-inf")
     lrs_scalars: List[float] = []
     losses: List[float] = []
+    improvements: List[float] = []
 
     # Sweep loop over scales; reset model/optimizer/data at each new scale
     for i in range(num_scales):
@@ -211,7 +212,10 @@ def lr_sweep(
         set_lrs(scalar)
 
         ema_delta = None
+        t_updates = 0
         prev_val = None
+        start_val = None
+        end_val = None
         early = False
         reason = ""
 
@@ -241,33 +245,52 @@ def lr_sweep(
                 opt.step()
 
             val = total / accum_steps
+            # capture start and latest values for improvement metric
+            if start_val is None:
+                start_val = val
+            end_val = val
+
             if prev_val is not None:
                 delta = prev_val - val  # positive = improvement
-                ema_delta = delta if ema_delta is None else smooth * ema_delta + (1 - smooth) * delta
+                if ema_delta is None:
+                    ema_delta = delta
+                    t_updates = 1
+                else:
+                    ema_delta = smooth * ema_delta + (1 - smooth) * delta
+                    t_updates += 1
+
+                # Debias the EMA: ema_hat = ema / (1 - smooth^t)
+                denom = 1.0 - (smooth ** t_updates)
+                ema_debiased = ema_delta / denom if denom > 1e-12 else float("nan")
 
                 # early stop check within this scale window (maximize EMA(delta))
-                if not math.isfinite(ema_delta):
+                if not math.isfinite(ema_debiased):
                     early = True
                     reason = "non-finite EMA(delta)"
                     break
                 # if we have a strong degradation (negative improvement), bail
-                if step > 4 and ema_delta < 0:
+                if step > 4 and ema_debiased < 0:
                     early = True
                     reason = "EMA(delta) negative (loss increasing)"
                     break
-                if math.isfinite(global_best) and step > 4 and ema_delta < (1.0 - blowup_pct) * global_best:
+                if math.isfinite(global_best) and step > 4 and ema_debiased < (1.0 - blowup_pct) * global_best:
                     early = True
                     reason = "EMA(delta) dropped below blowup threshold vs global best"
                     break
             prev_val = val
 
-        # record results for this scale
+        # record results for this scale (debiased EMA and total improvement)
+        denom = (1.0 - (smooth ** t_updates)) if (ema_delta is not None and t_updates > 0) else None
+        ema_out = (ema_delta / denom) if (denom and denom > 1e-12) else float("nan")
+        improvement = (start_val - end_val) if (start_val is not None and end_val is not None) else float("nan")
+
         lrs_scalars.append(scalar)
-        losses.append(ema_delta if ema_delta is not None else float("nan"))
+        losses.append(ema_out)
+        improvements.append(improvement)
 
         # update global best (maximize EMA(delta))
-        if ema_delta is not None and math.isfinite(ema_delta) and ema_delta > global_best:
-            global_best = ema_delta
+        if math.isfinite(ema_out) and ema_out > global_best:
+            global_best = ema_out
 
         # periodic outer-loop progress line
         elapsed = time.time() - t0
@@ -277,7 +300,7 @@ def lr_sweep(
         eff_lrs_map = { (group_infos[k].get("name") or k): (group_infos[k]["base_lr"] * scalar) for k in [kk for kk in all_keys if not group_infos[kk]["frozen"]] }
         eff_lrs_str = ", ".join(f"{n}={v:.3e}" for n, v in eff_lrs_map.items()) if eff_lrs_map else "none"
         print(
-            f"[lr_sweep] {done}/{num_scales} ({pct:.1f}%) ema_delta={losses[-1]:.6f} eff_lrs=[{eff_lrs_str}] scale={scalar:.3e} early={early} eta={eta_s:.1f}s",
+            f"[lr_sweep] {done}/{num_scales} ({pct:.1f}%) ema_delta={ema_out:.6f} improvement={improvement:.6f} eff_lrs=[{eff_lrs_str}] scale={scalar:.3e} early={early} eta={eta_s:.1f}s",
             flush=True,
         )
 
@@ -300,9 +323,9 @@ def lr_sweep(
         "num_scales": num_scales,
         "scale_min": float(scale_min),
         "scale_max": float(scale_max),
-        "metric": "ema_delta_loss",
+        "metric": "ema_delta_loss_debiased",
     }
-    return lrs_scalars, losses, meta
+    return lrs_scalars, losses, improvements, meta
 
 
 if __name__ == "__main__":
@@ -389,7 +412,7 @@ if __name__ == "__main__":
     sc_min = cli.scale_min
     sc_max = cli.scale_max
 
-    lrs, losses, meta = lr_sweep(
+    lrs, losses, improvements, meta = lr_sweep(
         model,
         optimizers=optimizers,
         data_generator=data_loader,
@@ -422,11 +445,12 @@ if __name__ == "__main__":
     results = [
         {
             "index": i,
-            "ema": float(l),
+            "ema": float(l),  # debiased EMA(delta)
+            "improvement": float(imp),  # start_loss - end_loss
             "effective_lrs": _eff_lrs_for_scalar(s),
             "scale": float(s),
         }
-        for i, (s, l) in enumerate(zip(lrs, losses))
+        for i, (s, l, imp) in enumerate(zip(lrs, losses, improvements))
     ]
     meta_out = dict(meta)
     meta_out["swept_groups"] = swept_names
@@ -442,13 +466,13 @@ if __name__ == "__main__":
         json.dump(log_obj, f, indent=2)
     print(f"[lr_sweep] wrote JSON results to {out_path}")
 
-    # Print ASCII table: Idx, EMA_delta, per-swept-group effective LRs, then Scale
+    # Print ASCII table: Idx, EMA_delta (debiased), Improvement, per-swept-group effective LRs, then Scale
     header_cols = [f"{name}_lr" for name in swept_names]
-    header = "\nIdx  EMA_delta  " + ("  ".join(f"{h:>12}" for h in header_cols) if header_cols else "(no_swept_groups)") + "  Scale"
+    header = "\nIdx  EMA_delta  Improvement  " + ("  ".join(f"{h:>12}" for h in header_cols) if header_cols else "(no_swept_groups)") + "  Scale"
     print(header)
-    for i, (s, l) in enumerate(zip(lrs, losses)):
+    for i, (s, l, imp) in enumerate(zip(lrs, losses, improvements)):
         eff = _eff_lrs_for_scalar(s)
         eff_cols = "  ".join(f"{eff.get(name, float('nan')):12.3e}" for name in swept_names) if swept_names else "(none)"
-        print(f"{i:3d}  {l:10.6f}  {eff_cols}  {s:10.3e}")
+        print(f"{i:3d}  {l:10.6f}  {imp:12.6f}  {eff_cols}  {s:10.3e}")
 
 
