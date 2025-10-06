@@ -6,7 +6,7 @@ wandb_run_name: '350m'
 train_shards: "data/fineweb/fineweb_train_*.bin"
 target_tokens: 3000000000
 cooldown_frac: 0.7
-training_sequence_length: 131072        #  N * 1024
+training_sequence_length: 98304        #  N * 1024
 attention_window_tokens: 3456          # sliding window trained span
 window_block_size: 128                 # must divide both training_sequence_length and attention_window_tokens
 # Optimizers configuration
