@@ -4,6 +4,10 @@ from argparse import ArgumentParser
 from typing import Iterable, List, Tuple, Dict, Any
 
 import torch
+import json
+import copy
+from datetime import datetime
+from pathlib import Path
 
 from training.data_gen import DistributedDataGenerator
 from training.optim import get_num_window_blocks
@@ -39,10 +43,11 @@ def lr_sweep(
     attention_window_tokens: int = 3456,
     window_block_size: int = 128,
     # sweep setup
-    steps: int = 200,
-    lr_min: float = 1e-6,
-    lr_max: float = 1.0,
-    smooth: float = 0.98,  # EMA on loss
+    num_scales: int = 200,
+    scale_min: float = 1e-6,
+    scale_max: float = 1.0,
+    steps_per_scale: int = 20,
+    smooth: float = 0.98,  # EMA on loss (computed within each scale window)
     device: str = "cuda",
     accum_steps: int = 1,
     clip_norm: float | None = None,
@@ -52,20 +57,30 @@ def lr_sweep(
     sweep_only: Iterable[str | Tuple[int, int]] | None = None,
 ):
     """
-    Sweep learning rate multiplicatively between [lr_min, lr_max] over `steps` steps.
+    Sweep a multiplicative LR scale between [scale_min, scale_max] across `num_scales` points.
 
-    - Operates over optimizer param groups. For groups in the sweep set, their LR is set to
-      base_lr[group] * scalar, where scalar increases exponentially from lr_min to lr_max.
+    Semantics:
+    - We apply a scalar s to selected optimizer param groups such that lr_group = base_lr[group] * s.
+    - The scalar s increases exponentially from scale_min to scale_max over `num_scales` points.
+    - For each scalar value, we run `steps_per_scale` optimizer steps and compute an EMA of the loss
+      within that window. The final EMA for the window is recorded as the score for that scalar.
+
+    Group control:
     - Freeze: groups listed in `freeze` keep their base LR throughout the sweep.
     - sweep_only: if provided, restricts sweeping to these groups only (others are frozen).
     - Group identifiers can be:
         * the canonical group name string (if optimizer param_groups include 'name'), e.g., 'embed_params'
         * a tuple (optimizer_index, group_index), e.g., (0, 2)
-    Returns (scalars, losses, meta) where:
-      - scalars: list[float] of the applied multiplicative scalar per step
-      - losses: list[float] of EMA losses per step
+
+    Returns (scales, ema_losses, meta) where:
+      - scales: list[float] of the applied multiplicative scalar per point
+      - ema_losses: list[float] of EMA losses per point (one per scalar)
       - meta: dict with keys:
-          'groups': dict[group_key -> {oi, gi, name, base_lr, frozen: bool}]
+          'groups': dict[group_key -> {oi, gi, name, base_lr, frozen: bool}],
+          'steps_per_scale': int,
+          'num_scales': int,
+          'scale_min': float,
+          'scale_max': float,
     """
     # Normalize optimizers input
     if not isinstance(optimizers, (list, tuple)):
@@ -129,15 +144,18 @@ def lr_sweep(
             else:
                 g["lr"] = float(g.get("base_lr", 1e-3)) * float(scalar)
 
-    # Initialize sweep
-    scalar = lr_min
-    mult = (lr_max / max(lr_min, 1e-12)) ** (1.0 / max(1, steps))
-    set_lrs(scalar)
+    # Initialize sweep (compute geometric positions for scales)
+    def _scale_at(i: int) -> float:
+        if num_scales <= 1:
+            return float(scale_min)
+        ratio = max(scale_max, 1e-12) / max(scale_min, 1e-12)
+        return float(scale_min) * (ratio ** (i / (num_scales - 1)))
 
     t0 = time.time()
     print(
-        f"[lr_sweep] steps={steps}, lr_min={lr_min:.3e}, lr_max={lr_max:.3e}, accum_steps={accum_steps}, "
-        f"smooth={smooth}, blowup_pct={blowup_pct*100:.1f}%",
+        f"[lr_sweep] num_scales={num_scales}, scale_min={scale_min:.3e}, scale_max={scale_max:.3e}, "
+        f"steps_per_scale={steps_per_scale}, accum_steps={accum_steps}, smooth={smooth}, "
+        f"blowup_pct={blowup_pct*100:.1f}%",
         flush=True,
     )
     print("[lr_sweep] Groups:", flush=True)
@@ -147,79 +165,85 @@ def lr_sweep(
         name = info.get("name") or key
         print(f"  - {name}: base_lr={info['base_lr']:.3e} {fr}", flush=True)
 
-    print_every = max(1, steps // 50) if steps else 1
+    print_every = max(1, num_scales // 50) if num_scales else 1
 
-    ema, best = None, float("inf")
+    # Capture baselines to reset between scales
+    model_baseline = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+    opt_baselines = [copy.deepcopy(opt.state_dict()) for opt in optimizers]
+
+    global_best = float("inf")
     lrs_scalars: List[float] = []
     losses: List[float] = []
 
-    # Sweep loop
-    for step in range(steps):
-        for opt in optimizers:
-            opt.zero_grad(set_to_none=True)
+    # Sweep loop over scales; reset model/optimizer/data at each new scale
+    for i in range(num_scales):
+        scalar = _scale_at(i)
+        # Reset states for fair comparison
+        model.load_state_dict(model_baseline, strict=True)
+        for oi, opt in enumerate(optimizers):
+            opt.load_state_dict(copy.deepcopy(opt_baselines[oi]))
+        data_generator.reset()
+        set_lrs(scalar)
 
-        total = 0.0
-        for _ in range(accum_steps):
-            train, target = next(data_generator)
-            loss = model(
-                input_seq=train,
-                target_seq=target,
-                sliding_window_num_blocks=get_num_window_blocks(
-                    window_schedule,
-                    attention_window_tokens=attention_window_tokens,
-                    window_block_size=window_block_size,
-                ),
-            )
-            (loss / accum_steps).backward()
-            total += float(loss.detach().item())
-
-        if clip_norm is not None:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
-
-        for opt in optimizers:
-            opt.step()
-
-        val = total / accum_steps
-        ema = val if ema is None else smooth * ema + (1 - smooth) * val
-
-        lrs_scalars.append(scalar)
-        losses.append(ema)
-
-        # periodic progress line
-        if (step % print_every == 0) or (step == steps - 1):
-            elapsed = time.time() - t0
-            done = step + 1
-            pct = 100.0 * done / max(1, steps)
-            eta_s = (elapsed / max(1e-9, done)) * max(0, steps - done)
-            print(
-                f"[lr_sweep] {done}/{steps} ({pct:.1f}%) scalar={scalar:.3e} loss={val:.6f} ema={ema:.6f} best={best if best < float('inf') else float('nan'):.6f} eta={eta_s:.1f}s",
-                flush=True,
-            )
-
-        # early stop check
+        ema = None
         early = False
         reason = ""
-        if not math.isfinite(ema):
-            early = True
-            reason = "non-finite EMA"
-        elif step > 20 and ema > (1.0 + blowup_pct) * best:
-            early = True
-            reason = "EMA exceeded blowup threshold"
 
-        if early:
-            thr = (1.0 + blowup_pct) * best if math.isfinite(best) else float("nan")
-            print(
-                f"[lr_sweep] Early stopping at step {step+1}: scalar={scalar:.3e} ema={ema:.6f} best={best:.6f} threshold={thr:.6f} ({reason})",
-                flush=True,
-            )
-            break
+        for step in range(steps_per_scale):
+            for opt in optimizers:
+                opt.zero_grad(set_to_none=True)
 
-        if ema < best:
-            best = ema
+            total = 0.0
+            for _ in range(accum_steps):
+                train, target = next(data_generator)
+                loss = model(
+                    input_seq=train,
+                    target_seq=target,
+                    sliding_window_num_blocks=get_num_window_blocks(
+                        window_schedule,
+                        attention_window_tokens=attention_window_tokens,
+                        window_block_size=window_block_size,
+                    ),
+                )
+                (loss / accum_steps).backward()
+                total += float(loss.detach().item())
 
-        # advance scalar and set lrs
-        scalar *= mult
-        set_lrs(scalar)
+            if clip_norm is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
+
+            for opt in optimizers:
+                opt.step()
+
+            val = total / accum_steps
+            ema = val if ema is None else smooth * ema + (1 - smooth) * val
+
+            # early stop check within this scale window
+            if not math.isfinite(ema):
+                early = True
+                reason = "non-finite EMA"
+                break
+            if math.isfinite(global_best) and step > 4 and ema > (1.0 + blowup_pct) * global_best:
+                early = True
+                reason = "EMA exceeded blowup threshold vs global best"
+                break
+
+        # record results for this scale
+        lrs_scalars.append(scalar)
+        losses.append(ema if ema is not None else float("nan"))
+
+        # update global best
+        if ema is not None and math.isfinite(ema) and ema < global_best:
+            global_best = ema
+
+        # periodic outer-loop progress line
+        elapsed = time.time() - t0
+        done = i + 1
+        pct = 100.0 * done / max(1, num_scales)
+        eta_s = (elapsed / max(1e-9, done)) * max(0, num_scales - done)
+        print(
+            f"[lr_sweep] {done}/{num_scales} ({pct:.1f}%) scalar={scalar:.3e} ema={losses[-1]:.6f} early={early} eta={eta_s:.1f}s",
+            flush=True,
+        )
 
     # summary print
     if losses:
@@ -231,7 +255,13 @@ def lr_sweep(
     else:
         print("[lr_sweep] collected 0 points", flush=True)
 
-    meta = {"groups": group_infos}
+    meta = {
+        "groups": group_infos,
+        "steps_per_scale": steps_per_scale,
+        "num_scales": num_scales,
+        "scale_min": float(scale_min),
+        "scale_max": float(scale_max),
+    }
     return lrs_scalars, losses, meta
 
 
@@ -253,11 +283,12 @@ if __name__ == "__main__":
     import os
 
     device = "cuda"
-    parser = ArgumentParser("Sweep learning rates across optimizer param groups")
+    parser = ArgumentParser("Sweep learning rate scales across optimizer param groups")
     parser.add_argument("--config", type=str, required=True, help="Path to YAML training config.")
-    parser.add_argument("--steps", type=int, default=200)
-    parser.add_argument("--lr_min", type=float, default=1e-6)
-    parser.add_argument("--lr_max", type=float, default=1.0)
+    parser.add_argument("--num_scales", type=int, default=200)
+    parser.add_argument("--steps_per_scale", type=int, default=20)
+    parser.add_argument("--scale_min", type=float, default=None, help="Multiplicative LR scale min (default 1e-6)")
+    parser.add_argument("--scale_max", type=float, default=None, help="Multiplicative LR scale max (default 1.0)")
     parser.add_argument("--accum_steps", type=int, default=1)
     parser.add_argument("--clip_norm", type=float, default=None)
     parser.add_argument("--smooth", type=float, default=0.98)
@@ -325,15 +356,21 @@ if __name__ == "__main__":
     freeze = _parse_spec(cli.freeze)
     sweep_only = _parse_spec(cli.sweep_only)
 
+    # Resolve deprecated aliases
+    n_scales = cli.num_scales if cli.steps is None else cli.steps
+    sc_min = cli.scale_min if cli.scale_min is not None else (cli.lr_min if cli.lr_min is not None else 1e-6)
+    sc_max = cli.scale_max if cli.scale_max is not None else (cli.lr_max if cli.lr_max is not None else 1.0)
+
     lrs, losses, meta = lr_sweep(
         model,
         optimizers=optimizers,
         data_generator=data_loader,
         attention_window_tokens=params.attention_window_tokens,
         window_block_size=params.window_block_size,
-        steps=cli.steps,
-        lr_min=cli.lr_min,
-        lr_max=cli.lr_max,
+        num_scales=n_scales,
+        scale_min=sc_min,
+        scale_max=sc_max,
+        steps_per_scale=cli.steps_per_scale,
         accum_steps=cli.accum_steps,
         clip_norm=cli.clip_norm,
         smooth=cli.smooth,
@@ -342,5 +379,21 @@ if __name__ == "__main__":
         sweep_only=sweep_only,
     )
 
-    print(list(zip(lrs, losses)))
+    # Log JSON and print a table
+    results = [{"index": i, "scale": float(s), "ema": float(l)} for i, (s, l) in enumerate(zip(lrs, losses))]
+    log_obj = {"results": results, "meta": meta}
+    print(json.dumps(log_obj, indent=2))
+    # Write to logs dir
+    logs_dir = Path(__file__).resolve().parent.parent / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    out_path = logs_dir / f"lr_sweep_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(log_obj, f, indent=2)
+    print(f"[lr_sweep] wrote JSON results to {out_path}")
+
+    # Print ASCII table
+    print("\nIdx  Scale        EMA")
+    for i, (s, l) in enumerate(zip(lrs, losses)):
+        print(f"{i:3d}  {s:10.3e}  {l:10.6f}")
+
     print(pick_peak_lr(lrs, losses))
