@@ -62,8 +62,8 @@ def lr_sweep(
     Semantics:
     - We apply a scalar s to selected optimizer param groups such that lr_group = base_lr[group] * s.
     - The scalar s increases exponentially from scale_min to scale_max over `num_scales` points.
-    - For each scalar value, we run `steps_per_scale` optimizer steps and compute an EMA of the loss
-      within that window. The final EMA for the window is recorded as the score for that scalar.
+    - For each scalar value, we run `steps_per_scale` (min 2) optimizer steps and compute an EMA of the delta loss (prev_loss - curr_loss)
+      within that window. The final EMA(delta) for the window is recorded as the score for that scalar.
 
     Group control:
     - Freeze: groups listed in `freeze` keep their base LR throughout the sweep.
@@ -171,11 +171,16 @@ def lr_sweep(
     if scale_max < scale_min:
         scale_min, scale_max = scale_max, scale_min
 
+    # Enforce minimum steps per scale for delta-loss EMA
+    if steps_per_scale is None or steps_per_scale < 2:
+        print("[lr_sweep] steps_per_scale < 2; bumping to 2 for delta-loss EMA", flush=True)
+        steps_per_scale = 2
+
     t0 = time.time()
     print(
         f"[lr_sweep] num_scales={num_scales}, scale_min={scale_min:.3e}, scale_max={scale_max:.3e}, "
         f"steps_per_scale={steps_per_scale}, accum_steps={accum_steps}, smooth={smooth}, "
-        f"blowup_pct={blowup_pct*100:.1f}%",
+        f"blowup_pct={blowup_pct*100:.1f}%, metric=EMA(delta_loss)",
         flush=True,
     )
     print("[lr_sweep] Groups:", flush=True)
@@ -191,7 +196,7 @@ def lr_sweep(
     model_baseline = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
     opt_baselines = [copy.deepcopy(opt.state_dict()) for opt in optimizers]
 
-    global_best = float("inf")
+    global_best = float("-inf")
     lrs_scalars: List[float] = []
     losses: List[float] = []
 
@@ -205,7 +210,8 @@ def lr_sweep(
         data_generator.reset()
         set_lrs(scalar)
 
-        ema = None
+        ema_delta = None
+        prev_val = None
         early = False
         reason = ""
 
@@ -235,25 +241,33 @@ def lr_sweep(
                 opt.step()
 
             val = total / accum_steps
-            ema = val if ema is None else smooth * ema + (1 - smooth) * val
+            if prev_val is not None:
+                delta = prev_val - val  # positive = improvement
+                ema_delta = delta if ema_delta is None else smooth * ema_delta + (1 - smooth) * delta
 
-            # early stop check within this scale window
-            if not math.isfinite(ema):
-                early = True
-                reason = "non-finite EMA"
-                break
-            if math.isfinite(global_best) and step > 4 and ema > (1.0 + blowup_pct) * global_best:
-                early = True
-                reason = "EMA exceeded blowup threshold vs global best"
-                break
+                # early stop check within this scale window (maximize EMA(delta))
+                if not math.isfinite(ema_delta):
+                    early = True
+                    reason = "non-finite EMA(delta)"
+                    break
+                # if we have a strong degradation (negative improvement), bail
+                if step > 4 and ema_delta < 0:
+                    early = True
+                    reason = "EMA(delta) negative (loss increasing)"
+                    break
+                if math.isfinite(global_best) and step > 4 and ema_delta < (1.0 - blowup_pct) * global_best:
+                    early = True
+                    reason = "EMA(delta) dropped below blowup threshold vs global best"
+                    break
+            prev_val = val
 
         # record results for this scale
         lrs_scalars.append(scalar)
-        losses.append(ema if ema is not None else float("nan"))
+        losses.append(ema_delta if ema_delta is not None else float("nan"))
 
-        # update global best
-        if ema is not None and math.isfinite(ema) and ema < global_best:
-            global_best = ema
+        # update global best (maximize EMA(delta))
+        if ema_delta is not None and math.isfinite(ema_delta) and ema_delta > global_best:
+            global_best = ema_delta
 
         # periodic outer-loop progress line
         elapsed = time.time() - t0
@@ -261,15 +275,15 @@ def lr_sweep(
         pct = 100.0 * done / max(1, num_scales)
         eta_s = (elapsed / max(1e-9, done)) * max(0, num_scales - done)
         print(
-            f"[lr_sweep] {done}/{num_scales} ({pct:.1f}%) scalar={scalar:.3e} ema={losses[-1]:.6f} early={early} eta={eta_s:.1f}s",
+            f"[lr_sweep] {done}/{num_scales} ({pct:.1f}%) scalar={scalar:.3e} ema_delta={losses[-1]:.6f} early={early} eta={eta_s:.1f}s",
             flush=True,
         )
 
     # summary print
     if losses:
-        i_min = min(range(len(losses)), key=lambda i: losses[i])
+        i_max = max(range(len(losses)), key=lambda i: losses[i])
         print(
-            f"[lr_sweep] collected {len(losses)} points; min EMA at step {i_min+1} scalar={lrs_scalars[i_min]:.3e} ema={losses[i_min]:.6f}",
+            f"[lr_sweep] collected {len(losses)} points; max EMA(delta) at step {i_max+1} scalar={lrs_scalars[i_max]:.3e} ema_delta={losses[i_max]:.6f}",
             flush=True,
         )
     else:
@@ -281,20 +295,9 @@ def lr_sweep(
         "num_scales": num_scales,
         "scale_min": float(scale_min),
         "scale_max": float(scale_max),
+        "metric": "ema_delta_loss",
     }
     return lrs_scalars, losses, meta
-
-
-# Peak selection utility (compatible with old API) -----------------------------------------------
-
-def pick_peak_lr(lrs: List[float], losses: List[float], blowup_pct: float = 0.30, c: float = 0.2):
-    i_min = min(range(len(losses)), key=lambda i: losses[i])
-    thr = (1.0 + blowup_pct) * losses[i_min]
-    i_bu = next((i for i in range(i_min + 1, len(losses)) if losses[i] > thr), len(losses) - 1)
-    lr_blowup = lrs[i_bu]
-    lr_at_min = lrs[i_min]
-    lr_peak = min(c * lr_blowup, 2 * lr_at_min)
-    return {"lr_peak": lr_peak, "lr_blowup": lr_blowup, "lr_at_min": lr_at_min}
 
 
 if __name__ == "__main__":
@@ -412,8 +415,8 @@ if __name__ == "__main__":
     print(f"[lr_sweep] wrote JSON results to {out_path}")
 
     # Print ASCII table
-    print("\nIdx  Scale        EMA")
+    print("\nIdx  Scale        EMA_delta")
     for i, (s, l) in enumerate(zip(lrs, losses)):
         print(f"{i:3d}  {s:10.3e}  {l:10.6f}")
 
-    print(pick_peak_lr(lrs, losses))
+
