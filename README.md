@@ -226,6 +226,59 @@ Overriding config values at launch
   ```
 
 
+### Checkpoints: saving, loading, inspecting
+- What gets saved (tools/checkpoint.save_checkpoint):
+  - model: PyTorch state_dict of model weights (with any compile-time wrappers stripped)
+  - hparams: merged hyperparameters used to build the model (from model_spec + training YAML + CLI overrides)
+  - step: training step index when saved
+  - best_val: best validation loss seen so far
+  - tokens_per_step: number of tokens processed per training micro-step (world_size × training_sequence_length)
+  - progress_state: serialized training progress meter (tokens processed, snapshot/eval counters)
+
+- Warm-start vs. resume
+  - Warm-start weights: pass -p / --init_checkpoint to run.sh (forwarded as --init_checkpoint to train.py). This loads weights and rehydrates essential architecture hparams (vocab_size, num_layers, num_heads, model_dim, head_dim, training_sequence_length, val_seq_len, attention_window_tokens, window_block_size, eos_token_id, model_class). Optimizer state, step counters, and best_val are NOT resumed; schedules start fresh.
+  - Full resume of optimizer/steps: currently not supported. You can approximate a data resume via the BEGIN_SHARD env and force full attention windows with --full_windows when needed.
+
+- Common warm-start examples
+  ```sh
+  # Pretraining 1.6B, initialize from a prior checkpoint (weights only)
+  ./run.sh config/pretrain_1.6B.yml -n 8 -p checkpoints/20250918T1240-val3.121-step090000-run1.pt
+
+  # SFT warm-start from a pretraining checkpoint
+  ./run.sh config/instruct_sft.yml -n 8 -p checkpoints/state_step_200000.pt
+
+  # Force full attention windows during warm-start (useful if earlier run trained with smaller windows)
+  ./run.sh config/pretrain_350m.yml -n 8 -p checkpoints/state_step_100000.pt --full_windows
+  ```
+
+- Inspect a checkpoint
+  ```sh
+  # Pretty report (model dims, parameter counts, near-zero scalars)
+  python -m tools.inspect_checkpoint checkpoints/state_step_100000.pt
+
+  # JSON output
+  python -m tools.inspect_checkpoint checkpoints/state_step_100000.pt --json
+
+  # Quick peek at hparams without building a model
+  python - << 'PY'
+  from tools.checkpoint import peek_hparams
+  print(peek_hparams('checkpoints/state_step_100000.pt'))
+  PY
+  ```
+
+- Programmatic loading for inference
+  ```python
+  import torch
+  from tools.checkpoint import model_from_checkpoint
+
+  device = 'cuda' if torch.cuda.is_available() else 'cpu'
+  model = model_from_checkpoint('checkpoints/state_step_100000.pt', device=device, map_location='cpu')
+  model.eval()
+  ```
+
+- Related utilities
+  - tools/model_report.py: build and format a detailed model report (used by inspect_checkpoint)
+  - inference/generate.py and sample.py: example generation scripts that construct the model from the checkpoint hparams
 
 ---
 
