@@ -55,6 +55,10 @@ def lr_sweep(
     # group control
     freeze: Iterable[str | Tuple[int, int]] | None = None,
     sweep_only: Iterable[str | Tuple[int, int]] | None = None,
+    # isolation mode
+    isolate_sgd: bool = False,
+    isolate_sgd_momentum: float = 0.0,
+    isolate_sgd_weight_decay: float = 0.0,
 ):
     """
     Sweep a multiplicative LR scale between [scale_min, scale_max] across `num_scales` points.
@@ -144,6 +148,30 @@ def lr_sweep(
             else:
                 g["lr"] = float(g.get("base_lr", 1e-3)) * float(scalar)
 
+    # Helper: build a temporary SGD optimizer that contains only swept (unfrozen) groups
+    def _build_isolated_sgd_optimizer(source_opts: List[torch.optim.Optimizer]) -> List[torch.optim.Optimizer]:
+        swept_keys_local = [k for k in all_keys if not group_infos[k]["frozen"]]
+        param_groups: list[dict[str, Any]] = []
+        for oi2, gi2, g2 in _enumerate_param_groups(source_opts):
+            k2 = _group_key(oi2, gi2, g2)
+            if k2 in swept_keys_local:
+                param_groups.append({
+                    "params": g2["params"],
+                    "name": group_infos[k2].get("name") or k2,
+                    "base_lr": float(group_infos[k2]["base_lr"]),
+                    "lr": float(group_infos[k2]["base_lr"]),  # will be scaled by set_lrs(scalar)
+                    "weight_decay": float(isolate_sgd_weight_decay),
+                })
+        if not param_groups:
+            return []
+        sgd = torch.optim.SGD(
+            param_groups,
+            lr=1.0,  # per-group lr set above and scaled by set_lrs()
+            momentum=float(isolate_sgd_momentum),
+            weight_decay=float(isolate_sgd_weight_decay),
+        )
+        return [sgd]
+
     # Initialize sweep (compute geometric positions for scales)
     def _scale_at(i: int) -> float:
         if num_scales <= 1:
@@ -183,6 +211,9 @@ def lr_sweep(
         f"blowup_pct={blowup_pct*100:.1f}%, metric=EMA(delta_loss, debiased)",
         flush=True,
     )
+    if isolate_sgd:
+        print(f"[lr_sweep] Isolation enabled: using temporary SGD optimizer for swept groups "
+              f"(momentum={isolate_sgd_momentum}, weight_decay={isolate_sgd_weight_decay})", flush=True)
     print("[lr_sweep] Groups:", flush=True)
     for key in all_keys:
         info = group_infos[key]
@@ -201,14 +232,20 @@ def lr_sweep(
     losses: List[float] = []
     improvements: List[float] = []
 
+    # Preserve original optimizers to rebuild per scale if needed
+    orig_optimizers: List[torch.optim.Optimizer] = optimizers if isinstance(optimizers, list) else [optimizers]
 
     # Sweep loop over scales; reset model/optimizer/data at each new scale
     for i in range(num_scales):
         scalar = _scale_at(i)
         # Reset states for fair comparison
         model.load_state_dict(model_baseline, strict=True)
-        for oi, opt in enumerate(optimizers):
-            opt.load_state_dict(copy.deepcopy(opt_baselines[oi]))
+        if isolate_sgd:
+            optimizers = _build_isolated_sgd_optimizer(orig_optimizers)
+        else:
+            optimizers = orig_optimizers
+            for oi, opt in enumerate(optimizers):
+                opt.load_state_dict(copy.deepcopy(opt_baselines[oi]))
         set_lrs(scalar)
         data_generator.reset()
         # Prepare snapshots for swept groups (used to compute per-step param deltas)
@@ -433,6 +470,23 @@ if __name__ == "__main__":
         default="",
         help="If set, only these groups are swept; others frozen. Comma-separated names or oi:gi",
     )
+    parser.add_argument(
+        "--isolate_sgd",
+        action="store_true",
+        help="Use a temporary SGD optimizer containing only swept groups during the sweep window."
+    )
+    parser.add_argument(
+        "--isolate_sgd_momentum",
+        type=float,
+        default=0.0,
+        help="Momentum for isolated SGD optimizer (if --isolate_sgd)."
+    )
+    parser.add_argument(
+        "--isolate_sgd_weight_decay",
+        type=float,
+        default=0.0,
+        help="Weight decay for isolated SGD optimizer (if --isolate_sgd)."
+    )
     cli = parser.parse_args()
 
     from training.hparams import load_hparams_from_yaml
@@ -505,6 +559,9 @@ if __name__ == "__main__":
         blowup_pct=cli.blowup_pct,
         freeze=freeze,
         sweep_only=sweep_only,
+        isolate_sgd=cli.isolate_sgd,
+        isolate_sgd_momentum=cli.isolate_sgd_momentum,
+        isolate_sgd_weight_decay=cli.isolate_sgd_weight_decay,
     )
 
     # Log JSON and print a table focused on effective LRs (scale reported secondarily)
