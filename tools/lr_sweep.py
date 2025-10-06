@@ -419,7 +419,8 @@ if __name__ == "__main__":
         eos_token_id=params.eos_token_id,
     )
     model.to(device)
-    model = torch.compile(model, dynamic=False)
+    # TODO temporary diagnostic
+    # model = torch.compile(model, dynamic=False)
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     rank = int(os.environ.get("RANK", "0"))
     data_loader = DistributedDataGenerator(
