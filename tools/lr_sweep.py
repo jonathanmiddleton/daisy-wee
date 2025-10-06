@@ -140,7 +140,7 @@ def lr_sweep(
             key = _group_key(oi, gi, g)
             if key in frozen_keys:
                 # keep base LR
-                g["lr"] = 0.0 # g.get("base_lr", g.get("lr", 1e-3))
+                g["lr"] = 1e-11 # g.get("base_lr", g.get("lr", 1e-3))
             else:
                 g["lr"] = float(g.get("base_lr", 1e-3)) * float(scalar)
 
