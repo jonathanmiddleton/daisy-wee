@@ -47,7 +47,7 @@ def lr_sweep(
     scale_min: float = 1e-2,
     scale_max: float = 1e+2,
     steps_per_scale: int = 20,
-    smooth: float = 0.98,  # EMA on loss (computed within each scale window)
+    smooth: float = 0.85,  # EMA on loss (computed within each scale window)
     device: str = "cuda",
     accum_steps: int = 1,
     clip_norm: float | None = None,
@@ -274,16 +274,21 @@ def lr_sweep(
         done = i + 1
         pct = 100.0 * done / max(1, num_scales)
         eta_s = (elapsed / max(1e-9, done)) * max(0, num_scales - done)
+        eff_lrs_map = { (group_infos[k].get("name") or k): (group_infos[k]["base_lr"] * scalar) for k in [kk for kk in all_keys if not group_infos[kk]["frozen"]] }
+        eff_lrs_str = ", ".join(f"{n}={v:.3e}" for n, v in eff_lrs_map.items()) if eff_lrs_map else "none"
         print(
-            f"[lr_sweep] {done}/{num_scales} ({pct:.1f}%) scalar={scalar:.3e} ema_delta={losses[-1]:.6f} early={early} eta={eta_s:.1f}s",
+            f"[lr_sweep] {done}/{num_scales} ({pct:.1f}%) ema_delta={losses[-1]:.6f} eff_lrs=[{eff_lrs_str}] scale={scalar:.3e} early={early} eta={eta_s:.1f}s",
             flush=True,
         )
 
     # summary print
     if losses:
         i_max = max(range(len(losses)), key=lambda i: losses[i])
+        best_scalar = lrs_scalars[i_max]
+        best_eff_lrs_map = { (group_infos[k].get("name") or k): (group_infos[k]["base_lr"] * best_scalar) for k in [kk for kk in all_keys if not group_infos[kk]["frozen"]] }
+        eff_best_str = ", ".join(f"{n}={v:.3e}" for n, v in best_eff_lrs_map.items()) if best_eff_lrs_map else "none"
         print(
-            f"[lr_sweep] collected {len(losses)} points; max EMA(delta) at step {i_max+1} scalar={lrs_scalars[i_max]:.3e} ema_delta={losses[i_max]:.6f}",
+            f"[lr_sweep] collected {len(losses)} points; max EMA(delta) at step {i_max+1} ema_delta={losses[i_max]:.6f} eff_lrs=[{eff_best_str}] scale={best_scalar:.3e}",
             flush=True,
         )
     else:
@@ -314,7 +319,7 @@ if __name__ == "__main__":
     parser.add_argument("--scale_max", type=float, default=None, help="Multiplicative LR scale max (default 1e+2)")
     parser.add_argument("--accum_steps", type=int, default=1)
     parser.add_argument("--clip_norm", type=float, default=None)
-    parser.add_argument("--smooth", type=float, default=0.98)
+    parser.add_argument("--smooth", type=float, default=0.85)
     parser.add_argument("--blowup_pct", type=float, default=0.30)
     parser.add_argument(
         "--freeze",
@@ -402,9 +407,32 @@ if __name__ == "__main__":
         sweep_only=sweep_only,
     )
 
-    # Log JSON and print a table
-    results = [{"index": i, "scale": float(s), "ema": float(l)} for i, (s, l) in enumerate(zip(lrs, losses))]
-    log_obj = {"results": results, "meta": meta}
+    # Log JSON and print a table focused on effective LRs (scale reported secondarily)
+    groups = meta.get("groups", {})
+    def _name_of(k: str) -> str:
+        info = groups[k]
+        return info.get("name") or k
+    swept_keys = [k for k, info in groups.items() if not info.get("frozen")]
+    swept_names = [_name_of(k) for k in swept_keys]
+
+    def _eff_lrs_for_scalar(s: float) -> Dict[str, float]:
+        # effective LRs for swept groups only
+        return { _name_of(k): float(groups[k]["base_lr"]) * float(s) for k in swept_keys }
+
+    results = [
+        {
+            "index": i,
+            "ema": float(l),
+            "effective_lrs": _eff_lrs_for_scalar(s),
+            "scale": float(s),
+        }
+        for i, (s, l) in enumerate(zip(lrs, losses))
+    ]
+    meta_out = dict(meta)
+    meta_out["swept_groups"] = swept_names
+    meta_out["base_lrs"] = { _name_of(k): float(groups[k]["base_lr"]) for k in groups.keys() }
+
+    log_obj = {"results": results, "meta": meta_out}
     print(json.dumps(log_obj, indent=2))
     # Write to logs dir
     logs_dir = Path(__file__).resolve().parent.parent / "logs"
@@ -414,9 +442,13 @@ if __name__ == "__main__":
         json.dump(log_obj, f, indent=2)
     print(f"[lr_sweep] wrote JSON results to {out_path}")
 
-    # Print ASCII table
-    print("\nIdx  Scale        EMA_delta")
+    # Print ASCII table: Idx, EMA_delta, per-swept-group effective LRs, then Scale
+    header_cols = [f"{name}_lr" for name in swept_names]
+    header = "\nIdx  EMA_delta  " + ("  ".join(f"{h:>12}" for h in header_cols) if header_cols else "(no_swept_groups)") + "  Scale"
+    print(header)
     for i, (s, l) in enumerate(zip(lrs, losses)):
-        print(f"{i:3d}  {s:10.3e}  {l:10.6f}")
+        eff = _eff_lrs_for_scalar(s)
+        eff_cols = "  ".join(f"{eff.get(name, float('nan')):12.3e}" for name in swept_names) if swept_names else "(none)"
+        print(f"{i:3d}  {l:10.6f}  {eff_cols}  {s:10.3e}")
 
 
