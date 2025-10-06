@@ -23,8 +23,11 @@ def _get_skip_map(L: int):
     return _skip_map
 
 class GPT2Core(nn.Module):
-    def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim, window_block_size: int = 128):
+    def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim, window_block_size: int = 128, eos_token_id: int | None = None):
         super().__init__()
+        if eos_token_id is None:
+            raise ValueError("eos_token_id is required.")
+        self.eos_token_id = int(eos_token_id)
         self.embed = nn.Embedding(vocab_size, model_dim)
         self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(3)])
         self.blocks = nn.ModuleList([Block(model_dim, num_heads, max_seq_len, i, head_dim, num_layers) for i in range(num_layers)])
@@ -41,7 +44,7 @@ class GPT2Core(nn.Module):
         BLOCK_SIZE = self.window_block_size
         assert (len(input_seq) % BLOCK_SIZE == 0)
         device = input_seq.device
-        docs = (input_seq == 50256).cumsum(0)
+        docs = (input_seq == self.eos_token_id).cumsum(0)
 
         def document_causal(b, h, q_idx, kv_idx):
             causal_mask = q_idx >= kv_idx

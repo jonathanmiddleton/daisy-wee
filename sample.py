@@ -51,9 +51,14 @@ if 'training_sequence_length' in hparams and 'val_seq_len' in hparams:
 else:
     max_seq_len = int(hparams.get('max_seq_len', cli.max_seq_len))
 window_block_size = int(hparams.get('window_block_size', 128))
-model_type = str(hparams.get('model_type', 'gpt2'))
+model_class = str(hparams.get('model_class'))
+if not model_class:
+    raise ValueError("Checkpoint hparams must include 'model_class' (fully-qualified class name)")
+if 'eos_token_id' not in hparams:
+    raise ValueError("Checkpoint hparams must include 'eos_token_id' (no default)")
+eos_token_id = int(hparams.get('eos_token_id'))
 
-ModelClass = get_model_class(model_type)
+ModelClass = get_model_class(model_class)
 model: nn.Module = ModelClass(
     vocab_size=vocab_size,
     num_layers=num_layers,
@@ -62,6 +67,7 @@ model: nn.Module = ModelClass(
     max_seq_len=max_seq_len,
     head_dim=head_dim,
     window_block_size=window_block_size,
+    eos_token_id=eos_token_id,
 ).to(device)
 
 apply_model_state(model, state_dict, strict=False)
@@ -85,11 +91,10 @@ template = "### Instruction:\n{prompt}\n\n### Response:\n"
 devtype = "cuda" if str(device).startswith("cuda") else ("mps" if str(device).startswith("mps") else "cpu")
 ctx = torch.amp.autocast(device_type=devtype, dtype=torch.bfloat16)
 
-eos_id = int(hparams.get('eos_token_id', 50256))
 gen = Generator(
     model=model,
     window=int(hparams.get('attention_window_tokens', 3456)),
-    eos_token_id=eos_id,
+    eos_token_id=eos_token_id,
     temperature=cli.temperature,
     top_k=cli.top_k,
     top_p=cli.top_p,

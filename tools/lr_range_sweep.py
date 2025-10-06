@@ -143,7 +143,7 @@ if __name__ == '__main__':
     argument_parser.add_argument('--config', type=str, required=True, help='Path to YAML training config.')
     cli = argument_parser.parse_args()
     params = load_hparams_from_yaml(cli.config)
-    Model = get_model_class(params.model_type)
+    Model = get_model_class(params.model_class)
     model = Model(
         vocab_size=params.vocab_size,
         num_layers=params.num_layers,
@@ -152,6 +152,7 @@ if __name__ == '__main__':
         max_seq_len=max(params.training_sequence_length, params.val_seq_len),
         head_dim=params.head_dim,
         window_block_size=params.window_block_size,
+        eos_token_id=params.eos_token_id,
     )
     model.to(device)
     model = torch.compile(model, dynamic=False)

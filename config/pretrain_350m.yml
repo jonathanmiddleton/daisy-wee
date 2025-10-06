@@ -26,6 +26,7 @@ optimizers:
     params:
       - group: hidden_matrix_params
         lr: 0.03
+full_windows: false
 # Gradient accumulation
 grad_acc_steps: 8
 # Evaluations
@@ -39,6 +40,6 @@ snapshot_per_n_tokens:     26000000         # snapshot interval by tokens
 save_checkpoint: true
 # Model Definition
 model_spec: gpt2_350m
-training_sequence_length: 65536        # replaces max_seq_len; N * 1024
+training_sequence_length: 65536        #  N * 1024
 attention_window_tokens: 3456          # sliding window trained span
 window_block_size: 128                 # must divide both training_sequence_length and attention_window_tokens

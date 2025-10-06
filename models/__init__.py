@@ -1,51 +1,56 @@
 from __future__ import annotations
 
-from typing import Dict, Type, Any
+from typing import Any, Dict, Type
+from importlib import import_module
 from torch import nn
 from model_specs import load_model_spec
 
-# Prefer the path under models.gpt2
-from .gpt2.gpt_core import GPT2Core
 
-# Registry mapping model_type keys in configs/checkpoints to concrete model classes
-MODEL_REGISTRY: Dict[str, Type[GPT2Core]] = {
-    "gpt2": GPT2Core,
-}
-
-def get_model_class(model_type: str):
-    """Return the model class for a given model_type key.
-    Defaults to GPT2Core when the key is unknown or empty for backward compatibility.
+def get_model_class(model_class: str) -> Type[nn.Module]:
+    """Import and return a model class given its fully-qualified class name.
+    Example: 'models.gpt2.gpt_core.GPT2Core'. No defaults or fallbacks.
     """
-    if not model_type:
-        return GPT2Core
-    return MODEL_REGISTRY.get(model_type.lower(), GPT2Core)
+    if not model_class or not isinstance(model_class, str):
+        raise ValueError("model_class must be a non-empty fully-qualified class name string")
+    if "." not in model_class:
+        raise ValueError("model_class must be a fully-qualified class name like 'models.gpt2.gpt_core.GPT2Core'")
+    module_path, cls_name = model_class.rsplit(".", 1)
+    mod = import_module(module_path)
+    cls = getattr(mod, cls_name, None)
+    if cls is None:
+        raise ImportError(f"Class '{cls_name}' not found in module '{module_path}' for model_class '{model_class}'")
+    return cls
 
 
 def model_from_spec(spec_name_or_path: str | dict, device: str = "cuda") -> nn.Module:
-    spec = {}
+    spec: Dict[str, Any]
     if isinstance(spec_name_or_path, dict):
         spec = spec_name_or_path
     else:
-        spec: Dict[str, Any] = load_model_spec(spec_name_or_path)
+        spec = load_model_spec(spec_name_or_path)
 
-    # Pull required fields (ensure your spec contains these)
-    vocab_size = int(spec["vocab_size"])               # required
-    num_layers = int(spec["num_layers"])               # required
-    num_heads = int(spec["num_heads"])                 # required
-    model_dim = int(spec["model_dim"])                 # required
-    head_dim = int(spec["head_dim"])                   # required
-    window_block_size = int(spec.get("window_block_size", 128))
+    # Required fields
+    model_class = str(spec["model_class"])  # must be present
+    vocab_size = int(spec["vocab_size"])    # required
+    eos_token_id = int(spec["eos_token_id"])  # required
+    num_layers = int(spec["num_layers"])    # required
+    num_heads = int(spec["num_heads"])      # required
+    model_dim = int(spec["model_dim"])      # required
+    head_dim = int(spec["head_dim"])        # required
+    window_block_size = int(spec["window_block_size"])  # required
 
-    # Determine max sequence length using the same logic as train/sample
-    if "training_sequence_length" in spec and "val_seq_len" in spec:
-        max_seq_len = int(max(int(spec["training_sequence_length"]), int(spec["val_seq_len"])))
+
+    # If a single explicit max_seq_len is provided, allow it; otherwise require both new fields.
+    if "max_seq_len" in spec:
+        max_seq_len = int(spec["max_seq_len"])
+        # Determine max sequence length using the same logic as train/sample (must be derivable, no legacy fallbacks)
+        if "training_sequence_length" in spec and "val_seq_len" in spec:
+            assert max_seq_len >= int(max(int(spec["training_sequence_length"]), int(spec["val_seq_len"])))
+
     else:
-        # Fallback if your spec has an older `max_seq_len` key
-        max_seq_len = int(spec.get("max_seq_len", 16 * 1024))
+        raise ValueError("model spec must include training_sequence_length and val_seq_len or an explicit max_seq_len")
 
-    model_type = str(spec.get("model_type", "gpt2")).lower()
-    ModelClass = get_model_class(model_type)
-
+    ModelClass = get_model_class(model_class)
     model: nn.Module = ModelClass(
         vocab_size=vocab_size,
         num_layers=num_layers,
@@ -54,8 +59,8 @@ def model_from_spec(spec_name_or_path: str | dict, device: str = "cuda") -> nn.M
         max_seq_len=max_seq_len,
         head_dim=head_dim,
         window_block_size=window_block_size,
+        eos_token_id=eos_token_id,
     ).to(device)
-
     return model
 
 

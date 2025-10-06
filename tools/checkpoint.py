@@ -154,9 +154,14 @@ def model_from_checkpoint(path: str, device: torch.device | str, map_location: A
     else:
         max_seq_len = int(hparams.get('max_seq_len'))
     window_block_size = int(hparams.get('window_block_size', 128))
-    model_type = str(hparams.get('model_type'))
+    model_class = str(hparams.get('model_class'))
+    if not model_class:
+        raise ValueError("Checkpoint hparams must include 'model_class' (fully-qualified class name)")
+    if 'eos_token_id' not in hparams:
+        raise ValueError("Checkpoint hparams must include 'eos_token_id'")
+    eos_token_id = int(hparams.get('eos_token_id'))
 
-    ModelClass = get_model_class(model_type)
+    ModelClass = get_model_class(model_class)
     model: nn.Module = ModelClass(
         vocab_size=vocab_size,
         num_layers=num_layers,
@@ -165,6 +170,7 @@ def model_from_checkpoint(path: str, device: torch.device | str, map_location: A
         max_seq_len=max_seq_len,
         head_dim=head_dim,
         window_block_size=window_block_size,
+        eos_token_id=eos_token_id,
     ).to(device)
 
     apply_model_state(model, state_dict, strict=False)

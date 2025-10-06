@@ -106,7 +106,7 @@ Below are the current, tested ways to launch training, run inference sampling, a
     """
     ```
   - The default prompt string is defined in sample.py; edit the variable prompt in the file to change it, or adapt the script to accept a CLI prompt.
-  - Generation runs under torch.bfloat16 autocast when available and stops on eos_token_id (from hparams, default 50256).
+  - Generation runs under torch.bfloat16 autocast when available and stops on eos_token_id (from hparams).
 - Examples
   - Minimal GPU example:
     ```sh
@@ -151,8 +151,9 @@ How it works
   - Validation rules: training_sequence_length % window_block_size == 0; attention_window_tokens % window_block_size == 0; training_sequence_length >= attention_window_tokens.
 
 - Model spec fields (model_specs/*.yml)
-  - model_type: Dispatcher key passed to models.get_model_class (default: gpt2).
+  - model_class: Fully-qualified class name used to construct the model (e.g., models.gpt2.gpt_core.GPT2Core). No defaults.
   - vocab_size: Vocabulary size (e.g., 50257 for GPT-2 BPE).
+  - eos_token_id: End-of-sequence token id. Required; no defaults.
   - num_layers, num_heads, head_dim, model_dim: Transformer depth/width and per-head/overall dimensions.
   - attention_window_tokens: Maximum backward attention span used during training (sliding window). Typically 3456.
 
@@ -202,7 +203,8 @@ Examples
 
 - Example model spec file (model_specs/gpt2_350m.yml):
   ```yaml
-  model_type: gpt2
+  model_class: models.gpt2.gpt_core.GPT2Core
+  eos_token_id: 50256
   vocab_size: 50257
   num_layers: 16
   num_heads: 8

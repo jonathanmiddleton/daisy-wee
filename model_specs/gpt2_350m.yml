@@ -1,5 +1,6 @@
 # GPT2 350M-ish spec
-model_type: gpt2
+model_class: models.gpt2.gpt_core.GPT2Core
+eos_token_id: 50256
 vocab_size: 50257
 num_layers: 24
 num_heads: 16

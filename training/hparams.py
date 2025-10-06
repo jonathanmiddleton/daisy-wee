@@ -14,36 +14,37 @@ class Hyperparameters:
     # Required scenario-specific fields
     train_shards: str
     val_shards: str
-    training_sequence_length: int  # replaces max_seq_len
+    training_sequence_length: int
     val_seq_len: int
     target_tokens: int
     cooldown_frac: float
     attention_window_tokens: int  # new: max backward attention span actually trained (sliding window)
     window_block_size: int  # new: block granularity for sliding window/masks
     # Common fields with defaults
-    vocab_size: int = 50257
-    val_tokens: int = 10485760  # how many tokens of validation data
-    val_loss_every_tokens: int = 0  # num tokens between validation passes (0 disables)
-    snapshot_warmup_tokens: int = 0  # tokens to skip before taking snapshots
-    snapshot_per_n_tokens: int | None = None  # interval in tokens between snapshots
-    save_checkpoint: bool = True
-    init_checkpoint: str | None = None
-    num_layers: int = None
-    num_heads: int = None
-    model_dim: int = None
-    head_dim: int = None
-    optimizers: list[dict] | None = None
+    vocab_size: int
+    eos_token_id: int
+    val_tokens: int  # how many tokens of validation data
+    val_loss_every_tokens: int  # num tokens between validation passes (0 disables)
+    snapshot_warmup_tokens: int  # tokens to skip before taking snapshots
+    snapshot_per_n_tokens: int  # interval in tokens between snapshots
+    save_checkpoint: bool
+    num_layers: int
+    num_heads: int
+    model_dim: int
+    head_dim: int
+    optimizers: list[dict]
     # Force full attention windows (useful when resuming after smaller windows)
-    full_windows: bool = False
+    full_windows: bool
     # Gradient accumulation
-    grad_acc_steps: int = 1
+    grad_acc_steps: int
     # Model selection
-    model_spec: str | None = None  # name of model spec under model_specs/, or a path to a spec file
-    model_type: str = "gpt2"
+    model_spec: str    # name of model spec under model_specs/, or a path to a spec file
+    model_class: str  # fully-qualified class name, e.g., 'models.gpt2.gpt_core.GPT2Core'
     # Weights & Biases minimal logging config
     wandb_log: bool = False
     wandb_project: str = ""
     wandb_run_name: str = ""
+    init_checkpoint: str | None = None
 
 
 def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
@@ -55,9 +56,11 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
     cfg_dict = {}
 
     used_path = Path(config_path)
-    with open(used_path, "r") as f:
-        cfg_dict = yaml.safe_load(f) or {}
-
+    try:
+        with open(used_path, "r") as f:
+            cfg_dict = yaml.safe_load(f) or {}
+    except FileNotFoundError as e:
+        raise FileNotFoundError(f"Config file not found: {used_path}") from e
 
     # If a model_spec name/path is provided, load the spec and merge recognized fields
     model_spec_name = cfg_dict.get("model_spec")

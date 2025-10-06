@@ -96,8 +96,8 @@ def _build_hparams_from_args(args: Hyperparameters) -> dict:
         "val_seq_len": args.val_seq_len,
         "attention_window_tokens": args.attention_window_tokens,
         "window_block_size": args.window_block_size,
-        "eos_token_id": 50256,
-        "model_type": getattr(args, "model_type", "gpt2"),
+        "eos_token_id": args.eos_token_id,
+        "model_class": args.model_class,
     }
 
 
@@ -143,7 +143,6 @@ def _save_run_checkpoint(
     save_checkpoint(
         fname,
         model=model,
-        optimizers=optimizers,
         step=step,
         best_val=best_val,
         hparams=_build_hparams_from_args(args),
@@ -171,7 +170,7 @@ if args.init_checkpoint:
         for k in [
             "vocab_size", "num_layers", "num_heads", "model_dim", "head_dim",
             "training_sequence_length", "val_seq_len", "attention_window_tokens", "window_block_size",
-            "model_type",
+            "eos_token_id", "model_class",
         ]:
             if k in _saved_hparams and _saved_hparams[k] is not None:
                 setattr(args, k, _saved_hparams[k])
@@ -187,7 +186,7 @@ if _wandb_enabled:
         print0(f"[warn] Failed to update wandb config: {_e}")
 
 # Now we can safely build the model with possibly rehydrated args
-_ModelClass = get_model_class(getattr(args, "model_type", "gpt2"))
+_ModelClass = get_model_class(args.model_class)
 model: nn.Module = _ModelClass(
     vocab_size=args.vocab_size,
     num_layers=args.num_layers,
@@ -196,6 +195,7 @@ model: nn.Module = _ModelClass(
     max_seq_len=max(args.training_sequence_length, args.val_seq_len),
     head_dim=args.head_dim,
     window_block_size=args.window_block_size,
+    eos_token_id=args.eos_token_id,
 ).cuda()
 
 # If a checkpoint was provided, load weights and training metadata

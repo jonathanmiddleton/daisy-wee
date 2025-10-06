@@ -39,7 +39,7 @@ snapshot_per_n_tokens: 200000000                # snapshot interval by tokens
 save_checkpoint: true
 # Model settings
 model_spec: gpt2_1p6b
-training_sequence_length: 16384     # replaces max_seq_len; 64 * 1024
+training_sequence_length: 16384     #  64 * 1024
 attention_window_tokens: 3456
 window_block_size: 128
 
