@@ -26,7 +26,7 @@ save_checkpoint: true
 model_type: gpt2
 max_seq_len: 65536        # N * 1024, max_sequence_length
 vocab_size: 50257
-num_layers: 16
+num_layers: 12
 head_dim: 128             # documented here as static
-num_heads: 8
-model_dim: 1024           # num_heads * head_dim
+num_heads: 6
+model_dim: 768           # num_heads * head_dim
