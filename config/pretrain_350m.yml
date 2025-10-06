@@ -18,9 +18,9 @@ optimizers:
     fused: true
     params:
       - group: head_params
-        lr: 2.420e-04
+        lr: 0.02
       - group: embed_params
-        lr: 1.194
+        lr: 0.3
       - group: scalar_params
         lr: 0.015
 

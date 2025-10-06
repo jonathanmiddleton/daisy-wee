@@ -139,8 +139,8 @@ def lr_sweep(
         for oi, gi, g in _enumerate_param_groups(optimizers):
             key = _group_key(oi, gi, g)
             if key in frozen_keys:
-                # keep base LR
-                g["lr"] = g.get("base_lr", g.get("lr", 1e-3))
+                # Freeze: zero LR so the group truly does not update during the sweep
+                g["lr"] = 0.0
             else:
                 g["lr"] = float(g.get("base_lr", 1e-3)) * float(scalar)
 
@@ -201,6 +201,7 @@ def lr_sweep(
     losses: List[float] = []
     improvements: List[float] = []
 
+    fixed_train, fixed_target = next(data_generator)
     # Sweep loop over scales; reset model/optimizer/data at each new scale
     for i in range(num_scales):
         scalar = _scale_at(i)
@@ -208,7 +209,6 @@ def lr_sweep(
         model.load_state_dict(model_baseline, strict=True)
         for oi, opt in enumerate(optimizers):
             opt.load_state_dict(copy.deepcopy(opt_baselines[oi]))
-        data_generator.reset()
         set_lrs(scalar)
 
         ema_delta = None
@@ -225,7 +225,7 @@ def lr_sweep(
 
             total = 0.0
             for _ in range(accum_steps):
-                train, target = next(data_generator)
+                train, target = fixed_train, fixed_target
                 loss = model(
                     input_seq=train,
                     target_seq=target,
