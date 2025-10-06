@@ -265,6 +265,9 @@ _evaluator = Evaluator(
 
 # Tokens per training micro-step (includes padding by design)
 tokens_per_step = world_size * args.training_sequence_length
+# Effective tokens per optimizer step (accounts for gradient accumulation)
+_ga_steps_cfg = max(1, int(getattr(args, "grad_acc_steps", 1) or 1))
+_tokens_per_optim_step = tokens_per_step * _ga_steps_cfg
 
 # Progress and tracking
 from training.progress import ProgressMeter
@@ -317,7 +320,7 @@ while progress.tokens_processed < progress.target_tokens:
                     model=model,
                     best_val=best_val,
                     args=args,
-                    tokens_per_step=tokens_per_step,
+                    tokens_per_step=_tokens_per_optim_step,
                     progress=progress,
                 )
                 print0(f"Saved checkpoint to {fname} with val loss {float(cur_val):.6f}")
@@ -407,7 +410,7 @@ if master_process and args.save_checkpoint:
         model=model,
         best_val=best_val,
         args=args,
-        tokens_per_step=tokens_per_step,
+        tokens_per_step=_tokens_per_optim_step,
         progress=progress,
     )
 
