@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict
+from .model_spec import ModelSpec
 
 import yaml
 
@@ -48,21 +49,22 @@ def resolve_model_spec_path(name_or_path: str) -> Path:
     )
 
 
-def load_model_spec(name_or_path: str) -> Dict[str, Any]:
+def load_model_spec(name_or_path: str) -> ModelSpec:
     """
-    Load and parse a model spec YAML into a dict. Returns an empty dict if the YAML is empty.
+    Load and parse a model spec YAML into a ModelSpec dataclass.
     Raises FileNotFoundError if the spec cannot be resolved.
     """
     spec_path = resolve_model_spec_path(name_or_path)
     with open(spec_path, "r") as f:
         data = yaml.safe_load(f) or {}
     if not isinstance(data, dict):
-        # Be tolerant; only dict specs are useful for merging
-        return {}
-    return data
+        raise ValueError(f"Model spec '{name_or_path}' must be a mapping, got {type(data).__name__}")
+    # Construct a ModelSpec (this will raise if required fields are missing or unknown keys are present)
+    return ModelSpec(**data)
 
 
 __all__ = [
     "resolve_model_spec_path",
     "load_model_spec",
+    "ModelSpec"
 ]

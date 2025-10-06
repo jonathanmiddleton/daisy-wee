@@ -65,10 +65,12 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
     # If a model_spec name/path is provided, load the spec and merge recognized fields
     model_spec_name = cfg_dict.get("model_spec")
     if model_spec_name:
-        spec_dict = load_model_spec(str(model_spec_name))
+        spec_obj = load_model_spec(str(model_spec_name))
         # Only merge keys that are valid Hyperparameters fields and not explicitly set in training cfg
         valid_names_for_merge = {f.name for f in dataclass_fields(Hyperparameters)}
-        for k, v in (spec_dict.items() if isinstance(spec_dict, dict) else []):
+        from dataclasses import asdict as _asdict
+        spec_dict = _asdict(spec_obj)
+        for k, v in spec_dict.items():
             if k in valid_names_for_merge and (k not in cfg_dict or cfg_dict[k] is None):
                 cfg_dict[k] = v
 
