@@ -20,7 +20,7 @@ optimizers:
       - group: head_params
         lr: 2.420e-04
       - group: embed_params
-        lr: 0.3
+        lr: 1.194
       - group: scalar_params
         lr: 0.015
 
