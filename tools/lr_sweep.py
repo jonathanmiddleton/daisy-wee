@@ -210,7 +210,7 @@ def lr_sweep(
         for oi, opt in enumerate(optimizers):
             opt.load_state_dict(copy.deepcopy(opt_baselines[oi]))
         set_lrs(scalar)
-
+        data_generator.reset()
         # Prepare snapshots for swept groups (used to compute per-step param deltas)
         swept_keys = [k for k in all_keys if not group_infos[k]["frozen"]]
         prev_snapshots: Dict[str, List[torch.Tensor]] = {}
