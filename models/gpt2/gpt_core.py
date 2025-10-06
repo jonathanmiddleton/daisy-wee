@@ -12,14 +12,19 @@ _skip_map = None
 def _get_skip_map(L: int):
     global _skip_map
     if _skip_map is None:
-        skip_map = {}
-        stride = max(1, L // 4)
-        for m in range(3):
-            i = L - 3 + m
-            j = i - stride * (m + 1)
-            if 0 <= j < i < L:
-                skip_map[i] = j
-        _skip_map = skip_map
+        # skip_map = {}
+        # stride = max(1, L // 4)
+        # for m in range(3):
+        #     i = L - 3 + m
+        #     j = i - stride * (m + 1)
+        #     if 0 <= j < i < L:
+        #         skip_map[i] = j
+        # _skip_map = skip_map
+        _skip_map = {
+            9: 6,
+            10: 4,
+            11: 2,
+        }
     return _skip_map
 
 class GPT2Core(nn.Module):
