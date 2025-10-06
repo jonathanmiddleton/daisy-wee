@@ -201,7 +201,7 @@ def lr_sweep(
     losses: List[float] = []
     improvements: List[float] = []
 
-    fixed_train, fixed_target = next(data_generator)
+
     # Sweep loop over scales; reset model/optimizer/data at each new scale
     for i in range(num_scales):
         scalar = _scale_at(i)
@@ -233,7 +233,7 @@ def lr_sweep(
 
             total = 0.0
             for _ in range(accum_steps):
-                train, target = fixed_train, fixed_target
+                train, target =  next(data_generator)
                 loss = model(
                     input_seq=train,
                     target_seq=target,
