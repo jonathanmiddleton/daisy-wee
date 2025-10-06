@@ -37,7 +37,7 @@ args = load_hparams_from_yaml(_config_path)
 args = apply_cli_overrides(args, sys.argv[2:])
 
 # Apply scheduling toggle for attention windows
-set_full_windows(getattr(args, "full_windows", False))
+set_full_windows(args.full_windows)
 
 run_id = int(os.environ.get("RUN_ID", 0))
 # torchrun sets these env variables
@@ -64,7 +64,7 @@ _last_run_ckpt_path: str | None = None
 # Optional Weights & Biases logging (minimal config)
 _wandb = None
 _wandb_enabled = False
-if master_process and getattr(args, "wandb_log", False):
+if master_process and args.wandb_log:
     try:
         import wandb as _wandb
 
@@ -266,7 +266,7 @@ _evaluator = Evaluator(
 # Tokens per training micro-step (includes padding by design)
 tokens_per_step = world_size * args.training_sequence_length
 # Effective tokens per optimizer step (accounts for gradient accumulation)
-_ga_steps_cfg = max(1, int(getattr(args, "grad_acc_steps", 1) or 1))
+_ga_steps_cfg = max(1, int(args.grad_acc_steps))
 _tokens_per_optim_step = tokens_per_step * _ga_steps_cfg
 
 # Progress and tracking
@@ -274,9 +274,9 @@ from training.progress import ProgressMeter
 
 progress = ProgressMeter(
     target_tokens=int(args.target_tokens),
-    eval_every_tokens=int(args.val_loss_every_tokens) if getattr(args, 'val_loss_every_tokens', 0) else None,
-    snapshot_per_n_tokens=int(args.snapshot_per_n_tokens) if getattr(args, 'snapshot_per_n_tokens', None) else None,
-    snapshot_warmup_tokens=int(getattr(args, 'snapshot_warmup_tokens', 0) or 0),
+    eval_every_tokens=int(args.val_loss_every_tokens) if int(args.val_loss_every_tokens) > 0 else None,
+    snapshot_per_n_tokens=int(args.snapshot_per_n_tokens) if int(args.snapshot_per_n_tokens) > 0 else None,
+    snapshot_warmup_tokens=int(args.snapshot_warmup_tokens),
 )
 
 # Tracking for eval stats and ETA
@@ -336,7 +336,7 @@ while progress.tokens_processed < progress.target_tokens:
         progress.mark_eval_done()
 
     # --------------- TRAINING SECTION -----------------
-    ga_steps = max(1, int(getattr(args, "grad_acc_steps", 1) or 1))
+    ga_steps = max(1, int(args.grad_acc_steps))
     total_train_loss = 0.0
 
     for micro_step in range(ga_steps):

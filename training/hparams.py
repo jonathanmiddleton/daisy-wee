@@ -94,14 +94,29 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
         tsl = int(args.training_sequence_length)
         awt = int(args.attention_window_tokens)
         wbs = int(args.window_block_size)
+        gas = int(args.grad_acc_steps)
+        cdf = float(args.cooldown_frac)
+        vlet = int(args.val_loss_every_tokens)
+        spnt = int(args.snapshot_per_n_tokens)
+        swt = int(args.snapshot_warmup_tokens)
     except Exception as e:
-        raise ValueError(f"Invalid types for training_sequence_length/attention_window_tokens/window_block_size: {e}")
+        raise ValueError(f"Invalid types in Hyperparameters: {e}")
     if tsl % wbs != 0:
         raise ValueError(f"training_sequence_length ({tsl}) must be divisible by window_block_size ({wbs})")
     if awt % wbs != 0:
         raise ValueError(f"attention_window_tokens ({awt}) must be divisible by window_block_size ({wbs})")
     if tsl < awt:
         raise ValueError(f"training_sequence_length ({tsl}) must be >= attention_window_tokens ({awt})")
+    if gas < 1:
+        raise ValueError(f"grad_acc_steps must be >= 1, got {gas}")
+    if not (0.0 <= cdf <= 1.0):
+        raise ValueError(f"cooldown_frac must be in [0,1], got {cdf}")
+    if vlet < 0:
+        raise ValueError(f"val_loss_every_tokens must be >= 0, got {vlet}")
+    if spnt < 0:
+        raise ValueError(f"snapshot_per_n_tokens must be >= 0, got {spnt}")
+    if swt < 0:
+        raise ValueError(f"snapshot_warmup_tokens must be >= 0, got {swt}")
 
     return args
 

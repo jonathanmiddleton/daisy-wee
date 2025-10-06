@@ -107,7 +107,7 @@ def _stream_subprocess(cmd: List[str], log_fp) -> int:
         assert p.stdout is not None
         for line in p.stdout:
             # write to console
-            print(line, end="")
+            print(line, end="", flush=True)
             # write to log
             try:
                 log_fp.write(line)
