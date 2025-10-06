@@ -124,7 +124,7 @@ def main(argv: List[str] | None = None) -> int:
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("config", help="Path to YAML config file")
     parser.add_argument("overrides", nargs=argparse.REMAINDER, help="Overrides like key=val or --key=val")
-    parser.add_argument("-n", dest="nproc", type=int, default=8, help="nproc per node")
+    parser.add_argument("-n", dest="nproc", type=int, default=1, help="nproc per node")
     parser.add_argument("-p", dest="checkpoint", default="", help="init checkpoint path")
     parser.add_argument("-s", dest="begin_shard", default="", help="BEGIN_SHARD env value")
     parser.add_argument("-r", dest="run_id", default="1", help="RUN_ID env value for the run")
