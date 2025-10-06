@@ -23,12 +23,16 @@ def _get_skip_map(L: int):
     return _skip_map
 
 class GPT2Core(nn.Module):
-    def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim):
+    def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim, window_block_size: int = 128, eos_token_id: int | None = None):
         super().__init__()
+        if eos_token_id is None:
+            raise ValueError("eos_token_id is required.")
+        self.eos_token_id = int(eos_token_id)
         self.embed = nn.Embedding(vocab_size, model_dim)
         self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(3)])
         self.blocks = nn.ModuleList([Block(model_dim, num_heads, max_seq_len, i, head_dim, num_layers) for i in range(num_layers)])
         self.lm_head_w = nn.Parameter(torch.zeros(next_multiple_of_n(vocab_size, n=128), model_dim))
+        self.window_block_size = int(window_block_size)
         assert num_layers % 2 == 0
         self.scalars = nn.Parameter(torch.cat([
             torch.ones(num_layers),
@@ -37,10 +41,10 @@ class GPT2Core(nn.Module):
         ]))
 
     def create_blockmasks(self, input_seq: Tensor, sliding_window_num_blocks: Tensor):
-        BLOCK_SIZE = 128
-        assert(len(input_seq) % BLOCK_SIZE == 0)
+        BLOCK_SIZE = self.window_block_size
+        assert (len(input_seq) % BLOCK_SIZE == 0)
         device = input_seq.device
-        docs = (input_seq == 50256).cumsum(0)
+        docs = (input_seq == self.eos_token_id).cumsum(0)
 
         def document_causal(b, h, q_idx, kv_idx):
             causal_mask = q_idx >= kv_idx
@@ -107,13 +111,13 @@ class GPT2Core(nn.Module):
 
         x = norm(x)
         if self.training:
-            logits: Tensor = F.linear(x.flatten(end_dim=1), self.lm_head_w.bfloat16()).float()
+            logits: Tensor = F.linear(x.flatten(end_dim=1).bfloat16(), self.lm_head_w.bfloat16()).float()
             loss = F.cross_entropy(15 * logits * torch.rsqrt(logits.square() + 225), target_seq)
             return loss
 
         loss = 0
         for i in range(4):
-            logits: Tensor = F.linear(x.flatten(end_dim=1).chunk(4)[i], self.lm_head_w.bfloat16()).float()
+            logits: Tensor = F.linear(x.flatten(end_dim=1).chunk(4)[i].bfloat16(), self.lm_head_w.bfloat16()).float()
             loss += F.cross_entropy(15 * logits * torch.rsqrt(logits.square() + 225), target_seq.chunk(4)[i]) / 4
         return loss
 
@@ -155,7 +159,7 @@ class GPT2Core(nn.Module):
             k_new_list.append(k_new)
             v_new_list.append(v_new)
         x = norm(x)
-        logits = F.linear(x.flatten(end_dim=1), self.lm_head_w.bfloat16()).float()
+        logits = F.linear(x.flatten(end_dim=1).bfloat16(), self.lm_head_w.bfloat16()).float()
         return logits, k_new_list, v_new_list
 
     @torch.no_grad()
@@ -194,7 +198,7 @@ class GPT2Core(nn.Module):
             v_list.append(v)
 
         x = norm(x)
-        logits = torch.nn.functional.linear(x[:, -1], self.lm_head_w.bfloat16()).float()
+        logits = torch.nn.functional.linear(x[:, -1].bfloat16(), self.lm_head_w.bfloat16()).float()
 
         attn = next(b.attn for b in self.blocks if b.attn is not None)
         H, D = attn.num_heads, attn.head_dim

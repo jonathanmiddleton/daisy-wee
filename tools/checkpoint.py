@@ -10,7 +10,6 @@ from models import get_model_class
 
 STANDARD_KEYS = {
     "model",         # state_dict of the model
-    "optimizers",    # list of optimizer.state_dict()
     "hparams",       # dict of hyperparameters used to build the model
     "step",          # int: global step when saved
     "best_val",      # float: best validation loss so far
@@ -25,7 +24,6 @@ class LoadedCheckpoint:
     hparams: Dict[str, Any]
     step: Optional[int]
     best_val: Optional[float]
-    optimizers: Optional[List[Dict[str, Any]]]
     tokens_per_step: Optional[int] = None
     progress_state: Optional[Dict[str, Any]] = None
 
@@ -51,29 +49,26 @@ def _normalize(obj: Any) -> LoadedCheckpoint:
         hparams = obj.get("hparams") or {}
         step = obj.get("step")
         best_val = obj.get("best_val")
-        optimizers = obj.get("optimizers")
         tokens_per_step = obj.get("tokens_per_step")
         progress_state = obj.get("progress_state")
         if not isinstance(hparams, dict):
             hparams = {}
-        if not isinstance(optimizers, list):
-            optimizers = None
         if not isinstance(model_sd, dict):
             # Some checkpoints might accidentally store the whole module
             try:
                 model_sd = model_sd.state_dict()  # type: ignore[attr-defined]
             except Exception:
                 raise TypeError("Unsupported checkpoint format: 'model' field is not a state_dict or module")
-        return LoadedCheckpoint(model=model_sd, hparams=hparams, step=step, best_val=best_val, optimizers=optimizers, tokens_per_step=tokens_per_step, progress_state=progress_state)
+        return LoadedCheckpoint(model=model_sd, hparams=hparams, step=step, best_val=best_val, tokens_per_step=tokens_per_step, progress_state=progress_state)
 
     # Fallback: treat as a raw state_dict
     if isinstance(obj, dict):
-        return LoadedCheckpoint(model=obj, hparams={}, step=None, best_val=None, optimizers=None)
+        return LoadedCheckpoint(model=obj, hparams={}, step=None, best_val=None)
 
     # Last resort: try to call state_dict on it
     try:
         sd = obj.state_dict()  # type: ignore[attr-defined]
-        return LoadedCheckpoint(model=sd, hparams={}, step=None, best_val=None, optimizers=None)
+        return LoadedCheckpoint(model=sd, hparams={}, step=None, best_val=None)
     except Exception as e:
         raise TypeError(f"Unsupported checkpoint object: {type(obj)}") from e
 
@@ -89,7 +84,6 @@ def load_checkpoint(path: str, map_location: Any | None = None, strip_prefix: bo
 def save_checkpoint(
     path: str,
     model: nn.Module | Dict[str, Any],
-    optimizers: Optional[List[torch.optim.Optimizer | Dict[str, Any]]] = None,
     step: Optional[int] = None,
     best_val: Optional[float] = None,
     hparams: Optional[Dict[str, Any]] = None,
@@ -106,19 +100,9 @@ def save_checkpoint(
     else:
         raise TypeError("model must be an nn.Module or a state_dict dict")
 
-    opt_states: Optional[List[Dict[str, Any]]] = None
-    if optimizers is not None:
-        opt_states = []
-        for opt in optimizers:
-            if isinstance(opt, dict):
-                opt_states.append(opt)
-            else:
-                opt_states.append(opt.state_dict())
-
     payload = dict(
         step=step,
         model=model_sd,
-        optimizers=opt_states,
         best_val=best_val,
         hparams=hparams or {},
         tokens_per_step=tokens_per_step,
@@ -148,10 +132,20 @@ def model_from_checkpoint(path: str, device: torch.device | str, map_location: A
     num_heads = int(hparams.get('num_heads'))
     model_dim = int(hparams.get('model_dim'))
     head_dim = int(hparams.get('head_dim'))
-    max_seq_len = int(hparams.get('max_seq_len'))
-    model_type = str(hparams.get('model_type'))
+    # Backward compatibility: some checkpoints may store legacy max_seq_len; prefer training_sequence_length/val_seq_len
+    if 'training_sequence_length' in hparams and 'val_seq_len' in hparams:
+        max_seq_len = int(max(int(hparams.get('training_sequence_length')), int(hparams.get('val_seq_len'))))
+    else:
+        max_seq_len = int(hparams.get('max_seq_len'))
+    window_block_size = int(hparams.get('window_block_size', 128))
+    model_class = str(hparams.get('model_class'))
+    if not model_class:
+        raise ValueError("Checkpoint hparams must include 'model_class' (fully-qualified class name)")
+    if 'eos_token_id' not in hparams:
+        raise ValueError("Checkpoint hparams must include 'eos_token_id'")
+    eos_token_id = int(hparams.get('eos_token_id'))
 
-    ModelClass = get_model_class(model_type)
+    ModelClass = get_model_class(model_class)
     model: nn.Module = ModelClass(
         vocab_size=vocab_size,
         num_layers=num_layers,
@@ -159,6 +153,8 @@ def model_from_checkpoint(path: str, device: torch.device | str, map_location: A
         model_dim=model_dim,
         max_seq_len=max_seq_len,
         head_dim=head_dim,
+        window_block_size=window_block_size,
+        eos_token_id=eos_token_id,
     ).to(device)
 
     apply_model_state(model, state_dict, strict=False)

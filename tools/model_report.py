@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any, Dict, Optional
 
 import torch
 from torch import nn
+
+from training.hparams import Hyperparameters
 
 
 def human_int(n: int) -> str:
@@ -130,7 +133,7 @@ def analyze_scalars(model: nn.Module, hparams: Dict[str, Any], zero_threshold: f
     return out
 
 
-def build_report(model: nn.Module, hparams: Optional[Dict[str, Any]] = None, zero_threshold: float = 1e-3) -> Dict[str, Any]:
+def build_report(model: nn.Module, hparams: Optional[Dict[str, Any] | Hyperparameters] = None, zero_threshold: float = 1e-3) -> Dict[str, Any]:
     """
     Build a model report for an instantiated nn.Module without requiring a checkpoint.
 
@@ -142,6 +145,9 @@ def build_report(model: nn.Module, hparams: Optional[Dict[str, Any]] = None, zer
     Returns:
         A dictionary with summary statistics about the model and (if present) learned scalars.
     """
+    if hparams is not None and isinstance(hparams, Hyperparameters):
+        hparams = asdict(hparams)
+
     hparams = dict(hparams or {})
 
     report: Dict[str, Any] = {}
@@ -193,10 +199,96 @@ def build_report(model: nn.Module, hparams: Optional[Dict[str, Any]] = None, zer
     return report
 
 
+def format_report_text(report: Dict[str, Any]) -> str:
+    lines = []
+
+    # Path and step if available
+    lines.append("=== Checkpoint ===")
+    if report.get("path"):
+        lines.append(f"path: {report['path']}")
+
+    hparams = report.get("hparams", {}) or {}
+    step = hparams.get("step") or None
+    if step is not None:
+        lines.append(f"step: {step}")
+
+    # Hyperparameters
+    if hparams:
+        lines.append("\n=== Hyperparameters ===")
+        for k in sorted(hparams.keys()):
+            lines.append(f"{k}: {hparams[k]}")
+
+    # Model stats
+    lines.append("\n=== Model stats ===")
+    lines.append(f"parameters (total): {report.get('params_total_h')} ({report.get('params_total')})")
+    lines.append(f"parameters (trainable): {report.get('params_trainable_h')} ({report.get('params_trainable')})")
+    if report.get("param_megabytes") is not None:
+        lines.append(f"parameter size: {report['param_megabytes']:.2f} MiB")
+
+    if "model" in report:
+        mi = report["model"] or {}
+        if mi:
+            lines.append(f"model type: {mi.get('type')}")
+            if mi.get("num_layers") is not None:
+                lines.append(f"layers: {mi['num_layers']}")
+            if mi.get("attn_off_layers"):
+                lines.append(f"attention skipped at layers: {mi['attn_off_layers']}")
+            if mi.get("lm_head_rows") is not None and hparams.get("vocab_size"):
+                vocab_size = int(hparams["vocab_size"]) or 0
+                pad = int(mi["lm_head_rows"]) - vocab_size
+                if pad > 0:
+                    lines.append(f"lm_head rows: {mi['lm_head_rows']} (padded by {pad} beyond vocab_size={vocab_size})")
+
+    # Dtypes breakdown
+    lines.append("\nparameter dtypes:")
+    for k, v in (report.get("dtypes") or {}).items():
+        lines.append(f"  {k}: {v['count_h']} ({v['count']})")
+
+    # Scalars section
+    lines.append("\n=== Learned scalars (GPT2Core) ===")
+    sc = report.get("scalars", {}) or {}
+    if not sc.get("present"):
+        lines.append("No 'scalars' parameter found in model.")
+    else:
+        L = sc.get("num_layers")
+        lines.append(f"num_layers (inferred): {L}")
+        lines.append(f"threshold for near-zero: {sc['zero_threshold']}")
+        gsum = sc.get("groups", {})
+        for name in ("skip_weights", "lambdas", "sa_lambdas"):
+            g = gsum.get(name)
+            if not g:
+                continue
+            lines.append(f"- {name}: shape={g['shape']}, min={g['min']:.4g}, max={g['max']:.4g}, mean={g['mean']:.4g}, std={g['std']:.4g}")
+            lines.append(f"  near-zero: {g['num_near_zero']} elements ({100.0*g['frac_near_zero']:.2f}%)")
+        if sc.get("layers_with_skip_near_zero"):
+            lines.append(f"layers with near-zero skip weight: {sc['layers_with_skip_near_zero']}")
+        # Per-layer compact print
+        lines.append("\nPer-layer (i: skip | lambda -> sa_lambda):")
+        for li in sc.get("per_layer", []):
+            i = li["layer"]
+            def mark(val, is_nz):
+                return f"{val:.4f}" + ("*" if is_nz else "")
+            skip_s = mark(li["skip_w"], li["skip_w_near_zero"])
+            lam_s = ", ".join(mark(v, nz) for v, nz in zip(li["lambda"], li["lambda_near_zero"]))
+            sal_s = ", ".join(mark(v, nz) for v, nz in zip(li["sa_lambda"], li["sa_lambda_near_zero"]))
+            lines.append(f"  {i:02d}: {skip_s} | [{lam_s}] -> [{sal_s}]")
+        if sc.get("any_near_zero"):
+            lines.append("\nNote: values marked with * are near zero and may indicate unused pathways.")
+
+    return "\n".join(lines)
+
+def report_from_training_yml(path: str) -> str:
+    from training.hparams import load_hparams_from_yaml
+    from models import model_from_spec
+    hparams = load_hparams_from_yaml(path)
+    model = model_from_spec(hparams)
+    return format_report_text(build_report(model, hparams))
+
 __all__ = [
     "build_report",
     "analyze_scalars",
     "dtype_breakdown",
     "sizeof_params",
     "human_int",
+    "format_report_text",
 ]

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Thin wrapper that delegates to the Python runner for maintainability.
+# Thin wrapper that delegates to the Python runner.
 # The Python runner handles logging, environment, overrides (including comma-separated lists),
 # and executes Cartesian product runs.
 

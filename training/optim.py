@@ -2,6 +2,45 @@ import torch
 from torch import Tensor
 from functools import lru_cache
 import torch.distributed as dist
+from typing import Any
+from torch import nn
+
+
+def derive_named_param_groups(model: nn.Module) -> dict[str, list[nn.Parameter]]:
+    """Derive canonical named parameter groups from the model.
+
+    Returns a mapping with keys:
+      - hidden_matrix_params: all module parameters with ndim >= 2 inside model.blocks (sorted by size desc)
+      - embed_params: parameters of model.embed and model.value_embeds
+      - scalar_params: [model.scalars]
+      - head_params: [model.lm_head_w]
+    """
+    # Hidden matrices (e.g., linear/attention weight matrices) from transformer blocks
+    hidden_matrix_params = sorted(
+        (p for p in model.blocks.parameters() if p.ndim >= 2),
+        key=lambda x: x.size(),
+        reverse=True,
+    )
+    # Embedding parameters
+    embed_params = [*model.embed.parameters(), *model.value_embeds.parameters()]
+    # Learned scalar gates
+    scalar_params = [model.scalars]
+    # Output head weights
+    head_params: list[nn.Parameter] = [model.lm_head_w]
+
+    # Sanity: ensure exact partitioning of all model parameters
+    params_collections = [hidden_matrix_params, embed_params, scalar_params, head_params]
+    optimized_parameters_set = {p for params in params_collections for p in params}
+    all_params = set(model.parameters())
+    assert optimized_parameters_set == all_params
+    assert len(optimized_parameters_set) == sum(len(lst) for lst in params_collections)
+
+    return {
+        "hidden_matrix_params": hidden_matrix_params,
+        "embed_params": embed_params,
+        "scalar_params": scalar_params,
+        "head_params": head_params,
+    }
 
 # -----------------------------------------------------------------------------
 # Muon optimizer
@@ -124,29 +163,6 @@ def get_lr_s(s: float, cooldown_frac: float) -> float:
         # Linear decay to zero over the cooldown tail
         return max((1 - x) / max(cooldown_frac, 1e-8), 0.0)
 
-# Backward-compatible step-based wrapper remains for callers not yet migrated
-def get_lr(step: int, num_iterations: int, cooldown_frac: float):
-    # num_iterations here is the schedule_total_iters denominator
-    if num_iterations <= 0:
-        x = 1.0
-    else:
-        x = step / num_iterations
-    # Clamp progress to [0, 1] to allow continuing beyond the planned schedule
-    x = 0.0 if x < 0 else (1.0 if x > 1 else x)
-    if x < 1 - cooldown_frac:
-        return 1.0
-    else:
-        # At or beyond the cooldown phase, decay to zero
-        return max((1 - x) / max(cooldown_frac, 1e-8), 0.0)
-
-# attention window size schedule: linearly increase
-def next_multiple_of_n(v: float | int, *, n: int):
-    return next(x for x in range(n, int(v) + 1 + n, n) if x >= v)
-
-@lru_cache(1)
-def get_window_size_blocks_helper(window_size: int):
-    return torch.tensor(window_size // 128, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
-
 # Global flag to force full-sized attention windows regardless of training progress
 _force_full_windows: bool = False
 
@@ -154,30 +170,128 @@ def set_full_windows(flag: bool):
     global _force_full_windows
     _force_full_windows = bool(flag)
 
-def get_window_size_blocks(step: int, num_iterations: int):
-    # num_iterations here is the schedule_total_iters denominator
-    if _force_full_windows:
-        x = 1.0
-    elif num_iterations <= 0:
-        x = 1.0
-    else:
-        x = step / num_iterations  # progress in training
-    # Clamp to [0, 1] to ensure stability when resuming with different targets or overrun
-    x = 0.0 if x < 0 else (1.0 if x > 1 else x)
-    # Linearly increase the block-wise sliding window size over training 128 -> 1792
-    # increase by @fernbear.bsky.social; block-wise by @YouJiacheng
-    factor = 4 * x ** 3 - 6 * x ** 2 + 3 * x  # cubic schedule by @jadenj3o
-    window_size = next_multiple_of_n(3456 * factor, n=128)  # TODO: remove magic 3456
-    return get_window_size_blocks_helper(window_size)
+# attention window size schedule: linearly increase
+def next_multiple_of_n(v: float | int, *, n: int):
+    return next(x for x in range(n, int(v) + 1 + n, n) if x >= v)
 
+@lru_cache(1)
+def get_window_size_blocks_helper(window_size_tokens: int, window_block_size: int):
+    return torch.tensor(window_size_tokens // window_block_size, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
 
-def get_window_size_blocks_s(s: float):
-    """Attention window schedule driven by normalized progress s∈[0,1]."""
+def get_num_window_blocks(schedule: float, *, attention_window_tokens: int, window_block_size: int) -> torch.Tensor:
+    """Attention window schedule driven by normalized progress schedule s∈[0,1].
+    Returns the number of blocks for the sliding window, parameterized by attention_window_tokens and window_block_size.
+    """
     if _force_full_windows:
         x = 1.0
     else:
-        x = 0.0 if s < 0 else (1.0 if s > 1 else s)
-    # Linearly/cubically increase block-wise sliding window size over training 128 -> 1792
-    factor = 4 * x ** 3 - 6 * x ** 2 + 3 * x  # cubic schedule by @jadenj3o
-    window_size = next_multiple_of_n(3456 * factor, n=128)  # TODO: remove magic 3456
-    return get_window_size_blocks_helper(window_size)
+        x = 0.0 if schedule < 0 else (1.0 if schedule > 1 else schedule)
+    # Cubic increase (by @jadenj3o)
+    factor = 4 * x ** 3 - 6 * x ** 2 + 3 * x
+    window_tokens = next_multiple_of_n(attention_window_tokens * factor, n=window_block_size)
+    return get_window_size_blocks_helper(window_tokens, window_block_size)
+
+def resolve_optimizer_class(opt_type: str):
+    """Resolve optimizer type name to a class.
+    Supports torch.optim.* and custom Muon optimizer.
+
+    Important: prefer the local Muon implementation (supports batched >2D params)
+    over torch.optim.Muon, which only supports 2D parameters.
+    """
+    if opt_type == "Muon":
+        # Always use the local Muon defined in this module
+        return Muon
+    if hasattr(torch.optim, opt_type):
+        return getattr(torch.optim, opt_type)
+    raise ValueError(f"Unknown optimizer type: {opt_type}")
+
+
+def build_optimizers_from_cfg(
+    *,
+    cfg_list: list[dict[str, Any]],
+    model: nn.Module,
+    rank: int,
+    world_size: int,
+) -> list[torch.optim.Optimizer]:
+    """Build optimizers from configuration list.
+
+    Each item in cfg_list is a dict with keys:
+      - type: optimizer class name (e.g., "AdamW" or "Muon")
+      - params: list of param-group dicts containing at least {group: <name>} and any group overrides like lr
+      - other keys are passed as kwargs to the optimizer constructor (betas, eps, weight_decay, fused, momentum, ...)
+
+    This function also enforces that the union of all param groups referenced in the config
+    exactly matches the required named groups for the model (no missing or extra groups).
+    """
+    if not isinstance(cfg_list, list) or not cfg_list:
+        raise ValueError("optimizers config must be a non-empty list")
+
+    # Derive canonical named parameter groups from the model
+    param_groups_by_name = derive_named_param_groups(model)
+    required_group_names = set(param_groups_by_name.keys())
+
+    # Collect all group names referenced across all optimizers in config
+    referenced_group_names: set[str] = set()
+
+    optimizers: list[torch.optim.Optimizer] = []
+
+    for idx, opt_cfg in enumerate(cfg_list):
+        if not isinstance(opt_cfg, dict):
+            raise ValueError(f"Optimizer #{idx} must be a mapping, got {type(opt_cfg).__name__}")
+        opt_type = opt_cfg.get("type")
+        if not opt_type:
+            raise ValueError(f"Optimizer #{idx} is missing 'type'")
+
+        pg_cfgs = opt_cfg.get("params")
+        if not isinstance(pg_cfgs, list) or not pg_cfgs:
+            raise ValueError(f"Optimizer '{opt_type}' requires a non-empty 'params' list")
+
+        param_groups: list[dict[str, Any]] = []
+        for pg in pg_cfgs:
+            if not isinstance(pg, dict):
+                raise ValueError(f"param group for optimizer '{opt_type}' must be a mapping, got {type(pg).__name__}")
+            name = pg.get("group")
+            if name not in param_groups_by_name:
+                raise ValueError(
+                    f"Unknown param group '{name}' for optimizer '{opt_type}'. "
+                    f"Known groups: {sorted(param_groups_by_name.keys())}"
+                )
+            referenced_group_names.add(name)
+            group_opts = {k: v for k, v in pg.items() if k != "group"}
+            group_opts["params"] = param_groups_by_name[name]
+            param_groups.append(group_opts)
+
+        OptClass = resolve_optimizer_class(opt_type)
+        opt_kwargs = {k: v for k, v in opt_cfg.items() if k not in ("type", "params")}
+
+        if OptClass is Muon:
+            opt_kwargs.setdefault("rank", rank)
+            opt_kwargs.setdefault("world_size", world_size)
+
+        optimizer = OptClass(param_groups, **opt_kwargs)
+        optimizers.append(optimizer)
+
+    # Validate exhaustive coverage: all required groups must be present exactly once across optimizers
+    missing = required_group_names - referenced_group_names
+    extra = referenced_group_names - required_group_names
+    if missing or extra:
+        msgs = []
+        if missing:
+            msgs.append(f"missing groups: {sorted(missing)}")
+        if extra:
+            msgs.append(f"unknown groups: {sorted(extra)}")
+        raise ValueError(
+            "Optimizer config param groups must be exhaustive and valid; " + ", ".join(msgs) +
+            f". Required groups: {sorted(required_group_names)}"
+        )
+
+    # Additionally ensure that the parameters are fully covered without overlap
+    covered_params = {p for name in referenced_group_names for p in param_groups_by_name[name]}
+    all_params = set(model.parameters())
+    if covered_params != all_params:
+        raise ValueError(
+            "Param groups in optimizer config do not cover model parameters exactly. "
+            f"covered={len(covered_params)} total={len(all_params)}"
+        )
+
+    return optimizers

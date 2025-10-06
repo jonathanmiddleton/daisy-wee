@@ -18,7 +18,7 @@ def test_causal_self_attention_forward_equals_step(T, W, use_ve, monkeypatch):
     torch.manual_seed(0)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     H, D = 4, 8
-    dim, max_seq_len = H * D, 128
+    dim, max_seq_len = H * D, 256
     m = CausalSelfAttention(dim=dim, num_heads=H, max_seq_len=max_seq_len, head_dim=D).to(device).eval()
     dtype = torch.bfloat16
     x = torch.randn(1, T, dim, device=device, dtype=dtype)
@@ -28,15 +28,16 @@ def test_causal_self_attention_forward_equals_step(T, W, use_ve, monkeypatch):
         ve_full = torch.randn(1, T, H, D, device=device, dtype=dtype)
     bm = _make_block_mask(T, H, W, device)
     y_full = m.forward(x, ve_full, bm, lambdas)
-    K = torch.zeros(1, T, H, D, device=device, dtype=dtype)
-    V = torch.zeros(1, T, H, D, device=device, dtype=dtype)
+    # Initialize empty KV caches and append per token to match causal semantics
+    K = torch.empty(1, 0, H, D, device=device, dtype=dtype)
+    V = torch.empty(1, 0, H, D, device=device, dtype=dtype)
     ys = []
     for pos in range(T):
         x_pos = x[:, pos:pos+1]
         ve_pos = None if ve_full is None else ve_full[:, pos:pos+1]
         y_pos, k_new, v_new = m.step(x_pos, K, V, pos, ve_pos, lambdas, W)
-        K[:, pos:pos+1] = k_new
-        V[:, pos:pos+1] = v_new
+        K = torch.cat([K, k_new], dim=1)
+        V = torch.cat([V, v_new], dim=1)
         ys.append(y_pos)
     y_step = torch.cat(ys, dim=1)
     assert y_full.shape == y_step.shape

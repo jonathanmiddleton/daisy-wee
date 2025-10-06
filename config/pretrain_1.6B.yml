@@ -5,17 +5,33 @@ wandb_run_name: '350m'
 # Training
 train_shards: "data/fineweb/fineweb_train_*.bin"
 target_tokens: 4000000000
-val_loss_every_tokens: 200000000
 cooldown_frac: 0.5
-head_params_lr: 0.0027            #adamw
-embed_params_lr: 0.02             #adamw
-scalar_params_lr: 0.013           #adamw
-hidden_matrix_params_lr: 0.013    #muon
-adamw_weight_decay: 0.01
+# Optimizers configuration
+optimizers:
+  - type: AdamW
+    betas: [0.9, 0.95]
+    eps: 1.0e-10
+    weight_decay: 0.01
+    fused: true
+    params:
+      - group: head_params
+        lr: 0.0027
+      - group: embed_params
+        lr: 0.02
+      - group: scalar_params
+        lr: 0.013
+
+  - type: Muon
+    momentum: 0.95
+    params:
+      - group: hidden_matrix_params
+        lr: 0.013
+full_windows: false
 # Gradient accumulation
 grad_acc_steps: 8
 # Evaluations
 val_shards: "data/fineweb/fineweb_val_*.bin"
+val_loss_every_tokens: 200000000
 val_seq_len: 65536              # N * 1024
 val_tokens: 10485760
 # Snapshots
@@ -23,10 +39,7 @@ snapshot_warmup_tokens: 200000000               # token warmup before snapshots
 snapshot_per_n_tokens: 500000000           # snapshot interval by tokens
 save_checkpoint: true
 # Model Definition
-model_type: gpt2
-max_seq_len: 16384              # N * 1024, max_sequence_length
-vocab_size: 50257
-num_layers: 48
-head_dim: 64                    # default: 128
-num_heads: 25
-model_dim: 1600                 # num_heads * head_dim
+model_spec: gpt2_1p6b
+training_sequence_length: 16384              #  N * 1024
+attention_window_tokens: 3456                # sliding window trained span
+window_block_size: 128                       # must divide both training_sequence_length and attention_window_tokens
