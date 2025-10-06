@@ -249,14 +249,35 @@ def lr_sweep(
             if clip_norm is not None:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
 
-            # Compute mean grad-norm per swept group (after clipping, before step)
+            # Compute grad stats per swept group (after clipping, before step)
             grad_norms_by_group: Dict[str, float] = {}
+            grad_max_by_group: Dict[str, float] = {}
+            grad_count_by_group: Dict[str, int] = {}
+            total_count_by_group: Dict[str, int] = {}
+            eff_lr_by_group: Dict[str, float] = {}
+            eff_wd_by_group: Dict[str, float] = {}
             for oi2, gi2, g2 in _enumerate_param_groups(optimizers):
                 k2 = _group_key(oi2, gi2, g2)
                 if group_infos[k2]["frozen"]:
                     continue
-                norms = [p.grad.detach().float().norm().item() for p in g2["params"] if p.grad is not None]
+                params = g2["params"]
+                total_count_by_group[k2] = len(params)
+                with_grad = [p for p in params if p.grad is not None]
+                grad_count_by_group[k2] = len(with_grad)
+                norms = [p.grad.detach().float().norm().item() for p in with_grad]
                 grad_norms_by_group[k2] = (sum(norms) / len(norms)) if norms else float("nan")
+                # Max abs grad across the group
+                if with_grad:
+                    try:
+                        gmax = max(float(p.grad.detach().abs().max().item()) for p in with_grad)
+                    except Exception:
+                        gmax = float("nan")
+                else:
+                    gmax = float("nan")
+                grad_max_by_group[k2] = gmax
+                # Effective lr and weight decay as applied this step
+                eff_lr_by_group[k2] = float(g2.get("lr", float("nan")))
+                eff_wd_by_group[k2] = float(g2.get("weight_decay", float("nan")))
 
             # Step the optimizers
             for opt in optimizers:
@@ -287,8 +308,18 @@ def lr_sweep(
             for k2 in grad_norms_by_group.keys():
                 name2 = group_infos[k2].get("name") or k2
                 gnorm = grad_norms_by_group.get(k2, float("nan"))
+                gmax = grad_max_by_group.get(k2, float("nan"))
+                with_grad = grad_count_by_group.get(k2, 0)
+                total_params = total_count_by_group.get(k2, 0)
+                eff_lr = eff_lr_by_group.get(k2, float("nan"))
+                eff_wd = eff_wd_by_group.get(k2, float("nan"))
                 pdelta = param_delta_by_group.get(k2, float("nan"))
-                print(f"[diag] step={step+1:03d}/{steps_per_scale:03d} group={name2} grad_norm_mean={gnorm:.12e} param_delta_mean={pdelta:.12e}", flush=True)
+                print(
+                    f"[diag] step={step+1:03d}/{steps_per_scale:03d} group={name2} "
+                    f"with_grad={with_grad}/{total_params} grad_norm_mean={gnorm:.12e} grad_max_abs={gmax:.12e} "
+                    f"eff_lr={eff_lr:.12e} eff_wd={eff_wd:.12e} param_delta_mean={pdelta:.12e}",
+                    flush=True,
+                )
 
             val = total / accum_steps
             # capture start and latest values for improvement metric
