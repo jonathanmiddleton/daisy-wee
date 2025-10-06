@@ -258,6 +258,8 @@ def build_optimizers_from_cfg(
                 )
             referenced_group_names.add(name)
             group_opts = {k: v for k, v in pg.items() if k != "group"}
+            # Preserve the canonical group name for downstream tooling (e.g., LR sweeps)
+            group_opts["name"] = name
             group_opts["params"] = param_groups_by_name[name]
             param_groups.append(group_opts)
 
