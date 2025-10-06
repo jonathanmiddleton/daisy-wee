@@ -44,8 +44,8 @@ def lr_sweep(
     window_block_size: int = 128,
     # sweep setup
     num_scales: int = 200,
-    scale_min: float = 1e-6,
-    scale_max: float = 1.0,
+    scale_min: float = 1e-2,
+    scale_max: float = 1e+2,
     steps_per_scale: int = 20,
     smooth: float = 0.98,  # EMA on loss (computed within each scale window)
     device: str = "cuda",
@@ -287,8 +287,8 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, required=True, help="Path to YAML training config.")
     parser.add_argument("--num_scales", type=int, default=200)
     parser.add_argument("--steps_per_scale", type=int, default=20)
-    parser.add_argument("--scale_min", type=float, default=None, help="Multiplicative LR scale min (default 1e-6)")
-    parser.add_argument("--scale_max", type=float, default=None, help="Multiplicative LR scale max (default 1.0)")
+    parser.add_argument("--scale_min", type=float, default=None, help="Multiplicative LR scale min (default 1e-2)")
+    parser.add_argument("--scale_max", type=float, default=None, help="Multiplicative LR scale max (default 1e+2)")
     parser.add_argument("--accum_steps", type=int, default=1)
     parser.add_argument("--clip_norm", type=float, default=None)
     parser.add_argument("--smooth", type=float, default=0.98)
@@ -357,9 +357,9 @@ if __name__ == "__main__":
     sweep_only = _parse_spec(cli.sweep_only)
 
     # Resolve deprecated aliases
-    n_scales = cli.num_scales if cli.steps is None else cli.steps
-    sc_min = cli.scale_min if cli.scale_min is not None else (cli.lr_min if cli.lr_min is not None else 1e-6)
-    sc_max = cli.scale_max if cli.scale_max is not None else (cli.lr_max if cli.lr_max is not None else 1.0)
+    n_scales = cli.num_scales
+    sc_min = cli.scale_min
+    sc_max = cli.scale_max
 
     lrs, losses, meta = lr_sweep(
         model,
