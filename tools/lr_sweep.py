@@ -211,6 +211,14 @@ def lr_sweep(
             opt.load_state_dict(copy.deepcopy(opt_baselines[oi]))
         set_lrs(scalar)
 
+        # Prepare snapshots for swept groups (used to compute per-step param deltas)
+        swept_keys = [k for k in all_keys if not group_infos[k]["frozen"]]
+        prev_snapshots: Dict[str, List[torch.Tensor]] = {}
+        for oi2, gi2, g2 in _enumerate_param_groups(optimizers):
+            k2 = _group_key(oi2, gi2, g2)
+            if k2 in swept_keys:
+                prev_snapshots[k2] = [p.detach().clone() for p in g2["params"]]
+
         ema_delta = None
         t_updates = 0
         prev_val = None
@@ -241,8 +249,46 @@ def lr_sweep(
             if clip_norm is not None:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
 
+            # Compute mean grad-norm per swept group (after clipping, before step)
+            grad_norms_by_group: Dict[str, float] = {}
+            for oi2, gi2, g2 in _enumerate_param_groups(optimizers):
+                k2 = _group_key(oi2, gi2, g2)
+                if group_infos[k2]["frozen"]:
+                    continue
+                norms = [p.grad.detach().float().norm().item() for p in g2["params"] if p.grad is not None]
+                grad_norms_by_group[k2] = (sum(norms) / len(norms)) if norms else float("nan")
+
+            # Step the optimizers
             for opt in optimizers:
                 opt.step()
+
+            # Compute mean absolute param delta since previous step and update snapshots
+            param_delta_by_group: Dict[str, float] = {}
+            for oi2, gi2, g2 in _enumerate_param_groups(optimizers):
+                k2 = _group_key(oi2, gi2, g2)
+                if group_infos[k2]["frozen"]:
+                    continue
+                prev_list = prev_snapshots.get(k2)
+                if prev_list is None:
+                    # Initialize if missing (shouldn't happen, but guard anyway)
+                    prev_list = [p.detach().clone() for p in g2["params"]]
+                    prev_snapshots[k2] = prev_list
+                total_abs = 0.0
+                total_elems = 0
+                for p_curr, p_prev in zip(g2["params"], prev_list):
+                    diff = (p_curr.detach() - p_prev).abs()
+                    total_abs += float(diff.sum().item())
+                    total_elems += diff.numel()
+                param_delta_by_group[k2] = (total_abs / total_elems) if total_elems > 0 else float("nan")
+                # Update snapshots to current params for next step
+                prev_snapshots[k2] = [p.detach().clone() for p in g2["params"]]
+
+            # Print diagnostics for each swept group with high precision
+            for k2 in grad_norms_by_group.keys():
+                name2 = group_infos[k2].get("name") or k2
+                gnorm = grad_norms_by_group.get(k2, float("nan"))
+                pdelta = param_delta_by_group.get(k2, float("nan"))
+                print(f"[diag] step={step+1:03d}/{steps_per_scale:03d} group={name2} grad_norm_mean={gnorm:.12e} param_delta_mean={pdelta:.12e}", flush=True)
 
             val = total / accum_steps
             # capture start and latest values for improvement metric
