@@ -46,22 +46,18 @@ class Hyperparameters:
     wandb_run_name: str = ""
 
 
-def load_hparams_from_yaml(config_path: str | None) -> Hyperparameters:
+def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
     """
     Load Hyperparameters from a YAML file. If a 'model_spec' key is present, also load and merge
     the named spec from model_specs/<name>.yml (or a provided file path). Training config values
     take precedence over spec values. Validates against the Hyperparameters dataclass.
     """
     cfg_dict = {}
-    if config_path:
-        used_path = Path(config_path)
-        with open(used_path, "r") as f:
-            cfg_dict = yaml.safe_load(f) or {}
-    else:
-        used_path = Path("config/pretrain.yml")
-        if used_path.exists():
-            with open(used_path, "r") as f:
-                cfg_dict = yaml.safe_load(f) or {}
+
+    used_path = Path(config_path)
+    with open(used_path, "r") as f:
+        cfg_dict = yaml.safe_load(f) or {}
+
 
     # If a model_spec name/path is provided, load the spec and merge recognized fields
     model_spec_name = cfg_dict.get("model_spec")
