@@ -151,6 +151,26 @@ def lr_sweep(
         ratio = max(scale_max, 1e-12) / max(scale_min, 1e-12)
         return float(scale_min) * (ratio ** (i / (num_scales - 1)))
 
+    # Coalesce defaults and validate sweep parameters
+    if scale_min is None:
+        scale_min = 1e-2
+    if scale_max is None:
+        scale_max = 1e+2
+    # Guardrails
+    if num_scales is None or num_scales < 1:
+        num_scales = 1
+    # Ensure positive scales
+    eps = 1e-12
+    if not isinstance(scale_min, (int, float)) or not isinstance(scale_max, (int, float)):
+        raise ValueError("scale_min and scale_max must be numbers or None")
+    if scale_min <= 0:
+        scale_min = eps
+    if scale_max <= 0:
+        scale_max = eps
+    # Ensure ordering
+    if scale_max < scale_min:
+        scale_min, scale_max = scale_max, scale_min
+
     t0 = time.time()
     print(
         f"[lr_sweep] num_scales={num_scales}, scale_min={scale_min:.3e}, scale_max={scale_max:.3e}, "
