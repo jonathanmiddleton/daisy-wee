@@ -39,7 +39,7 @@ Below are the current, tested ways to launch training, run inference sampling, a
   - -p CHECKPOINT_PATH: Optional checkpoint to initialize model weights only (fresh schedule; no steps/optimizer/best-val are resumed).
   - -s BEGIN_SHARD: Optional starting shard index for training data (exported as BEGIN_SHARD). Useful for resuming data traversal.
   - -r RUN_ID: Optional run identifier. Exported as RUN_ID and used in checkpoint filenames and the default wandb run name.
-  - key=value or --key=value: Any additional overrides forwarded to train.py as --key=value. Examples: target_tokens=3000000000, max_seq_len=32768.
+  - key=value or --key=value: Any additional overrides forwarded to train.py as --key=value. Examples: target_tokens=3000000000, training_sequence_length=32768, attention_window_tokens=3456, window_block_size=128.
 - Notes
   - run.sh requires CONFIG_FILE as the first positional argument. Options -n/-p/-s/-r must appear after CONFIG_FILE.
   - Overrides without a leading -- are automatically rewritten to --key=value.
@@ -132,9 +132,13 @@ How it works
 - Common training fields
   - model_spec: Name of a spec under model_specs/ (e.g., gpt2_350m) or a direct path to a spec file.
   - train_shards, val_shards: Glob patterns for tokenized shard files used for training/validation.
+  - training_sequence_length: Per-device microstep sequence length used for training batches.
+  - attention_window_tokens: Maximum backward attention span actually trained via the sliding window (e.g., 3456).
+  - window_block_size: Block granularity used by sliding window and masks; must divide both training_sequence_length and attention_window_tokens (e.g., 128).
   - target_tokens: Total number of training tokens to process before completion.
   - cooldown_frac: Fraction of the schedule spent in cooldown/decay; drives LR/window schedules via normalized progress s in [0,1].
   - val_tokens: Number of tokens to evaluate during each validation pass.
+  - val_seq_len: Per-device validation sequence length.
   - val_loss_every_tokens: Run validation every N training tokens processed.
   - snapshot_warmup_tokens: Minimum tokens to process before taking snapshots.
   - snapshot_per_n_tokens: Snapshot interval measured in tokens.
@@ -144,20 +148,42 @@ How it works
   - wandb_project: W&B project name; defaults to 'daisy-wee' when logging is enabled.
   - wandb_run_name: Optional run name; defaults to timestamp+run id when not provided.
   - init_checkpoint: Optional weights to warm start from (weights only; schedules/resume are fresh).
+  - Validation rules: training_sequence_length % window_block_size == 0; attention_window_tokens % window_block_size == 0; training_sequence_length >= attention_window_tokens.
 
 - Model spec fields (model_specs/*.yml)
   - model_type: Dispatcher key passed to models.get_model_class (default: gpt2).
   - vocab_size: Vocabulary size (e.g., 50257 for GPT-2 BPE).
   - num_layers, num_heads, head_dim, model_dim: Transformer depth/width and per-head/overall dimensions.
-  - max_seq_len: Maximum context length for training/inference.
+  - attention_window_tokens: Maximum backward attention span used during training (sliding window). Typically 3456.
 
-- Optimizer-related (when present in training configs)
-  - embed_params_lr, scalar_params_lr, hidden_matrix_params_lr: Parameter-group learning rates.
-  - adamw_weight_decay: Weight decay for AdamW-style optimizers.
+- Optimizers (in training configs)
+  - optimizers: List of optimizer definitions. Each entry has a type (e.g., AdamW, Muon), optional hyperparameters, and a params section listing parameter groups with their learning rates.
+  - Supported parameter groups: hidden_matrix_params, embed_params, scalar_params, head_params.
+  - Example:
+    ```yaml
+    optimizers:
+      - type: AdamW
+        betas: [0.9, 0.95]
+        eps: 1.0e-10
+        weight_decay: 0.01
+        fused: true
+        params:
+          - group: head_params
+            lr: 0.0085
+          - group: embed_params
+            lr: 0.025
+          - group: scalar_params
+            lr: 0.025
+
+      - type: Muon
+        momentum: 0.95
+        params:
+          - group: hidden_matrix_params
+            lr: 0.03
+    ```
 
 - SFT-specific (in training configs)
   - init_checkpoint: Path to a pretraining checkpoint used to warm-start SFT. Weights are loaded; optimizer state, steps, and best-val are not resumed; schedules start fresh.
-  - schedule_total_iters: Optional schedule-length denominator for LR/window schedules; independent of training stop, which is token-based.
 
 Examples
 - Minimal SFT training config that references a named spec:
@@ -182,7 +208,7 @@ Examples
   num_heads: 8
   head_dim: 128
   model_dim: 1024
-  max_seq_len: 65536
+  attention_window_tokens: 3456
   ```
 
 - Referencing a spec by path instead of name:
@@ -193,7 +219,7 @@ Examples
 Overriding config values at launch
 - Any YAML key can be overridden via run.sh using key=value (or --key=value). CLI overrides take precedence over both the training YAML and the model spec, e.g.:
   ```sh
-  ./run.sh config/pretrain_350m.yml -n 8 target_tokens=3000000000 max_seq_len=32768
+  ./run.sh config/pretrain_350m.yml -n 8 target_tokens=3000000000 training_sequence_length=32768
   ./run.sh config/instruct_sft.yml -n 8 -p checkpoints/state_step_200000.pt val_loss_every_tokens=50000000
   ```
 

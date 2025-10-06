@@ -15,8 +15,8 @@ class MLP(nn.Module):
         self.proj_w.wd_mul = 2.0
 
     def forward(self, x: Tensor):
-        x = F.linear(x, self.fc_w)
+        x = F.linear(x.to(self.fc_w.dtype), self.fc_w)
         x = F.relu(x).square() # https://arxiv.org/abs/2109.08668v2; ~1-2% better than GELU; suggested by @SKYLINEZ007 and @Grad62304977
-        x = F.linear(x, self.proj_w)
+        x = F.linear(x.to(self.fc_w.dtype), self.proj_w)
         return x
 

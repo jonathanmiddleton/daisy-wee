@@ -45,7 +45,12 @@ num_layers = int(hparams.get('num_layers'))
 num_heads = int(hparams.get('num_heads'))
 model_dim = int(hparams.get('model_dim'))
 head_dim = int(hparams.get('head_dim'))
-max_seq_len = int(hparams.get('max_seq_len', cli.max_seq_len))
+# Prefer new fields when present: max_seq_len = max(training_sequence_length, val_seq_len)
+if 'training_sequence_length' in hparams and 'val_seq_len' in hparams:
+    max_seq_len = int(max(int(hparams.get('training_sequence_length')), int(hparams.get('val_seq_len'))))
+else:
+    max_seq_len = int(hparams.get('max_seq_len', cli.max_seq_len))
+window_block_size = int(hparams.get('window_block_size', 128))
 model_type = str(hparams.get('model_type', 'gpt2'))
 
 ModelClass = get_model_class(model_type)
@@ -56,6 +61,7 @@ model: nn.Module = ModelClass(
     model_dim=model_dim,
     max_seq_len=max_seq_len,
     head_dim=head_dim,
+    window_block_size=window_block_size,
 ).to(device)
 
 apply_model_state(model, state_dict, strict=False)
@@ -82,7 +88,7 @@ ctx = torch.amp.autocast(device_type=devtype, dtype=torch.bfloat16)
 eos_id = int(hparams.get('eos_token_id', 50256))
 gen = Generator(
     model=model,
-    window=4096,
+    window=int(hparams.get('attention_window_tokens', 3456)),
     eos_token_id=eos_id,
     temperature=cli.temperature,
     top_k=cli.top_k,

@@ -31,21 +31,35 @@ class Rotary(nn.Module):
             active = (1 / base) ** torch.linspace(0, 1, steps=keep, dtype=torch.float32)
             # pad with zeros to keep total = half (dim//2)
             angular_freq = torch.cat([active, active.new_zeros(half - keep)])
+        # Register buffers so they move with module.to(device) exactly once
+        self.inv_freq = nn.Buffer(angular_freq, persistent=False)
+        # Preallocate cos/sin tables up to max_seq_len on construction; slice at runtime
         t = torch.arange(max_seq_len, dtype=torch.float32)
-        theta = torch.einsum("i,j -> ij", t, angular_freq)
+        theta = torch.einsum("i,j -> ij", t, self.inv_freq)
         self.cos = nn.Buffer(theta.cos(), persistent=False)
         self.sin = nn.Buffer(theta.sin(), persistent=False)
+        # Track capacity for assertions
+        self._max_seq_len = int(max_seq_len)
+
+    def _get_cos_sin(self, length: int):
+        torch._assert(
+            length <= self._max_seq_len,
+            f"Rotary buffers too small: requested length={{length}} > preallocated max_seq_len={self._max_seq_len}."
+        )
+        return self.cos[:length], self.sin[:length]
 
     def forward(self, x_BTHD: Tensor):
-        assert self.cos.size(0) >= x_BTHD.size(-3)
-        cos = self.cos[None, :x_BTHD.size(-3), None, :]
-        sin = self.sin[None, :x_BTHD.size(-3), None, :]
+        L = x_BTHD.size(-3)
+        cos, sin = self._get_cos_sin(L)
+        cos = cos[None, :L, None, :]
+        sin = sin[None, :L, None, :]
         return _apply_rope(x_BTHD, cos, sin)
 
     def step(self, x_BTHD: Tensor, pos: int):
-        assert self.cos.size(0) > pos
-        cos = self.cos[None, pos, None, :]
-        sin = self.sin[None, pos, None, :]
+        # Use preallocated tables and select a single position
+        cos, sin = self._get_cos_sin(pos + 1)
+        cos = cos[None, pos, None, :]
+        sin = sin[None, pos, None, :]
         return _apply_rope(x_BTHD, cos, sin)
 
 
@@ -68,6 +82,7 @@ class CausalSelfAttention(nn.Module):
     def forward(self, x: Tensor, ve: Tensor | None, block_mask: BlockMask, lambdas: Tensor):
         B, T = x.size(0), x.size(1) # batch size, sequence length
         assert B == 1, "Must use batch size = 1 for FlexAttention"
+        x = x.to(self.qkvo_w.dtype)
         q, k, v = F.linear(x, self.qkvo_w[:3].flatten(end_dim=1)).view(B, T, 3 * self.num_heads, self.head_dim).chunk(3, dim=-2)
         q, k = norm(q), norm(k) # QK norm @Grad62304977
         q, k = self.rotary(q), self.rotary(k)
@@ -95,6 +110,7 @@ class CausalSelfAttention(nn.Module):
 
     def step(self, x, k_ctx: Tensor, v_ctx: Tensor, pos: int, ve: Tensor | None, lambdas: Tensor, window: int):
         B, _, _ = x.shape
+        x = x.to(self.qkvo_w.dtype)
         q, k, v = F.linear(x, self.qkvo_w[:3].flatten(end_dim=1)).view(B, 1, 3 * self.num_heads, self.head_dim).chunk(3, dim=-2)
         q, k = norm(q), norm(k) # QK norm @Grad62304977
         q, k = self.rotary.step(q, pos), self.rotary.step(k, pos)
@@ -126,6 +142,7 @@ class CausalSelfAttention(nn.Module):
     def prefill(self, x: torch.Tensor, ve: torch.Tensor | None, lambdas: torch.Tensor,
                 attn_mask: torch.Tensor | None = None):
         B, T, _ = x.shape
+        x = x.to(self.qkvo_w.dtype)
         qkv = torch.nn.functional.linear(x, self.qkvo_w[:3].flatten(end_dim=1)).view(B, T, 3 * self.num_heads, self.head_dim)
         q, k, v = qkv.chunk(3, dim=-2)
         q, k = norm(q), norm(k)

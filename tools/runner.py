@@ -123,15 +123,14 @@ def main(argv: List[str] | None = None) -> int:
     # We accept a mix of short opts and trailing overrides. Use argparse for known ones and leave the rest.
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("config", help="Path to YAML config file")
-    parser.add_argument("overrides", nargs=argparse.REMAINDER, help="Overrides like key=val or --key=val")
     parser.add_argument("-n", dest="nproc", type=int, default=8, help="nproc per node")
     parser.add_argument("-p", dest="checkpoint", default="", help="init checkpoint path")
     parser.add_argument("-s", dest="begin_shard", default="", help="BEGIN_SHARD env value")
     parser.add_argument("-r", dest="run_id", default="1", help="RUN_ID env value for the run")
     # Accept passthrough flags like --full_windows and arbitrary long options; we'll collect them
 
-    # Manually parse known short options first; argparse will stop at the REMAINDER
-    args = parser.parse_args(argv[: len(argv)])
+    # Parse known args and capture the rest for override processing
+    args, extras = parser.parse_known_args(argv)
 
     config = args.config
     nproc = int(args.nproc)
@@ -140,7 +139,7 @@ def main(argv: List[str] | None = None) -> int:
     run_id = str(args.run_id)
 
     # Split the leftover overrides/long options
-    raw_tail = list(args.overrides or [])
+    raw_tail = list(extras or [])
 
     passthrough_long_opts: List[str] = []
     override_pairs: List[Tuple[str, List[str]]] = []

@@ -3,12 +3,36 @@ init_checkpoint: "checkpoints/state_step_100000.pt"
 # Instruct SFT training configuration
 train_shards: "data/instruct_mix/instruct_train_*.bin"
 val_shards: "data/instruct_mix/instruct_val_*.bin"
+training_sequence_length: 65536   # replaces max_seq_len
+attention_window_tokens: 3456
+window_block_size: 128
 val_seq_len: 262144       # validation sequence length
 # Reference a named model spec from model_specs/
 model_spec: gpt2_350m
 # Training targets
 target_tokens: 30000000        # total training tokens
 cooldown_frac: 0.9
+
+# Optimizers configuration (defaults similar to 350m pretrain)
+optimizers:
+  - type: AdamW
+    betas: [0.9, 0.95]
+    eps: 1.0e-10
+    weight_decay: 0.01
+    fused: true
+    params:
+      - group: head_params
+        lr: 0.0085
+      - group: embed_params
+        lr: 0.025
+      - group: scalar_params
+        lr: 0.025
+
+  - type: Muon
+    momentum: 0.95
+    params:
+      - group: hidden_matrix_params
+        lr: 0.03
 
 # Common settings
 val_tokens: 10485760

@@ -17,6 +17,7 @@ class Block(nn.Module):
     def forward(self, x: Tensor, ve: Tensor | None, x0: Tensor, block_mask: BlockMask, lambdas: Tensor, sa_lambdas: Tensor):
         x = lambdas[0] * x + lambdas[1] * x0
         if self.attn is not None:
+            x = x.to(self.attn.qkvo_w.dtype)
             x = x + self.attn(x, ve, block_mask, sa_lambdas)
         x = x + self.mlp(norm(x))
         return x

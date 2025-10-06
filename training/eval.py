@@ -8,7 +8,7 @@ import torch.distributed as dist
 from torch import nn
 
 from training.data_gen import DistributedDataGenerator
-from training.optim import get_window_size_blocks_s
+from training.optim import get_num_window_blocks
 
 
 @dataclass
@@ -27,11 +27,15 @@ class Evaluator:
         data_generator: DistributedDataGenerator,
         distributed_enabled: bool | None = None,
         rank: int | None = None,
+        attention_window_tokens: int,
+        window_block_size: int,
     ) -> None:
         self._wandb_enabled = bool(wandb_enabled)
         self._ddg = data_generator
         self._use_dist = bool(distributed_enabled) if distributed_enabled is not None else dist.is_available() and dist.is_initialized()
         self._rank = int(rank or 0)
+        self._awt = int(attention_window_tokens)
+        self._wbs = int(window_block_size)
         # Track EMA of dloss/token between eval calls
         self._last_val_loss: Optional[float] = None
         self._last_tokens_seen: int = 0
@@ -97,7 +101,7 @@ class Evaluator:
         for _ in range(steps):
             inputs, targets = next(self._ddg)
             # Match training eval: use window schedule with s=1.0 (full windows) for stability
-            loss_acc = loss_acc + model(inputs, get_window_size_blocks_s(1.0), targets)
+            loss_acc = loss_acc + model(inputs, get_num_window_blocks(1.0, attention_window_tokens=self._awt, window_block_size=self._wbs), targets)
         loss_acc = loss_acc / steps
 
         if self._use_dist:

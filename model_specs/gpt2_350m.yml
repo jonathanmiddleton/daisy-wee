@@ -5,4 +5,4 @@ num_layers: 24
 num_heads: 16
 head_dim: 64
 model_dim: 1024
-max_seq_len: 65536
+attention_window_tokens: 3456

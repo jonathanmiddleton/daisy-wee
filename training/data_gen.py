@@ -74,10 +74,6 @@ class DistributedDataGenerator:
         return inputs, targets
 
 
-def distributed_data_generator(filename_pattern: str, batch_size: int, rank: int, world_size: int, start_shard: int | None = None):
-    """Backward-compatible generator that delegates to DistributedDataGenerator."""
-    return iter(DistributedDataGenerator(filename_pattern, batch_size, rank, world_size, start_shard=start_shard))
-
 
 
 
