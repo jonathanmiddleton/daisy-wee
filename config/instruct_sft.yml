@@ -4,7 +4,7 @@ init_checkpoint: "checkpoints/state_step_100000.pt"
 train_shards: "data/instruct_mix/instruct_train_*.bin"
 val_shards: "data/instruct_mix/instruct_val_*.bin"
 training_sequence_length: 65536   # replaces max_seq_len
-attention_window_len: 3456
+train_attention_window_len: 3456
 val_seq_len: 262144       # validation sequence length
 # Reference a named model spec from model_specs/
 model_spec: gpt2_350m

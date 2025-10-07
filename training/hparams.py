@@ -18,8 +18,8 @@ class Hyperparameters:
     val_seq_len: int
     target_tokens: int
     cooldown_frac: float
-    attention_window_len: int  # largest sliding attention window used during training (sliding window)
-    window_block_size: int  # new: block granularity for sliding window/masks
+    train_attention_window_len: int  # training-time sliding attention window (<= model spec max)
+    window_block_size: int  # block granularity for sliding window/masks (from spec)
     # Common fields with defaults
     vocab_size: int
     eos_token_id: int
@@ -66,12 +66,12 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
 
     # If a model_spec name/path is provided, load the spec and merge recognized fields
     model_spec_name = cfg_dict.get("model_spec")
+    spec_dict = None
     if model_spec_name:
-        spec_obj = load_model_spec(str(model_spec_name))
+        from dataclasses import asdict
+        spec_dict = asdict(load_model_spec(str(model_spec_name))) # returns a dict
         # Merge ModelSpec fields into cfg. For window_block_size we ALWAYS take the ModelSpec value.
         valid_names_for_merge = {f.name for f in dataclass_fields(Hyperparameters)}
-        from dataclasses import asdict as _asdict
-        spec_dict = _asdict(spec_obj)
         for k, v in spec_dict.items():
             if k not in valid_names_for_merge:
                 continue
@@ -98,7 +98,7 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
     # Additional validations per spec
     try:
         tsl = int(args.training_sequence_length)
-        awt = int(args.attention_window_len)
+        tawt = int(args.train_attention_window_len)
         wbs = int(args.window_block_size)
         gas = int(args.grad_acc_steps)
         cdf = float(args.cooldown_frac)
@@ -109,10 +109,17 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
         raise ValueError(f"Invalid types in Hyperparameters: {e}")
     if tsl % wbs != 0:
         raise ValueError(f"training_sequence_length ({tsl}) must be divisible by window_block_size ({wbs})")
-    if awt % wbs != 0:
-        raise ValueError(f"attention_window_len ({awt}) must be divisible by window_block_size ({wbs})")
-    if tsl < awt:
-        raise ValueError(f"training_sequence_length ({tsl}) must be >= attention_window_len ({awt})")
+    if tawt % wbs != 0:
+        raise ValueError(f"train_attention_window_len ({tawt}) must be divisible by window_block_size ({wbs})")
+    if tsl < tawt:
+        raise ValueError(f"training_sequence_length ({tsl}) must be >= train_attention_window_len ({tawt})")
+    # Enforce training window <= model's supported max if spec is available
+    if spec_dict is not None:
+        spec_max = int(spec_dict["attention_window_len"])  # model's maximum window
+        if tawt > spec_max:
+            raise ValueError(
+                f"train_attention_window_len ({tawt}) must be <= model_spec.attention_window_len ({spec_max})"
+            )
     if gas < 1:
         raise ValueError(f"grad_acc_steps must be >= 1, got {gas}")
     if not (0.0 <= cdf <= 1.0):

@@ -92,7 +92,7 @@ ctx = torch.amp.autocast(device_type=devtype, dtype=torch.bfloat16)
 
 gen = Generator(
     model=model,
-    window=int(hparams.get('attention_window_len', 3456)),
+    window=int(hparams['train_attention_window_len']),
     eos_token_id=eos_token_id,
     temperature=cli.temperature,
     top_k=cli.top_k,

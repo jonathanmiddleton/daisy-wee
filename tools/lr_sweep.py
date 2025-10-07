@@ -40,7 +40,7 @@ def lr_sweep(
     *,
     # window schedule for attention
     window_schedule: float = 1.0,
-    attention_window_len: int = 3456,
+    train_attention_window_len: int = 3456,
     window_block_size: int = 128,
     # sweep setup
     num_scales: int = 200,
@@ -276,7 +276,7 @@ def lr_sweep(
                     target_seq=target,
                     sliding_window_num_blocks=get_num_window_blocks(
                         window_schedule,
-                        attention_window_len=attention_window_len,
+                        attention_window_len=train_attention_window_len,
                         window_block_size=window_block_size,
                     ),
                 )
@@ -547,7 +547,7 @@ if __name__ == "__main__":
         model,
         optimizers=optimizers,
         data_generator=data_loader,
-        attention_window_len=params.attention_window_len,
+        train_attention_window_len=params.train_attention_window_len,
         window_block_size=params.window_block_size,
         num_scales=n_scales,
         scale_min=sc_min,

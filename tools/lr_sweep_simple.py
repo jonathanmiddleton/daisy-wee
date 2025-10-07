@@ -102,7 +102,7 @@ def main():
     # Determine sliding window blocks (use full schedule by default)
     sliding_window_num_blocks = get_num_window_blocks(
         1.0,
-        attention_window_len=int(hp.attention_window_len),
+        attention_window_len=int(hp.train_attention_window_len),
         window_block_size=int(hp.window_block_size),
     )
     # Ensure it's on the right device

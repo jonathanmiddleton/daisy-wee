@@ -94,7 +94,7 @@ def _build_hparams_from_args(args: Hyperparameters) -> dict:
         "head_dim": args.head_dim,
         "training_sequence_length": args.training_sequence_length,
         "val_seq_len": args.val_seq_len,
-        "attention_window_len": args.attention_window_len,
+        "train_attention_window_len": args.train_attention_window_len,
         "window_block_size": args.window_block_size,
         "eos_token_id": args.eos_token_id,
         "model_class": args.model_class,
@@ -168,7 +168,7 @@ if args.init_checkpoint:
         # Only adopt architecture/sequence related fields required to restore the model
         for k in [
             "vocab_size", "num_layers", "num_heads", "model_dim", "head_dim",
-            "training_sequence_length", "val_seq_len", "attention_window_len", "window_block_size",
+            "training_sequence_length", "val_seq_len", "train_attention_window_len", "window_block_size",
             "eos_token_id", "model_class",
         ]:
             if k in _saved_hparams and _saved_hparams[k] is not None:
@@ -259,7 +259,7 @@ _evaluator = Evaluator(
     data_generator=_val_ddg,
     distributed_enabled=use_distributed,
     rank=rank,
-    attention_window_len=args.attention_window_len,
+    train_attention_window_len=args.train_attention_window_len,
     window_block_size=args.window_block_size,
 )
 
@@ -341,7 +341,7 @@ while progress.tokens_processed < progress.target_tokens:
 
     for micro_step in range(ga_steps):
         inputs, targets = next(_train_ddg)
-        loss = model(inputs, get_num_window_blocks(progress.s, attention_window_len=args.attention_window_len, window_block_size=args.window_block_size), targets)
+        loss = model(inputs, get_num_window_blocks(progress.s, attention_window_len=args.train_attention_window_len, window_block_size=args.window_block_size), targets)
         # scale loss so that gradients are averaged across micro-steps
         loss_to_backward = loss / ga_steps
         if use_distributed:
