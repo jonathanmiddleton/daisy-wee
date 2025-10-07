@@ -36,7 +36,10 @@ class GPT2Core(nn.Module):
         self.embed = nn.Embedding(vocab_size, model_dim)
         self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(3)])
         self.blocks = nn.ModuleList([Block(model_dim, num_heads, max_seq_len, i, head_dim, num_layers) for i in range(num_layers)])
-        self.lm_head_w = nn.Parameter(torch.zeros(next_multiple_of_n(vocab_size, n=128), model_dim))
+        # self.lm_head_w = nn.Parameter(torch.zeros(next_multiple_of_n(vocab_size, n=128), model_dim))
+        self.lm_head_w = nn.Parameter(torch.empty(next_multiple_of_n(vocab_size, n=128), model_dim))
+        nn.init.normal_(self.lm_head_w, mean=0.0, std=0.02)
+        nn.init.xavier_uniform_(self.embed.weight)
         self.window_block_size = int(window_block_size)
         assert num_layers % 2 == 0
         self.scalars = nn.Parameter(torch.cat([
