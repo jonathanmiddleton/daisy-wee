@@ -7,5 +7,5 @@ num_heads: 6
 head_dim: 128
 model_dim: 768
 window_block_size: 128
-attention_window_len: 1728
+attention_window_len: 1792
 max_seq_len: 65536
