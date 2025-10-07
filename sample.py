@@ -73,6 +73,9 @@ model: nn.Module = ModelClass(
 apply_model_state(model, state_dict, strict=False)
 
 model.eval()
+for m in model.modules():
+    if isinstance(m, nn.Embedding):
+        m.bfloat16()
 if device != 'cpu':
     model = torch.compile(model, dynamic=True)
 enc = tiktoken.get_encoding("gpt2")
