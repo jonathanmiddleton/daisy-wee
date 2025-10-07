@@ -15,7 +15,7 @@ def _get_skip_map(L: int):
         K = max(1, L // 8)
         c = L // 2
         s = max(1, L // (2 * (K + 1)))
-        return {i: j for t in range(1, K + 1)
+        _skip_map = {i: j for t in range(1, K + 1)
                 for i in [c - K + (t - 1)]
                 for j in [i - t * s]
                 if 0 <= j < i}
