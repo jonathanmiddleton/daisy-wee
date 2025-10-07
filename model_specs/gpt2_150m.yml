@@ -1,0 +1,11 @@
+# GPT2 350M-ish spec
+model_class: models.gpt2.gpt_core.GPT2Core
+eos_token_id: 50256
+vocab_size: 50257
+num_layers: 12
+num_heads: 6
+head_dim: 128
+model_dim: 768
+window_block_size: 128
+attention_window_len: 1728
+max_seq_len: 65536
