@@ -363,10 +363,42 @@ if __name__ == "__main__":
 
     from training.optim import build_optimizers_from_cfg
 
+    # Determine allowed param-group names from CLI (names only; oi:gi not supported at build time)
+    def _parse_names_only(s: str) -> set[str]:
+        names: set[str] = set()
+        for tok in [t for t in s.split(",") if t.strip()]:
+            tok = tok.strip()
+            if ":" not in tok:
+                names.add(tok)
+        return names
+
+    freeze_names = _parse_names_only(cli.freeze)
+    sweep_only_names = _parse_names_only(cli.sweep_only)
+
+    # Collect all group names present in the optimizer config
+    all_cfg_names: set[str] = set()
+    for _oc in params.optimizers:
+        for _pg in (_oc.get("params") or []):
+            if isinstance(_pg, dict) and "group" in _pg:
+                all_cfg_names.add(_pg["group"])
+
+    # Compute allowed names: either explicit sweep_only, or all minus freeze
+    allowed_names = (all_cfg_names & sweep_only_names) if sweep_only_names else (all_cfg_names - freeze_names)
+
+    # Filter the optimizer config to include only allowed groups; drop empty optimizers
+    filtered_cfg: list[dict[str, Any]] = []
+    for _oc in params.optimizers:
+        _pgs = [pg for pg in (_oc.get("params") or []) if isinstance(pg, dict) and pg.get("group") in allowed_names]
+        if _pgs:
+            _oc_new = dict(_oc)
+            _oc_new["params"] = _pgs
+            filtered_cfg.append(_oc_new)
+
     optimizers = build_optimizers_from_cfg(
-        cfg_list=params.optimizers, model=model, rank=rank, world_size=world_size
+        cfg_list=filtered_cfg, model=model, rank=rank, world_size=world_size
     )
 
+    # Keep original parser for full freeze/sweep_only (including oi:gi) for lr_sweep metadata/control
     def _parse_spec(s: str) -> List[str | Tuple[int, int]]:
         out: List[str | Tuple[int, int]] = []
         for tok in [t for t in s.split(",") if t.strip()]:
