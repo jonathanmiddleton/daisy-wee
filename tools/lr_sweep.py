@@ -139,8 +139,8 @@ def lr_sweep(
         for oi, gi, g in _enumerate_param_groups(optimizers):
             key = _group_key(oi, gi, g)
             if key in frozen_keys:
-                # leave LR unchanged for frozen groups
-                continue
+                # keep base LR
+                g["lr"] = 1e-5 # g.get("base_lr", g.get("lr", 1e-3))
             else:
                 g["lr"] = float(g.get("base_lr", 1e-3)) * float(scalar)
 
@@ -236,12 +236,6 @@ def lr_sweep(
 
             if clip_norm is not None:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
-
-            # Prevent updates to frozen groups by clearing their gradients
-            for oi2, gi2, g2 in _enumerate_param_groups(optimizers):
-                if _group_key(oi2, gi2, g2) in frozen_keys:
-                    for p in g2["params"]:
-                        p.grad = None
 
             for opt in optimizers:
                 opt.step()
@@ -399,7 +393,7 @@ if __name__ == "__main__":
             _oc_new = dict(_oc)
             _oc_new["params"] = _pgs
             filtered_cfg.append(_oc_new)
-
+    print(f"Filtered config: {filtered_cfg}")
     optimizers = build_optimizers_from_cfg(
         cfg_list=filtered_cfg, model=model, rank=rank, world_size=world_size
     )
