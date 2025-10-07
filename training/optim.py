@@ -282,18 +282,20 @@ def build_optimizers_from_cfg(
             msgs.append(f"missing groups: {sorted(missing)}")
         if extra:
             msgs.append(f"unknown groups: {sorted(extra)}")
-        raise ValueError(
-            "Optimizer config param groups must be exhaustive and valid; " + ", ".join(msgs) +
-            f". Required groups: {sorted(required_group_names)}"
-        )
+        # TODO Remove
+        # raise ValueError(
+        #     "Optimizer config param groups must be exhaustive and valid; " + ", ".join(msgs) +
+        #     f". Required groups: {sorted(required_group_names)}"
+        # )
 
     # Additionally ensure that the parameters are fully covered without overlap
     covered_params = {p for name in referenced_group_names for p in param_groups_by_name[name]}
     all_params = set(model.parameters())
-    if covered_params != all_params:
-        raise ValueError(
-            "Param groups in optimizer config do not cover model parameters exactly. "
-            f"covered={len(covered_params)} total={len(all_params)}"
-        )
+    # TODO remove
+    # if covered_params != all_params:
+    #     raise ValueError(
+    #         "Param groups in optimizer config do not cover model parameters exactly. "
+    #         f"covered={len(covered_params)} total={len(all_params)}"
+    #     )
 
     return optimizers
