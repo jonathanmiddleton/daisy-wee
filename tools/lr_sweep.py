@@ -52,13 +52,6 @@ def lr_sweep(
     accum_steps: int = 1,
     clip_norm: float | None = None,
     blowup_pct: float = 0.30,  # early stop when EMA > (1+blowup_pct)*best
-    # group control
-    freeze: Iterable[str | Tuple[int, int]] | None = None,
-    sweep_only: Iterable[str | Tuple[int, int]] | None = None,
-    # isolation mode
-    isolate_sgd: bool = False,
-    isolate_sgd_momentum: float = 0.0,
-    isolate_sgd_weight_decay: float = 0.0,
 ):
     """
     Sweep a multiplicative LR scale between [scale_min, scale_max] across `num_scales` points.
@@ -70,17 +63,15 @@ def lr_sweep(
       within that window. The final EMA(delta) for the window is recorded as the score for that scalar.
 
     Group control:
-    - Freeze: groups listed in `freeze` keep their base LR throughout the sweep.
-    - sweep_only: if provided, restricts sweeping to these groups only (others are frozen).
-    - Group identifiers can be:
-        * the canonical group name string (if optimizer param_groups include 'name'), e.g., 'embed_params'
-        * a tuple (optimizer_index, group_index), e.g., (0, 2)
+    - Swept groups are exactly those present in the provided optimizer(s). To isolate a single group,
+      build the optimizer(s) with training.optim.build_optimizers_from_cfg using the frozen_groups argument to
+      exclude all other groups.
 
     Returns (scales, ema_losses, meta) where:
       - scales: list[float] of the applied multiplicative scalar per point
       - ema_losses: list[float] of EMA losses per point (one per scalar)
       - meta: dict with keys:
-          'groups': dict[group_key -> {oi, gi, name, base_lr, frozen: bool}],
+          'groups': dict[group_key -> {oi, gi, name, base_lr}],
           'steps_per_scale': int,
           'num_scales': int,
           'scale_min': float,
@@ -110,67 +101,14 @@ def lr_sweep(
             "frozen": False,  # set below
         }
 
-    # Resolve freeze/sweep sets
-    def _matches(gkey: str, spec: str | Tuple[int, int]) -> bool:
-        if isinstance(spec, tuple) and len(spec) == 2:
-            oi, gi = spec
-            return gkey == _group_key(oi, gi, optimizers[oi].param_groups[gi])
-        if isinstance(spec, str):
-            # name match or identifier match
-            info = group_infos[gkey]
-            return spec == gkey or (info.get("name") == spec)
-        return False
-
+    # In the refactored version, groups to sweep are determined upstream by how the optimizer is built
+    # (frozen groups are excluded from the optimizer via build_optimizers_from_cfg with frozen_groups).
     all_keys = list(group_infos.keys())
-    frozen_keys: set[str] = set()
-    if freeze:
-        for gkey in all_keys:
-            if any(_matches(gkey, f) for f in freeze):
-                frozen_keys.add(gkey)
-    if sweep_only:
-        # everything not in sweep_only is frozen
-        allowed = {gkey for gkey in all_keys if any(_matches(gkey, s) for s in sweep_only)}
-        for gkey in all_keys:
-            if gkey not in allowed:
-                frozen_keys.add(gkey)
 
-    # Mark frozen flags
-    for gkey in all_keys:
-        group_infos[gkey]["frozen"] = gkey in frozen_keys
-
-    # Function to set LRs based on a scalar
+    # Function to set LRs based on a scalar for all present (swept) groups
     def set_lrs(scalar: float):
-        for oi, gi, g in _enumerate_param_groups(optimizers):
-            key = _group_key(oi, gi, g)
-            if key in frozen_keys:
-                # Freeze: zero LR so the group truly does not update during the sweep
-                g["lr"] = 0.0
-            else:
-                g["lr"] = float(g.get("base_lr", 1e-3)) * float(scalar)
-
-    # Helper: build a temporary SGD optimizer that contains only swept (unfrozen) groups
-    def _build_isolated_sgd_optimizer(source_opts: List[torch.optim.Optimizer]) -> List[torch.optim.Optimizer]:
-        swept_keys_local = [k for k in all_keys if not group_infos[k]["frozen"]]
-        param_groups: list[dict[str, Any]] = []
-        for oi2, gi2, g2 in _enumerate_param_groups(source_opts):
-            k2 = _group_key(oi2, gi2, g2)
-            if k2 in swept_keys_local:
-                param_groups.append({
-                    "params": g2["params"],
-                    "name": group_infos[k2].get("name") or k2,
-                    "base_lr": float(group_infos[k2]["base_lr"]),
-                    "lr": float(group_infos[k2]["base_lr"]),  # will be scaled by set_lrs(scalar)
-                    "weight_decay": float(isolate_sgd_weight_decay),
-                })
-        if not param_groups:
-            return []
-        sgd = torch.optim.SGD(
-            param_groups,
-            lr=1.0,  # per-group lr set above and scaled by set_lrs()
-            momentum=float(isolate_sgd_momentum),
-            weight_decay=float(isolate_sgd_weight_decay),
-        )
-        return [sgd]
+        for _, _, g in _enumerate_param_groups(optimizers):
+            g["lr"] = float(g.get("base_lr", 1e-3)) * float(scalar)
 
     # Initialize sweep (compute geometric positions for scales)
     def _scale_at(i: int) -> float:
@@ -211,15 +149,11 @@ def lr_sweep(
         f"blowup_pct={blowup_pct*100:.1f}%, metric=EMA(delta_loss, debiased)",
         flush=True,
     )
-    if isolate_sgd:
-        print(f"[lr_sweep] Isolation enabled: using temporary SGD optimizer for swept groups "
-              f"(momentum={isolate_sgd_momentum}, weight_decay={isolate_sgd_weight_decay})", flush=True)
     print("[lr_sweep] Groups:", flush=True)
     for key in all_keys:
         info = group_infos[key]
-        fr = "(frozen)" if info["frozen"] else "(sweep)"
         name = info.get("name") or key
-        print(f"  - {name}: base_lr={info['base_lr']:.3e} {fr}", flush=True)
+        print(f"  - {name}: base_lr={info['base_lr']:.3e}", flush=True)
 
     print_every = max(1, num_scales // 50) if num_scales else 1
 
@@ -240,16 +174,13 @@ def lr_sweep(
         scalar = _scale_at(i)
         # Reset states for fair comparison
         model.load_state_dict(model_baseline, strict=True)
-        if isolate_sgd:
-            optimizers = _build_isolated_sgd_optimizer(orig_optimizers)
-        else:
-            optimizers = orig_optimizers
-            for oi, opt in enumerate(optimizers):
-                opt.load_state_dict(copy.deepcopy(opt_baselines[oi]))
+        optimizers = orig_optimizers
+        for oi, opt in enumerate(optimizers):
+            opt.load_state_dict(copy.deepcopy(opt_baselines[oi]))
         set_lrs(scalar)
         data_generator.reset()
         # Prepare snapshots for swept groups (used to compute per-step param deltas)
-        swept_keys = [k for k in all_keys if not group_infos[k]["frozen"]]
+        swept_keys = list(all_keys)
         prev_snapshots: Dict[str, List[torch.Tensor]] = {}
         for oi2, gi2, g2 in _enumerate_param_groups(optimizers):
             k2 = _group_key(oi2, gi2, g2)
@@ -295,8 +226,6 @@ def lr_sweep(
             eff_wd_by_group: Dict[str, float] = {}
             for oi2, gi2, g2 in _enumerate_param_groups(optimizers):
                 k2 = _group_key(oi2, gi2, g2)
-                if group_infos[k2]["frozen"]:
-                    continue
                 params = g2["params"]
                 total_count_by_group[k2] = len(params)
                 with_grad = [p for p in params if p.grad is not None]
@@ -324,8 +253,6 @@ def lr_sweep(
             param_delta_by_group: Dict[str, float] = {}
             for oi2, gi2, g2 in _enumerate_param_groups(optimizers):
                 k2 = _group_key(oi2, gi2, g2)
-                if group_infos[k2]["frozen"]:
-                    continue
                 prev_list = prev_snapshots.get(k2)
                 if prev_list is None:
                     # Initialize if missing (shouldn't happen, but guard anyway)
@@ -411,7 +338,7 @@ def lr_sweep(
         done = i + 1
         pct = 100.0 * done / max(1, num_scales)
         eta_s = (elapsed / max(1e-9, done)) * max(0, num_scales - done)
-        eff_lrs_map = { (group_infos[k].get("name") or k): (group_infos[k]["base_lr"] * scalar) for k in [kk for kk in all_keys if not group_infos[kk]["frozen"]] }
+        eff_lrs_map = { (group_infos[k].get("name") or k): (group_infos[k]["base_lr"] * scalar) for k in all_keys }
         eff_lrs_str = ", ".join(f"{n}={v:.3e}" for n, v in eff_lrs_map.items()) if eff_lrs_map else "none"
         print(
             f"[lr_sweep] {done}/{num_scales} ({pct:.1f}%) ema_delta={ema_out:.6f} improvement={improvement:.6f} eff_lrs=[{eff_lrs_str}] scale={scalar:.3e} early={early} eta={eta_s:.1f}s",
@@ -422,7 +349,7 @@ def lr_sweep(
     if losses:
         i_max = max(range(len(losses)), key=lambda i: losses[i])
         best_scalar = lrs_scalars[i_max]
-        best_eff_lrs_map = { (group_infos[k].get("name") or k): (group_infos[k]["base_lr"] * best_scalar) for k in [kk for kk in all_keys if not group_infos[kk]["frozen"]] }
+        best_eff_lrs_map = { (group_infos[k].get("name") or k): (group_infos[k]["base_lr"] * best_scalar) for k in all_keys }
         eff_best_str = ", ".join(f"{n}={v:.3e}" for n, v in best_eff_lrs_map.items()) if best_eff_lrs_map else "none"
         print(
             f"[lr_sweep] collected {len(losses)} points; max EMA(delta) at step {i_max+1} ema_delta={losses[i_max]:.6f} eff_lrs=[{eff_best_str}] scale={best_scalar:.3e}",
@@ -458,35 +385,7 @@ if __name__ == "__main__":
     parser.add_argument("--clip_norm", type=float, default=None)
     parser.add_argument("--smooth", type=float, default=0.85)
     parser.add_argument("--blowup_pct", type=float, default=0.30)
-    parser.add_argument(
-        "--freeze",
-        type=str,
-        default="",
-        help="Comma-separated list of group names or oi:gi pairs to freeze, e.g., 'embed_params,0:1'",
-    )
-    parser.add_argument(
-        "--sweep_only",
-        type=str,
-        default="",
-        help="If set, only these groups are swept; others frozen. Comma-separated names or oi:gi",
-    )
-    parser.add_argument(
-        "--isolate_sgd",
-        action="store_true",
-        help="Use a temporary SGD optimizer containing only swept groups during the sweep window."
-    )
-    parser.add_argument(
-        "--isolate_sgd_momentum",
-        type=float,
-        default=0.0,
-        help="Momentum for isolated SGD optimizer (if --isolate_sgd)."
-    )
-    parser.add_argument(
-        "--isolate_sgd_weight_decay",
-        type=float,
-        default=0.0,
-        help="Weight decay for isolated SGD optimizer (if --isolate_sgd)."
-    )
+    parser.add_argument("--group", "-g", required=True, help="Name of the parameter group to isolate (e.g., embed_params)")
     cli = parser.parse_args()
 
     from training.hparams import load_hparams_from_yaml
@@ -515,28 +414,13 @@ if __name__ == "__main__":
         device=device,
     )
 
-    from training.optim import build_optimizers_from_cfg
+    from training.optim import build_optimizers_from_cfg, get_referenced_groups
 
+    frozens = [g for g in get_referenced_groups(params.optimizers) if g != cli.group]
     optimizers = build_optimizers_from_cfg(
-        cfg_list=params.optimizers, model=model, rank=rank, world_size=world_size
+        cfg_list=params.optimizers, model=model, rank=rank, world_size=world_size, frozen_groups=frozens
     )
 
-    def _parse_spec(s: str) -> List[str | Tuple[int, int]]:
-        out: List[str | Tuple[int, int]] = []
-        for tok in [t for t in s.split(",") if t.strip()]:
-            tok = tok.strip()
-            if ":" in tok:
-                a, b = tok.split(":", 1)
-                try:
-                    out.append((int(a), int(b)))
-                except Exception:
-                    pass
-            else:
-                out.append(tok)
-        return out
-
-    freeze = _parse_spec(cli.freeze)
-    sweep_only = _parse_spec(cli.sweep_only)
 
     # Resolve deprecated aliases
     n_scales = cli.num_scales
@@ -557,11 +441,6 @@ if __name__ == "__main__":
         clip_norm=cli.clip_norm,
         smooth=cli.smooth,
         blowup_pct=cli.blowup_pct,
-        freeze=freeze,
-        sweep_only=sweep_only,
-        isolate_sgd=cli.isolate_sgd,
-        isolate_sgd_momentum=cli.isolate_sgd_momentum,
-        isolate_sgd_weight_decay=cli.isolate_sgd_weight_decay,
     )
 
     # Log JSON and print a table focused on effective LRs (scale reported secondarily)
@@ -569,7 +448,7 @@ if __name__ == "__main__":
     def _name_of(k: str) -> str:
         info = groups[k]
         return info.get("name") or k
-    swept_keys = [k for k, info in groups.items() if not info.get("frozen")]
+    swept_keys = list(groups.keys())
     swept_names = [_name_of(k) for k in swept_keys]
 
     def _eff_lrs_for_scalar(s: float) -> Dict[str, float]:
