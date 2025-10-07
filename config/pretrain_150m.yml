@@ -41,4 +41,4 @@ snapshot_warmup_tokens:   209715200     # token warmup before snapshots
 snapshot_per_n_tokens:     52428800         # snapshot interval by tokens
 save_checkpoint: true
 # Model Definition
-model_spec: gpt2_350m
+model_spec: gpt2_150m
