@@ -132,11 +132,7 @@ def model_from_checkpoint(path: str, device: torch.device | str, map_location: A
     num_heads = int(hparams.get('num_heads'))
     model_dim = int(hparams.get('model_dim'))
     head_dim = int(hparams.get('head_dim'))
-    # Backward compatibility: some checkpoints may store legacy max_seq_len; prefer training_sequence_length/val_seq_len
-    if 'training_sequence_length' in hparams and 'val_seq_len' in hparams:
-        max_seq_len = int(max(int(hparams.get('training_sequence_length')), int(hparams.get('val_seq_len'))))
-    else:
-        max_seq_len = int(hparams.get('max_seq_len'))
+    max_seq_len = int(hparams.get('max_seq_len'))
     window_block_size = int(hparams.get('window_block_size', 128))
     model_class = str(hparams.get('model_class'))
     if not model_class:

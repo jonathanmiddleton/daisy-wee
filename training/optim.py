@@ -178,9 +178,9 @@ def next_multiple_of_n(v: float | int, *, n: int):
 def get_window_size_blocks_helper(window_size_tokens: int, window_block_size: int):
     return torch.tensor(window_size_tokens // window_block_size, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
 
-def get_num_window_blocks(schedule: float, *, attention_window_tokens: int, window_block_size: int) -> torch.Tensor:
+def get_num_window_blocks(schedule: float, *, attention_window_len: int, window_block_size: int) -> torch.Tensor:
     """Attention window schedule driven by normalized progress schedule s∈[0,1].
-    Returns the number of blocks for the sliding window, parameterized by attention_window_tokens and window_block_size.
+    Returns the number of blocks for the sliding window, parameterized by attention_window_len and window_block_size.
     """
     if _force_full_windows:
         x = 1.0
@@ -188,7 +188,7 @@ def get_num_window_blocks(schedule: float, *, attention_window_tokens: int, wind
         x = 0.0 if schedule < 0 else (1.0 if schedule > 1 else schedule)
     # Cubic increase (by @jadenj3o)
     factor = 4 * x ** 3 - 6 * x ** 2 + 3 * x
-    window_tokens = next_multiple_of_n(attention_window_tokens * factor, n=window_block_size)
+    window_tokens = next_multiple_of_n(attention_window_len * factor, n=window_block_size)
     return get_window_size_blocks_helper(window_tokens, window_block_size)
 
 def resolve_optimizer_class(opt_type: str):
@@ -205,6 +205,14 @@ def resolve_optimizer_class(opt_type: str):
         return getattr(torch.optim, opt_type)
     raise ValueError(f"Unknown optimizer type: {opt_type}")
 
+def get_referenced_groups(cfg_list: list[dict[str, Any]]) -> list[str]:
+    referenced_group_names: set[str] = set()
+    for idx, opt_cfg in enumerate(cfg_list):
+        pg_cfgs = opt_cfg.get("params")
+        for pg in pg_cfgs:
+            referenced_group_names.add(pg.get("group"))
+    return list(referenced_group_names)
+
 
 def build_optimizers_from_cfg(
     *,
@@ -212,13 +220,15 @@ def build_optimizers_from_cfg(
     model: nn.Module,
     rank: int,
     world_size: int,
+    frozen_groups: list[str] | None = None,
 ) -> list[torch.optim.Optimizer]:
-    """Build optimizers from configuration list.
+    """Build optimizers from configuration list and sets no_grad on frozen groups.
 
     Each item in cfg_list is a dict with keys:
       - type: optimizer class name (e.g., "AdamW" or "Muon")
       - params: list of param-group dicts containing at least {group: <name>} and any group overrides like lr
       - other keys are passed as kwargs to the optimizer constructor (betas, eps, weight_decay, fused, momentum, ...)
+      - cfg_list should include frozen groups as well, if any
 
     This function also enforces that the union of all param groups referenced in the config
     exactly matches the required named groups for the model (no missing or extra groups).
@@ -229,6 +239,12 @@ def build_optimizers_from_cfg(
     # Derive canonical named parameter groups from the model
     param_groups_by_name = derive_named_param_groups(model)
     required_group_names = set(param_groups_by_name.keys())
+    frozen_groups = frozen_groups or []
+    for name in frozen_groups:
+        if name not in required_group_names:
+            raise ValueError(f"Frozen group '{name}' is not present in the model")
+        for p in param_groups_by_name[name]:
+            p.requires_grad_(False)
 
     # Collect all group names referenced across all optimizers in config
     referenced_group_names: set[str] = set()
@@ -256,6 +272,8 @@ def build_optimizers_from_cfg(
                     f"Unknown param group '{name}' for optimizer '{opt_type}'. "
                     f"Known groups: {sorted(param_groups_by_name.keys())}"
                 )
+            if frozen_groups and pg.get("group") in frozen_groups:
+                continue
             referenced_group_names.add(name)
             group_opts = {k: v for k, v in pg.items() if k != "group"}
             # Preserve the canonical group name for downstream tooling (e.g., LR sweeps)
@@ -263,6 +281,8 @@ def build_optimizers_from_cfg(
             group_opts["params"] = param_groups_by_name[name]
             param_groups.append(group_opts)
 
+        if not param_groups:
+            continue
         OptClass = resolve_optimizer_class(opt_type)
         opt_kwargs = {k: v for k, v in opt_cfg.items() if k not in ("type", "params")}
 
@@ -274,7 +294,7 @@ def build_optimizers_from_cfg(
         optimizers.append(optimizer)
 
     # Validate exhaustive coverage: all required groups must be present exactly once across optimizers
-    missing = required_group_names - referenced_group_names
+    missing = required_group_names - referenced_group_names - set(frozen_groups)
     extra = referenced_group_names - required_group_names
     if missing or extra:
         msgs = []
@@ -288,12 +308,13 @@ def build_optimizers_from_cfg(
         )
 
     # Additionally ensure that the parameters are fully covered without overlap
+    # Only consider trainable parameters (requires_grad=True) for coverage; frozen groups are excluded
     covered_params = {p for name in referenced_group_names for p in param_groups_by_name[name]}
-    all_params = set(model.parameters())
-    if covered_params != all_params:
+    all_trainable_params = {p for p in model.parameters() if p.requires_grad}
+    if covered_params != all_trainable_params:
         raise ValueError(
-            "Param groups in optimizer config do not cover model parameters exactly. "
-            f"covered={len(covered_params)} total={len(all_params)}"
+            "Param groups in optimizer config do not cover trainable model parameters exactly. "
+            f"covered={len(covered_params)} total_trainable={len(all_trainable_params)}"
         )
 
     return optimizers

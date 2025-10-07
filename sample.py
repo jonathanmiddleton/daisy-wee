@@ -45,11 +45,7 @@ num_layers = int(hparams.get('num_layers'))
 num_heads = int(hparams.get('num_heads'))
 model_dim = int(hparams.get('model_dim'))
 head_dim = int(hparams.get('head_dim'))
-# Prefer new fields when present: max_seq_len = max(training_sequence_length, val_seq_len)
-if 'training_sequence_length' in hparams and 'val_seq_len' in hparams:
-    max_seq_len = int(max(int(hparams.get('training_sequence_length')), int(hparams.get('val_seq_len'))))
-else:
-    max_seq_len = int(hparams.get('max_seq_len', cli.max_seq_len))
+max_seq_len = int(hparams.get('max_seq_len', cli.max_seq_len))
 window_block_size = int(hparams.get('window_block_size', 128))
 model_class = str(hparams.get('model_class'))
 if not model_class:
@@ -96,7 +92,7 @@ ctx = torch.amp.autocast(device_type=devtype, dtype=torch.bfloat16)
 
 gen = Generator(
     model=model,
-    window=int(hparams.get('attention_window_tokens', 3456)),
+    window=int(hparams.get('attention_window_len', 3456)),
     eos_token_id=eos_token_id,
     temperature=cli.temperature,
     top_k=cli.top_k,

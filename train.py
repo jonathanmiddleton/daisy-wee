@@ -94,7 +94,7 @@ def _build_hparams_from_args(args: Hyperparameters) -> dict:
         "head_dim": args.head_dim,
         "training_sequence_length": args.training_sequence_length,
         "val_seq_len": args.val_seq_len,
-        "attention_window_tokens": args.attention_window_tokens,
+        "attention_window_len": args.attention_window_len,
         "window_block_size": args.window_block_size,
         "eos_token_id": args.eos_token_id,
         "model_class": args.model_class,
@@ -168,7 +168,7 @@ if args.init_checkpoint:
         # Only adopt architecture/sequence related fields required to restore the model
         for k in [
             "vocab_size", "num_layers", "num_heads", "model_dim", "head_dim",
-            "training_sequence_length", "val_seq_len", "attention_window_tokens", "window_block_size",
+            "training_sequence_length", "val_seq_len", "attention_window_len", "window_block_size",
             "eos_token_id", "model_class",
         ]:
             if k in _saved_hparams and _saved_hparams[k] is not None:
@@ -249,9 +249,9 @@ _begin_shard = int(_begin_shard_env) if _begin_shard_env not in (None, "",) else
 _train_ddg = DistributedDataGenerator(args.train_shards, world_size * args.training_sequence_length, rank, world_size,
                                       start_shard=_begin_shard)
 val_batch_size = world_size * args.val_seq_len
-if args.val_tokens % val_batch_size != 0:
-    raise ValueError(f"val_tokens ({args.val_tokens}) must be divisible by val_batch_size ({val_batch_size})")
-val_steps = args.val_tokens // val_batch_size
+if args.tot_val_tokens % val_batch_size != 0:
+    raise ValueError(f"tot_val_tokens ({args.tot_val_tokens}) must be divisible by val_batch_size ({val_batch_size})")
+val_steps = args.tot_val_tokens // val_batch_size
 # Build a persistent validation data generator and evaluator
 _val_ddg = DistributedDataGenerator(args.val_shards, val_batch_size, rank, world_size)
 _evaluator = Evaluator(
@@ -259,7 +259,7 @@ _evaluator = Evaluator(
     data_generator=_val_ddg,
     distributed_enabled=use_distributed,
     rank=rank,
-    attention_window_tokens=args.attention_window_tokens,
+    attention_window_len=args.attention_window_len,
     window_block_size=args.window_block_size,
 )
 
@@ -281,7 +281,7 @@ progress = ProgressMeter(
 
 # Tracking for eval stats and ETA
 last_val_loss = None
-last_val_tokens = 0
+last_tot_val_tokens = 0
 ema_dloss_per_token = None
 training_time_ms = 0
 best_val = float("inf") if best_val_from_ckpt is None else best_val_from_ckpt
@@ -300,7 +300,7 @@ while progress.tokens_processed < progress.target_tokens:
         training_time_ms += 1000 * (time.perf_counter() - t0)
         model.eval()
         # Evaluate using the Evaluator (per-rank tokens)
-        _per_rank_tokens = args.val_tokens // world_size
+        _per_rank_tokens = args.tot_val_tokens // world_size
         eval_out = _evaluator.eval(model, _per_rank_tokens, tokens=progress.tokens_processed)
         cur_val = float(eval_out.get("val_loss", float("nan")))
         last_val_loss = cur_val
@@ -341,7 +341,7 @@ while progress.tokens_processed < progress.target_tokens:
 
     for micro_step in range(ga_steps):
         inputs, targets = next(_train_ddg)
-        loss = model(inputs, get_num_window_blocks(progress.s, attention_window_tokens=args.attention_window_tokens, window_block_size=args.window_block_size), targets)
+        loss = model(inputs, get_num_window_blocks(progress.s, attention_window_len=args.attention_window_len, window_block_size=args.window_block_size), targets)
         # scale loss so that gradients are averaged across micro-steps
         loss_to_backward = loss / ga_steps
         if use_distributed:

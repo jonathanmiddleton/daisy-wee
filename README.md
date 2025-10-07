@@ -39,7 +39,7 @@ Below are the current, tested ways to launch training, run inference sampling, a
   - -p CHECKPOINT_PATH: Optional checkpoint to initialize model weights only (fresh schedule; no steps/optimizer/best-val are resumed).
   - -s BEGIN_SHARD: Optional starting shard index for training data (exported as BEGIN_SHARD). Useful for resuming data traversal.
   - -r RUN_ID: Optional run identifier. Exported as RUN_ID and used in checkpoint filenames and the default wandb run name.
-  - key=value or --key=value: Any additional overrides forwarded to train.py as --key=value. Examples: target_tokens=3000000000, training_sequence_length=32768, attention_window_tokens=3456, window_block_size=128.
+  - key=value or --key=value: Any additional overrides forwarded to train.py as --key=value. Examples: target_tokens=3000000000, training_sequence_length=32768, attention_window_len=3456, window_block_size=128.
 - Notes
   - run.sh requires CONFIG_FILE as the first positional argument. Options -n/-p/-s/-r must appear after CONFIG_FILE.
   - Overrides without a leading -- are automatically rewritten to --key=value.
@@ -126,15 +126,15 @@ Configuration is split into two parts:
 How it works
 - If a training YAML contains model_spec: NAME (or a file path), train.py will load model_specs/NAME.yml (or that path) and merge it.
 - Precedence: values in the training config override the model spec; CLI overrides override both.
-- Backward compatibility: older monolithic configs without model_spec still work exactly as before.
+- Breaking change: configs and specs now use attention_window_len and include max_seq_len; legacy keys are not supported.
 - Checkpoints: saved hparams are the merged set used to reconstruct models later.
 
 - Common training fields
   - model_spec: Name of a spec under model_specs/ (e.g., gpt2_350m) or a direct path to a spec file.
   - train_shards, val_shards: Glob patterns for tokenized shard files used for training/validation.
   - training_sequence_length: Per-device microstep sequence length used for training batches.
-  - attention_window_tokens: Maximum backward attention span actually trained via the sliding window (e.g., 3456).
-  - window_block_size: Block granularity used by sliding window and masks; must divide both training_sequence_length and attention_window_tokens (e.g., 128).
+  - attention_window_len: Largest sliding attention window actually used during training (e.g., 3456).
+  - window_block_size: Block granularity used by sliding window and masks; must divide both training_sequence_length and attention_window_len (e.g., 128).
   - target_tokens: Total number of training tokens to process before completion.
   - cooldown_frac: Fraction of the schedule spent in cooldown/decay; drives LR/window schedules via normalized progress s in [0,1].
   - val_tokens: Number of tokens to evaluate during each validation pass.
@@ -148,14 +148,15 @@ How it works
   - wandb_project: W&B project name; defaults to 'daisy-wee' when logging is enabled.
   - wandb_run_name: Optional run name; defaults to timestamp+run id when not provided.
   - init_checkpoint: Optional weights to warm start from (weights only; schedules/resume are fresh).
-  - Validation rules: training_sequence_length % window_block_size == 0; attention_window_tokens % window_block_size == 0; training_sequence_length >= attention_window_tokens.
+  - Validation rules: training_sequence_length % window_block_size == 0; attention_window_len % window_block_size == 0; training_sequence_length >= attention_window_len.
 
 - Model spec fields (model_specs/*.yml)
   - model_class: Fully-qualified class name used to construct the model (e.g., models.gpt2.gpt_core.GPT2Core). No defaults.
   - vocab_size: Vocabulary size (e.g., 50257 for GPT-2 BPE).
   - eos_token_id: End-of-sequence token id. Required; no defaults.
   - num_layers, num_heads, head_dim, model_dim: Transformer depth/width and per-head/overall dimensions.
-  - attention_window_tokens: Maximum backward attention span used during training (sliding window). Typically 3456.
+  - attention_window_len: Largest sliding attention window supported by the model. Must be divisible by window_block_size.
+  - max_seq_len: Maximum context size supported by the model (used to instantiate GPT2Core).
 
 - Optimizers (in training configs)
   - optimizers: List of optimizer definitions. Each entry has a type (e.g., AdamW, Muon), optional hyperparameters, and a params section listing parameter groups with their learning rates.
@@ -196,7 +197,7 @@ Examples
   model_spec: gpt2_350m       # resolved from model_specs/gpt2_350m.yml
   target_tokens: 30000000
   cooldown_frac: 0.9
-  val_tokens: 10485760
+  tot_val_tokens: 10485760
   val_loss_every_tokens: 5000000
   save_checkpoint: true
   ```
@@ -206,11 +207,12 @@ Examples
   model_class: models.gpt2.gpt_core.GPT2Core
   eos_token_id: 50256
   vocab_size: 50257
-  num_layers: 16
-  num_heads: 8
-  head_dim: 128
+  num_layers: 24
+  num_heads: 16
+  head_dim: 64
   model_dim: 1024
-  attention_window_tokens: 3456
+  attention_window_len: 3456
+  max_seq_len: 65536
   ```
 
 - Referencing a spec by path instead of name:
@@ -236,7 +238,7 @@ Overriding config values at launch
   - progress_state: serialized training progress meter (tokens processed, snapshot/eval counters)
 
 - Warm-start vs. resume
-  - Warm-start weights: pass -p / --init_checkpoint to run.sh (forwarded as --init_checkpoint to train.py). This loads weights and rehydrates essential architecture hparams (vocab_size, num_layers, num_heads, model_dim, head_dim, training_sequence_length, val_seq_len, attention_window_tokens, window_block_size, eos_token_id, model_class). Optimizer state, step counters, and best_val are NOT resumed; schedules start fresh.
+  - Warm-start weights: pass -p / --init_checkpoint to run.sh (forwarded as --init_checkpoint to train.py). This loads weights and rehydrates essential architecture hparams (vocab_size, num_layers, num_heads, model_dim, head_dim, training_sequence_length, val_seq_len, attention_window_len, window_block_size, eos_token_id, model_class). Optimizer state, step counters, and best_val are NOT resumed; schedules start fresh.
   - Full resume of optimizer/steps: currently not supported. You can approximate a data resume via the BEGIN_SHARD env and force full attention windows with --full_windows when needed.
 
 - Common warm-start examples

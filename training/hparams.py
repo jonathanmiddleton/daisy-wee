@@ -18,12 +18,12 @@ class Hyperparameters:
     val_seq_len: int
     target_tokens: int
     cooldown_frac: float
-    attention_window_tokens: int  # new: max backward attention span actually trained (sliding window)
+    attention_window_len: int  # largest sliding attention window used during training (sliding window)
     window_block_size: int  # new: block granularity for sliding window/masks
     # Common fields with defaults
     vocab_size: int
     eos_token_id: int
-    val_tokens: int  # how many tokens of validation data
+    tot_val_tokens: int  # how many tokens of validation data
     val_loss_every_tokens: int  # num tokens between validation passes (0 disables)
     snapshot_warmup_tokens: int  # tokens to skip before taking snapshots
     snapshot_per_n_tokens: int  # interval in tokens between snapshots
@@ -35,6 +35,8 @@ class Hyperparameters:
     optimizers: list[dict]
     # Force full attention windows (useful when resuming after smaller windows)
     full_windows: bool
+    # Model context size (from ModelSpec); used to instantiate GPT2Core
+    max_seq_len: int
     # Gradient accumulation
     grad_acc_steps: int
     # Model selection
@@ -66,12 +68,16 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
     model_spec_name = cfg_dict.get("model_spec")
     if model_spec_name:
         spec_obj = load_model_spec(str(model_spec_name))
-        # Only merge keys that are valid Hyperparameters fields and not explicitly set in training cfg
+        # Merge ModelSpec fields into cfg. For window_block_size we ALWAYS take the ModelSpec value.
         valid_names_for_merge = {f.name for f in dataclass_fields(Hyperparameters)}
         from dataclasses import asdict as _asdict
         spec_dict = _asdict(spec_obj)
         for k, v in spec_dict.items():
-            if k in valid_names_for_merge and (k not in cfg_dict or cfg_dict[k] is None):
+            if k not in valid_names_for_merge:
+                continue
+            if k == "window_block_size":
+                cfg_dict[k] = v
+            elif k not in cfg_dict or cfg_dict[k] is None:
                 cfg_dict[k] = v
 
     # Validate keys after potential spec merge
@@ -92,7 +98,7 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
     # Additional validations per spec
     try:
         tsl = int(args.training_sequence_length)
-        awt = int(args.attention_window_tokens)
+        awt = int(args.attention_window_len)
         wbs = int(args.window_block_size)
         gas = int(args.grad_acc_steps)
         cdf = float(args.cooldown_frac)
@@ -104,9 +110,9 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
     if tsl % wbs != 0:
         raise ValueError(f"training_sequence_length ({tsl}) must be divisible by window_block_size ({wbs})")
     if awt % wbs != 0:
-        raise ValueError(f"attention_window_tokens ({awt}) must be divisible by window_block_size ({wbs})")
+        raise ValueError(f"attention_window_len ({awt}) must be divisible by window_block_size ({wbs})")
     if tsl < awt:
-        raise ValueError(f"training_sequence_length ({tsl}) must be >= attention_window_tokens ({awt})")
+        raise ValueError(f"training_sequence_length ({tsl}) must be >= attention_window_len ({awt})")
     if gas < 1:
         raise ValueError(f"grad_acc_steps must be >= 1, got {gas}")
     if not (0.0 <= cdf <= 1.0):

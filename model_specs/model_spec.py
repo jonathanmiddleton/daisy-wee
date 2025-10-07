@@ -10,6 +10,7 @@ class ModelSpec:
     """
     Strict schema for model_specs/*.yml files.
     Only architecture-relevant fields live here. Training config belongs in the training YAML.
+    Note: window_block_size is part of the model/runtime contract and is specified in the ModelSpec.
     """
     model_class: str
     vocab_size: int
@@ -18,7 +19,9 @@ class ModelSpec:
     model_dim: int
     head_dim: int
     eos_token_id: int
-    attention_window_tokens: int
+    window_block_size: int  # block granularity for sliding window/masks
+    attention_window_len: int  # largest sliding attention window supported by the model
+    max_seq_len: int  # maximum context size supported by the model
 
 
 def _strict_keys(obj: dict[str, Any], allowed: set[str], ctx: str) -> None:
@@ -89,15 +92,17 @@ def load_model_spec(name_or_path: str) -> dict[str, Any]:
     # Type and value checks
     ctx = f"model_spec:{p.name}"
     # ints
-    for k in ("vocab_size", "num_layers", "num_heads", "model_dim", "head_dim", "eos_token_id", "window_block_size", "attention_window_tokens"):
+    for k in ("vocab_size", "num_layers", "num_heads", "model_dim", "head_dim", "eos_token_id", "window_block_size", "attention_window_len", "max_seq_len"):
         spec[k] = _as_int(k, spec[k], ctx, min_value=1)
     # strings
     if not isinstance(spec["model_class"], str) or not spec["model_class"]:
         raise ValueError(f"{ctx}.model_class must be a non-empty string")
 
     # Cross-field constraints
-    if spec["attention_window_tokens"] % spec["window_block_size"] != 0:
-        raise ValueError(f"{ctx}: attention_window_tokens ({spec['attention_window_tokens']}) must be divisible by window_block_size ({spec['window_block_size']})")
+    if spec["attention_window_len"] % spec["window_block_size"] != 0:
+        raise ValueError(f"{ctx}: attention_window_len ({spec['attention_window_len']}) must be divisible by window_block_size ({spec['window_block_size']})")
+    if spec["max_seq_len"] < spec["attention_window_len"]:
+        raise ValueError(f"{ctx}: max_seq_len ({spec['max_seq_len']}) must be >= attention_window_len ({spec['attention_window_len']})")
 
     return spec
 

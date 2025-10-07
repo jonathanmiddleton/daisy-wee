@@ -281,7 +281,7 @@ def report_from_training_yml(path: str) -> str:
     from training.hparams import load_hparams_from_yaml
     from models import model_from_spec
     hparams = load_hparams_from_yaml(path)
-    model = model_from_spec(hparams)
+    model = model_from_spec(hparams.model_spec)
     return format_report_text(build_report(model, hparams))
 
 __all__ = [

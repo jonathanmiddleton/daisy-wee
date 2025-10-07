@@ -47,13 +47,7 @@ def model_from_spec(spec_or_cfg: str | dict | ModelSpec | Any, device: str = "cu
         spec_data = {k: v for k, v in cfg.items() if k in allowed}
         spec = ModelSpec(**spec_data)
     else:
-        # Fallback: read attributes best-effort
-        keys = {f.name for f in dc_fields(ModelSpec)} | {"training_sequence_length", "val_seq_len", "window_block_size", "max_seq_len"}
-        cfg = {k: getattr(spec_or_cfg, k) for k in keys if hasattr(spec_or_cfg, k)}
-        aux_cfg = cfg
-        allowed = {f.name for f in dc_fields(ModelSpec)}
-        spec_data = {k: v for k, v in cfg.items() if k in allowed}
-        spec = ModelSpec(**spec_data)
+        raise ValueError(f"Invalid spec_or_cfg type: {type(spec_or_cfg)}")
 
     # Pull fields from validated ModelSpec
     model_class = str(spec.model_class)
@@ -63,20 +57,9 @@ def model_from_spec(spec_or_cfg: str | dict | ModelSpec | Any, device: str = "cu
     num_heads = int(spec.num_heads)
     model_dim = int(spec.model_dim)
     head_dim = int(spec.head_dim)
+    max_seq_len = int(spec.max_seq_len)
+    window_block_size = int(spec.window_block_size)
 
-    # window_block_size is a training/runtime setting; prefer from aux cfg, else default to 128
-    window_block_size = int((aux_cfg.get("window_block_size", 128) if isinstance(aux_cfg, dict) else 128) or 128)
-
-    # Determine max_seq_len from available training settings
-    if isinstance(aux_cfg, dict) and "max_seq_len" in aux_cfg:
-        max_seq_len = int(aux_cfg["max_seq_len"])  # explicit
-    else:
-        tsl = int((aux_cfg.get("training_sequence_length", 0) if isinstance(aux_cfg, dict) else 0) or 0)
-        # prefer val_seq_len from ModelSpec if provided; else aux
-        vsl = spec.val_seq_len if spec.val_seq_len is not None else int((aux_cfg.get("val_seq_len", 0) if isinstance(aux_cfg, dict) else 0) or 0)
-        if tsl <= 0 and (not vsl or int(vsl) <= 0):
-            raise ValueError("Cannot determine max_seq_len: provide max_seq_len, or training_sequence_length/val_seq_len in cfg or spec")
-        max_seq_len = max(int(tsl), int(vsl or 0))
 
     ModelClass = get_model_class(model_class)
     model: nn.Module = ModelClass(
