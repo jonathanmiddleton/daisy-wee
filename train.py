@@ -84,6 +84,7 @@ if master_process and args.wandb_log:
         _wandb = None
         _wandb_enabled = False
 
+# noinspection PyShadowingNames
 def log_wandb(d: dict):
     if _wandb_enabled:
         try:
@@ -95,7 +96,7 @@ def print0(st):
     if master_process:
         print(st)
 
-
+# noinspection PyShadowingNames
 def _build_hparams_from_args(args: Hyperparameters) -> dict:
     """Build a checkpoint hparams dict from training args."""
     return {
@@ -112,7 +113,7 @@ def _build_hparams_from_args(args: Hyperparameters) -> dict:
         "model_class": args.model_class,
     }
 
-
+# noinspection PyShadowingNames
 def _run_ckpt_filename(
         *, val_value: float | None, step: int, run_start_minute: str, run_id: int
 ) -> str:
@@ -121,6 +122,7 @@ def _run_ckpt_filename(
     return f"checkpoints/{run_start_minute}-val{_val_trunc:.3f}-step{step:06d}-run{run_id}.pt"
 
 
+# noinspection PyShadowingNames
 def _save_run_checkpoint(
         *,
         val_value: float | None,
@@ -266,7 +268,6 @@ if args.tot_val_tokens % val_batch_size != 0:
 # Build a persistent validation data generator and evaluator
 _val_ddg = DistributedDataGenerator(args.val_shards, val_batch_size, rank, world_size)
 _evaluator = Evaluator(
-    wandb_enabled=_wandb_enabled,
     data_generator=_val_ddg,
     distributed_enabled=use_distributed,
     rank=rank,
@@ -311,8 +312,7 @@ while progress.tokens_processed < progress.target_tokens:
         training_time_ms += 1000 * (time.perf_counter() - t0)
         model.eval()
         # Evaluate using the Evaluator (per-rank tokens)
-        _per_rank_tokens = args.tot_val_tokens // world_size
-        eval_out = _evaluator.eval(model, _per_rank_tokens, tokens=progress.tokens_processed)
+        eval_out = _evaluator.eval(model, args.tot_val_tokens, tokens=progress.tokens_processed)
         cur_val = float(eval_out.get("val_loss", float("nan")))
         last_val_loss = cur_val
         ema_dloss_per_token = eval_out.get("ema_dloss_per_token", ema_dloss_per_token)
@@ -431,6 +431,7 @@ if master_process and args.save_checkpoint:
 print0(
     f"peak memory allocated: {torch.cuda.max_memory_allocated() // 1024 // 1024} MiB reserved: {torch.cuda.max_memory_reserved() // 1024 // 1024} MiB")
 if _wandb_enabled:
+    # noinspection PyBroadException
     try:
         _wandb.finish()
     except Exception:
