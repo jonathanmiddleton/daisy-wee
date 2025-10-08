@@ -59,8 +59,7 @@ class Evaluator:
         # Also reset internal counters used for ema calc
         self._last_tokens_seen = 0
 
-    @torch.no_grad()
-    def eval(self, model: nn.Module, total_tokens: int) -> Dict[str, Optional[float]]:
+    def eval(self,*, model: nn.Module, total_tokens: int) -> Dict[str, Optional[float]]:
         """
         Evaluate the model on validation data.
 
@@ -70,42 +69,43 @@ class Evaluator:
         Returns:
             dict with keys: val_loss, val_acc, epoch, ema_dloss_per_token
         """
-        if model.training:
-            raise RuntimeError("Evaluator.eval() requires model.eval() mode; got training mode.")
+        with torch.no_grad():
+            if model.training:
+                raise RuntimeError("Evaluator.eval() requires model.eval() mode; got training mode.")
 
-        # Determine steps per rank
-        world_batch_size = int(self._ddg.batch_size)
-        if total_tokens % world_batch_size != 0:
-            raise ValueError(f"total_tokens ({total_tokens}) must be divisible by world_batch_size ({world_batch_size})")
-        steps = total_tokens // world_batch_size
+            # Determine steps per rank
+            world_batch_size = int(self._ddg.batch_size)
+            if total_tokens % world_batch_size != 0:
+                raise ValueError(f"total_tokens ({total_tokens}) must be divisible by world_batch_size ({world_batch_size})")
+            steps = total_tokens // world_batch_size
 
-        if self._use_dist:
-            dist.barrier()
+            if self._use_dist:
+                dist.barrier()
 
-        t0 = time.perf_counter()
-        device = next(model.parameters()).device
-        loss_acc = torch.zeros((), device=device, dtype=torch.float32)
-        for _ in range(steps):
-            inputs, targets = next(self._ddg)
-            # Match training eval: use window schedule with s=1.0 (full windows) for stability
-            loss_acc = loss_acc + model(inputs, get_num_window_blocks(1.0, attention_window_len=self._tawt, window_block_size=self._wbs), targets)
-        loss_acc = loss_acc / steps
+            t0 = time.perf_counter()
+            device = next(model.parameters()).device
+            loss_acc = torch.zeros((), device=device, dtype=torch.float32)
+            for _ in range(steps):
+                inputs, targets = next(self._ddg)
+                # Match training eval: use window schedule with s=1.0 (full windows) for stability
+                loss_acc = loss_acc + model(inputs, get_num_window_blocks(1.0, attention_window_len=self._tawt, window_block_size=self._wbs), targets)
+            loss_acc = loss_acc / steps
 
-        if self._use_dist:
-            dist.all_reduce(loss_acc, op=dist.ReduceOp.AVG)
+            if self._use_dist:
+                dist.all_reduce(loss_acc, op=dist.ReduceOp.AVG)
 
-        cur_val = float(loss_acc.item())
-        tokens_since_last = total_tokens
-        if self._last_val_loss is not None and tokens_since_last > 0:
-            dpt = (cur_val - self._last_val_loss) / tokens_since_last
-            self._ema_dloss_per_token = dpt if self._ema_dloss_per_token is None else 0.7 * self._ema_dloss_per_token + 0.3 * dpt
-        self._last_val_loss = cur_val
-        self._last_tokens_seen += tokens_since_last
+            cur_val = float(loss_acc.item())
+            tokens_since_last = total_tokens
+            if self._last_val_loss is not None and tokens_since_last > 0:
+                dpt = (cur_val - self._last_val_loss) / tokens_since_last
+                self._ema_dloss_per_token = dpt if self._ema_dloss_per_token is None else 0.7 * self._ema_dloss_per_token + 0.3 * dpt
+            self._last_val_loss = cur_val
+            self._last_tokens_seen += tokens_since_last
 
-        # We don't track real epoch progression here; return None
-        return {
-            "val_loss": cur_val,
-            "val_acc": None,
-            "epoch": None,
-            "ema_dloss_per_token": self._ema_dloss_per_token if self._ema_dloss_per_token is not None else float("nan"),
-        }
+            # We don't track real epoch progression here; return None
+            return {
+                "val_loss": cur_val,
+                "val_acc": None,
+                "epoch": None,
+                "ema_dloss_per_token": self._ema_dloss_per_token if self._ema_dloss_per_token is not None else float("nan"),
+            }

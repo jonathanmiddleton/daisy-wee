@@ -267,7 +267,7 @@ if args.tot_val_tokens % val_batch_size != 0:
     raise ValueError(f"tot_val_tokens ({args.tot_val_tokens}) must be divisible by val_batch_size ({val_batch_size})")
 # Build a persistent validation data generator and evaluator
 _val_ddg = DistributedDataGenerator(args.val_shards, val_batch_size, rank, world_size)
-_evaluator = Evaluator(
+_evaluator: Evaluator = Evaluator(
     data_generator=_val_ddg,
     distributed_enabled=use_distributed,
     rank=rank,
@@ -312,7 +312,7 @@ while progress.tokens_processed < progress.target_tokens:
         training_time_ms += 1000 * (time.perf_counter() - t0)
         model.eval()
         # Evaluate using the Evaluator (per-rank tokens)
-        eval_out = _evaluator.eval(model, args.tot_val_tokens, tokens=progress.tokens_processed)
+        eval_out = _evaluator.eval(model=model, total_tokens=args.tot_val_tokens)
         cur_val = float(eval_out.get("val_loss", float("nan")))
         last_val_loss = cur_val
         ema_dloss_per_token = eval_out.get("ema_dloss_per_token", ema_dloss_per_token)
