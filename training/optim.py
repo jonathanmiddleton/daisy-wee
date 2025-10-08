@@ -176,7 +176,13 @@ def next_multiple_of_n(v: float | int, *, n: int):
 
 @lru_cache(1)
 def get_window_size_blocks_helper(window_size_tokens: int, window_block_size: int):
-    return torch.tensor(window_size_tokens // window_block_size, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
+    """Return number of window blocks as a small CPU tensor.
+    Avoids unconditional CUDA allocation to prevent crashes on CPU-only setups/tests.
+    """
+    if window_block_size <= 0:
+        raise ValueError("window_block_size must be > 0")
+    blocks = int(window_size_tokens) // int(window_block_size)
+    return torch.tensor(blocks, dtype=torch.int32)
 
 def get_num_window_blocks(schedule: float, *, attention_window_len: int, window_block_size: int) -> torch.Tensor:
     """Attention window schedule driven by normalized progress schedule s∈[0,1].

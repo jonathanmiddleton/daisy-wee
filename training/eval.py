@@ -1,4 +1,3 @@
-import math
 import time
 from dataclasses import dataclass
 from typing import Optional, Dict
@@ -23,33 +22,24 @@ class Evaluator:
     def __init__(
         self,
         *,
-        wandb_enabled: bool,
         data_generator: DistributedDataGenerator,
         distributed_enabled: bool | None = None,
+        world_size: int | None = None,
         rank: int | None = None,
         train_attention_window_len: int,
         window_block_size: int,
     ) -> None:
-        self._wandb_enabled = bool(wandb_enabled)
         self._ddg = data_generator
         self._use_dist = bool(distributed_enabled) if distributed_enabled is not None else dist.is_available() and dist.is_initialized()
         self._rank = int(rank or 0)
+        self._world_size = int(world_size or 1)
         self._tawt = int(train_attention_window_len)
         self._wbs = int(window_block_size)
         # Track EMA of dloss/token between eval calls
         self._last_val_loss: Optional[float] = None
         self._last_tokens_seen: int = 0
         self._ema_dloss_per_token: Optional[float] = None
-        # attempt to import wandb only if enabled
-        self._wandb = None
-        if self._wandb_enabled:
-            try:
-                import wandb  # type: ignore
-                self._wandb = wandb
-            except Exception:
-                # silently disable if import fails
-                self._wandb_enabled = False
-                self._wandb = None
+
 
     def reset_generator(self) -> None:
         """
@@ -70,14 +60,13 @@ class Evaluator:
         self._last_tokens_seen = 0
 
     @torch.no_grad()
-    def eval(self, model: nn.Module, num_tokens_per_rank: int, tokens: Optional[int] = None) -> Dict[str, Optional[float]]:
+    def eval(self, model: nn.Module, total_tokens: int) -> Dict[str, Optional[float]]:
         """
         Evaluate the model on validation data.
 
         Args:
             model: the model to evaluate. Must be in eval() mode, otherwise raises an error.
-            num_tokens_per_rank: number of tokens per rank to evaluate.
-            tokens: Optional global tokens counter to log to wandb (e.g., training tokens processed).
+            total_tokens: the total number of tokens globally over which to evaluate.
         Returns:
             dict with keys: val_loss, val_acc, epoch, ema_dloss_per_token
         """
@@ -85,19 +74,17 @@ class Evaluator:
             raise RuntimeError("Evaluator.eval() requires model.eval() mode; got training mode.")
 
         # Determine steps per rank
-        local_seq_len = int(self._ddg.local_batch_size)
-        if num_tokens_per_rank % local_seq_len != 0:
-            raise ValueError(
-                f"num_tokens_per_rank ({num_tokens_per_rank}) must be divisible by local sequence length ({local_seq_len})"
-            )
-        steps = num_tokens_per_rank // local_seq_len
+        world_batch_size = int(self._ddg.batch_size)
+        if total_tokens % world_batch_size != 0:
+            raise ValueError(f"total_tokens ({total_tokens}) must be divisible by world_batch_size ({world_batch_size})")
+        steps = total_tokens // world_batch_size
 
-        # Reduce barriers if distributed
         if self._use_dist:
             dist.barrier()
 
         t0 = time.perf_counter()
-        loss_acc = torch.zeros((), device="cuda", dtype=torch.float32)
+        device = next(model.parameters()).device
+        loss_acc = torch.zeros((), device=device, dtype=torch.float32)
         for _ in range(steps):
             inputs, targets = next(self._ddg)
             # Match training eval: use window schedule with s=1.0 (full windows) for stability
@@ -108,29 +95,12 @@ class Evaluator:
             dist.all_reduce(loss_acc, op=dist.ReduceOp.AVG)
 
         cur_val = float(loss_acc.item())
-        tokens_since_last = num_tokens_per_rank  # best available proxy in this isolated evaluator
+        tokens_since_last = total_tokens
         if self._last_val_loss is not None and tokens_since_last > 0:
             dpt = (cur_val - self._last_val_loss) / tokens_since_last
             self._ema_dloss_per_token = dpt if self._ema_dloss_per_token is None else 0.7 * self._ema_dloss_per_token + 0.3 * dpt
         self._last_val_loss = cur_val
-        self._last_tokens_seen += num_tokens_per_rank
-
-        # Logging to wandb (parity with train.py: log val/loss and val/ppl)
-        if self._wandb_enabled and self._wandb is not None and self._rank == 0:
-            try:
-                # Prefer externally provided global tokens; otherwise, fallback to cumulative eval tokens
-                if tokens is not None:
-                    _tokens_to_log = int(tokens)
-                else:
-                    _ws = dist.get_world_size() if (self._use_dist and dist.is_initialized()) else 1
-                    _tokens_to_log = int(self._last_tokens_seen * _ws)
-                self._wandb.log({
-                    "val/loss": cur_val,
-                    "val/ppl": math.exp(cur_val) if cur_val < 20 else float("inf"),
-                    "tokens": _tokens_to_log,
-                })
-            except Exception:
-                pass
+        self._last_tokens_seen += tokens_since_last
 
         # We don't track real epoch progression here; return None
         return {

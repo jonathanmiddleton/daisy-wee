@@ -263,7 +263,6 @@ _train_ddg = DistributedDataGenerator(args.train_shards, world_size * args.train
 val_batch_size = world_size * args.val_seq_len
 if args.tot_val_tokens % val_batch_size != 0:
     raise ValueError(f"tot_val_tokens ({args.tot_val_tokens}) must be divisible by val_batch_size ({val_batch_size})")
-val_steps = args.tot_val_tokens // val_batch_size
 # Build a persistent validation data generator and evaluator
 _val_ddg = DistributedDataGenerator(args.val_shards, val_batch_size, rank, world_size)
 _evaluator = Evaluator(
