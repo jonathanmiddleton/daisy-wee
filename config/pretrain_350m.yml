@@ -13,11 +13,11 @@ optimizers:
   - type: AdamW
     betas: [0.9, 0.95]
     eps: 1.0e-10
-    weight_decay: 0.1
+    weight_decay: 0.01
     fused: true
     params:
       - group: head_params
-        lr: 0.02
+        lr: 0.003125
       - group: embed_params
         lr: 0.3
       - group: scalar_params
@@ -33,7 +33,7 @@ full_windows: false
 grad_acc_steps: 1
 # Evaluations
 val_shards: "data/fineweb/fineweb_val_*.bin"
-val_loss_every_tokens:     52428800
+val_loss_every_tokens:     26214400
 val_seq_len: 262144       # 4 * 64 * 1024
 tot_val_tokens: 10485760
 # Snapshots

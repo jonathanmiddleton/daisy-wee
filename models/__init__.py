@@ -23,7 +23,7 @@ def get_model_class(model_class: str) -> Type[nn.Module]:
     return cls
 
 
-def model_from_spec(spec_or_cfg: str | dict | ModelSpec | Any, device: str = "cuda") -> nn.Module:
+def model_from_spec(spec_or_cfg: str | dict | ModelSpec | Any, device: str = 'cuda') -> nn.Module:
     # Normalize to ModelSpec for validation of architecture fields
     spec: ModelSpec
     aux_cfg: Dict[str, Any] = {}

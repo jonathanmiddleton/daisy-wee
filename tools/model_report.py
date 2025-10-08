@@ -44,20 +44,12 @@ def analyze_scalars(model: nn.Module, hparams: Dict[str, Any], zero_threshold: f
         "groups": {},
         "per_layer": [],
     }
-    scalars: torch.Tensor | None = None
-    try:
-        scalars = getattr(model, "scalars", None)
-    except Exception:
-        scalars = None
+    scalars = getattr(model, "scalars", None)
     if scalars is None:
-        # Try via state_dict in case model class differs
-        try:
-            for name, t in model.state_dict().items():
-                if name.endswith("scalars") and t.ndim == 1:
-                    scalars = t
-                    break
-        except Exception:
-            scalars = None
+        for name, t in model.state_dict().items():
+            if name.endswith("scalars") and t.ndim == 1:
+                scalars = t
+                break
 
     if scalars is None:
         return out
@@ -67,6 +59,7 @@ def analyze_scalars(model: nn.Module, hparams: Dict[str, Any], zero_threshold: f
     S = s.numel()
     out["length"] = int(S)
     L_from_hp = int(hparams.get("num_layers", 0) or 0)
+    # assume scalars are 1 skip weight, 2 lambdas, and 2 sa_lambdas per layer
     L = L_from_hp if (L_from_hp and S % 5 == 0 and S // 5 == L_from_hp) else (S // 5)
     out["num_layers"] = int(L)
 
@@ -176,21 +169,18 @@ def build_report(model: nn.Module, hparams: Optional[Dict[str, Any] | Hyperparam
     report["param_megabytes"] = float(bytes_ / (1024 ** 2)) if bytes_ else None
 
     # GPT2Core-specific info if available
-    try:
-        from models.gpt2.gpt_core import GPT2Core  # local import
-        if isinstance(model, GPT2Core):
-            L = len(model.blocks)
-            report.setdefault("model", {})
-            report["model"].update({
-                "type": "GPT2Core",
-                "num_layers": L,
-                "has_attn_every_layer": all(getattr(b, "attn", None) is not None for b in model.blocks),
-                "attn_off_layers": [i for i, b in enumerate(model.blocks) if getattr(b, "attn", None) is None],
-                "lm_head_rows": int(model.lm_head_w.shape[0]) if hasattr(model, "lm_head_w") else None,
-                "lm_head_cols": int(model.lm_head_w.shape[1]) if hasattr(model, "lm_head_w") else None,
-            })
-    except Exception:
-        pass
+    from models.gpt2.gpt_core import GPT2Core  # local import
+    if isinstance(model, GPT2Core):
+        L = len(model.blocks)
+        report.setdefault("model", {})
+        report["model"].update({
+            "type": "GPT2Core",
+            "num_layers": L,
+            "has_attn_every_layer": all(getattr(b, "attn", None) is not None for b in model.blocks),
+            "attn_off_layers": [i for i, b in enumerate(model.blocks) if getattr(b, "attn", None) is None],
+            "lm_head_rows": int(model.lm_head_w.shape[0]) if hasattr(model, "lm_head_w") else None,
+            "lm_head_cols": int(model.lm_head_w.shape[1]) if hasattr(model, "lm_head_w") else None,
+        })
 
     # Scalars analysis
     scalars_info = analyze_scalars(model, hparams, zero_threshold)
@@ -200,10 +190,9 @@ def build_report(model: nn.Module, hparams: Optional[Dict[str, Any] | Hyperparam
 
 
 def format_report_text(report: Dict[str, Any]) -> str:
-    lines = []
+    lines = ["=== Checkpoint ==="]
 
     # Path and step if available
-    lines.append("=== Checkpoint ===")
     if report.get("path"):
         lines.append(f"path: {report['path']}")
 
@@ -277,11 +266,11 @@ def format_report_text(report: Dict[str, Any]) -> str:
 
     return "\n".join(lines)
 
-def report_from_training_yml(path: str) -> str:
+def report_from_training_yml(path: str, device: str = 'cpu') -> str:
     from training.hparams import load_hparams_from_yaml
     from models import model_from_spec
     hparams = load_hparams_from_yaml(path)
-    model = model_from_spec(hparams.model_spec)
+    model = model_from_spec(hparams.model_spec, device)
     return format_report_text(build_report(model, hparams))
 
 __all__ = [
@@ -292,3 +281,7 @@ __all__ = [
     "human_int",
     "format_report_text",
 ]
+
+if __name__ == "__main__":
+    import sys
+    print(report_from_training_yml(sys.argv[1]))

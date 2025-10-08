@@ -73,11 +73,23 @@ if master_process and args.wandb_log:
         _wandb.init(project=_project, name=_name, config=asdict(args))
         _wandb_enabled = True
         print(f"wandb logging enabled: project={_project} name={_name}")
+        art = _wandb.Artifact(name=f"models-src-{run_id}", type="code")
+        import glob
+        files = [p for p in glob.glob("models/**/*.py", recursive=True) if os.path.basename(p) != "__init__.py"]
+        for p in files:
+            art.add_file(p, name=os.path.relpath(p, start="models"))
+        _wandb.log_artifact(art)
     except Exception as _e:
         print(f"[warn] Failed to initialize wandb logging: {_e}")
         _wandb = None
         _wandb_enabled = False
 
+def log_wandb(d: dict):
+    if _wandb_enabled:
+        try:
+            _wandb.log(d)
+        except Exception as _e:
+            print0(f"[warn] wandb.log failed: {_e}")
 
 def print0(st):
     if master_process:
@@ -282,7 +294,7 @@ progress = ProgressMeter(
 # Tracking for eval stats and ETA
 last_val_loss = None
 last_tot_val_tokens = 0
-ema_dloss_per_token = None
+ema_dloss_per_token = math.inf
 training_time_ms = 0
 best_val = float("inf") if best_val_from_ckpt is None else best_val_from_ckpt
 
@@ -306,7 +318,16 @@ while progress.tokens_processed < progress.target_tokens:
         last_val_loss = cur_val
         ema_dloss_per_token = eval_out.get("ema_dloss_per_token", ema_dloss_per_token)
         print0(
-            f"step:{step} tokens:{progress.tokens_processed}/{progress.target_tokens} (s={progress.s:.4f}) val_loss:{cur_val:.6f} train_time:{training_time_ms:.0f}ms")
+            f"step:{step} tokens:{progress.tokens_processed:,}/{progress.target_tokens:,} (s={progress.s:.4f}) val_loss:{cur_val:.6f} train_time:{training_time_ms:,.0f}ms ema_dloss_per_token:{ema_dloss_per_token:.6f}")
+        log_wandb({
+                    "val/loss": cur_val,
+                    "val/ppl": math.exp(cur_val) if cur_val < 20 else float("inf"),
+                    "val/ema_dloss_per_token": ema_dloss_per_token,
+                    "tokens": progress.tokens_processed,
+                    "s": progress.s,
+                    "train/time_ms": training_time_ms + 1000 * (time.perf_counter() - t0),
+                    "step": step,
+                })
         # checkpoints by tokens (save only if validation improves)
         if master_process and args.save_checkpoint and progress.should_snapshot():
             if cur_val < best_val:
@@ -386,19 +407,13 @@ while progress.tokens_processed < progress.target_tokens:
         warmup_end = approx_training_time_ms
     avg_step = f"avg_step:{(approx_training_time_ms - warmup_end) / max(step - 9, 1):.2f}ms" if step >= 10 else "avg_step: (warmup to step 10)"
     print0(
-        f"step:{step} train_loss:{train_loss_est:.4f} tokens:{progress.tokens_processed}/{progress.target_tokens} (s={progress.s:.4f}) train_time:{approx_training_time_ms:.0f}ms {avg_step}")
-    if _wandb_enabled:
-        try:
-            _wandb.log({
+        f"step:{step} train_loss:{train_loss_est:.4f} tokens:{progress.tokens_processed:,}/{progress.target_tokens:,} (s={progress.s:.4f}) train_time:{approx_training_time_ms:,.0f}ms {avg_step}")
+    log_wandb({
                 "train/loss": train_loss_est,
                 "train/ppl": math.exp(train_loss_est) if train_loss_est < 20 else float("inf"),
                 "tokens": progress.tokens_processed,
                 "s": progress.s,
-                "train/time_ms": approx_training_time_ms,
-                "step": step,
-            })
-        except Exception as _e:
-            print0(f"[warn] wandb.log (train) failed: {_e}")
+                "train/time_ms": approx_training_time_ms,})
 
 # End of training: save final checkpoint
 if master_process and args.save_checkpoint:
