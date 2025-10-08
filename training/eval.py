@@ -39,7 +39,7 @@ class Evaluator:
         # Track EMA of dloss/token between eval calls
         self._last_val_loss: Optional[float] = None
         self._last_tokens_seen: int = 0
-        self._ema_dloss_per_token: Optional[float] = None
+        self._ema_dloss_per_token: Optional[float] = float("nan")
         # attempt to import wandb only if enabled
         self._wandb = None
         if self._wandb_enabled:
