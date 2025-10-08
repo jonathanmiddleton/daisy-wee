@@ -39,7 +39,7 @@ class Evaluator:
         # Track EMA of dloss/token between eval calls
         self._last_val_loss: Optional[float] = None
         self._last_tokens_seen: int = 0
-        self._ema_dloss_per_token: Optional[float] = float("nan")
+        self._ema_dloss_per_token: Optional[float] = None
         # attempt to import wandb only if enabled
         self._wandb = None
         if self._wandb_enabled:
@@ -137,5 +137,5 @@ class Evaluator:
             "val_loss": cur_val,
             "val_acc": None,
             "epoch": None,
-            "ema_dloss_per_token": self._ema_dloss_per_token,
+            "ema_dloss_per_token": self._ema_dloss_per_token if self._ema_dloss_per_token is not None else float("nan"),
         }
