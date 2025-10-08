@@ -317,7 +317,8 @@ while progress.tokens_processed < progress.target_tokens:
         last_val_loss = cur_val
         ema_dloss_per_token = eval_out.get("ema_dloss_per_token", ema_dloss_per_token)
         print0(
-            f"step:{step} tokens:{progress.tokens_processed:,}/{progress.target_tokens:,} (s={progress.s:.4f}) val_loss:{cur_val:.6f} train_time:{training_time_ms:,.0f}ms ema_dloss_per_token:{ema_dloss_per_token:.6f}")
+            f"step:{step} tokens:{progress.tokens_processed:,}/{progress.target_tokens:,} (s={progress.s:.4f}) "
+            f"val_loss:{cur_val:.6f} train_time:{training_time_ms:,.0f}ms ema_dloss_per_1e6_tokens:{ema_dloss_per_token*1e6:.6f}")
         log_wandb({
                     "val/loss": cur_val,
                     "val/ppl": math.exp(cur_val) if cur_val < 20 else float("inf"),
@@ -365,7 +366,7 @@ while progress.tokens_processed < progress.target_tokens:
         # scale loss so that gradients are averaged across micro-steps
         loss_to_backward = loss / ga_steps
         if use_distributed:
-            model.require_backward_grad_sync = (micro_step == ga_steps - 1)
+            model.require_backward_grad_sync = (micro_step == ga_steps - 1) # no_sync()
         loss_to_backward.backward()
         total_train_loss += float(loss.item())
 
@@ -378,9 +379,10 @@ while progress.tokens_processed < progress.target_tokens:
     }
     # set optimization hyperparameters based on s
     s = progress.s
+    lr_scale = get_lr_s(s, args.cooldown_frac)
     for opt in optimizers:
         for group in opt.param_groups:
-            group["lr"] = group["initial_lr"] * get_lr_s(s, args.cooldown_frac)
+            group["lr"] = group["initial_lr"] * lr_scale
     # Momentum warmup for Muon optimizers driven by progress s
     for opt in optimizers:
         if isinstance(opt, Muon):
@@ -412,6 +414,7 @@ while progress.tokens_processed < progress.target_tokens:
                 "train/ppl": math.exp(train_loss_est) if train_loss_est < 20 else float("inf"),
                 "tokens": progress.tokens_processed,
                 "s": progress.s,
+                "lr_scale": lr_scale,
                 "train/time_ms": approx_training_time_ms,})
 
 # End of training: save final checkpoint

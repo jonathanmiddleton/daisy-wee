@@ -147,21 +147,140 @@ class Muon(torch.optim.Optimizer):
                 if futures:
                     torch.futures.collect_all(futures).wait()
 
-# learning rate schedule: stable then decay
-# New s-based schedule variants that take normalized progress s ∈ [0,1]
+
+import math
+
+class AdaptiveLR:
+    def __init__(self,
+                 H: int = 50,
+                 H_tail: int = 200,
+                 H_eval: int = 20,
+                 H_guard: int = 50,
+                 H_stable: int = 150,
+                 tau_hi: float = 0.03,
+                 tau_lo: float = 0.01,
+                 rho1_lo: float = -0.30,
+                 rho1_hi: float = -0.10,
+                 dnr_hi: float = 3.0,
+                 dnr_lo: float = 1.6,
+                 m_min: float = 0.1,
+                 cosine_frac: float = 1.0,
+                 eps: float = 1e-12):
+        self.beta = 2**(-1.0 / H)
+        self.beta_tail = 2**(-1.0 / H_tail)
+        self.H_eval = H_eval
+        self.H_guard = H_guard
+        self.H_stable = H_stable
+        self.tau_hi, self.tau_lo = tau_hi, tau_lo
+        self.rho1_lo, self.rho1_hi = rho1_lo, rho1_hi
+        self.dnr_hi, self.dnr_lo = dnr_hi, dnr_lo
+        self.m_min = m_min
+        self.cosine_frac = cosine_frac
+        self.eps = eps
+
+        self.mu = None
+        self.v = 0.0
+        self.tau = 0.0
+        self.c1 = 0.0
+        self.s = 0.0
+        self.r_prev = 0.0
+        self.mu_prev = None
+        self.d = 0.0
+
+        self.m = 1.0
+        self.prev_step = None
+        self.since_change = 0
+        self.eval_accum = 0
+        self.stable_accum = 0
+
+    def _update_stats(self, loss: float, delta_steps: int):
+        b = self.beta ** delta_steps
+        bt = self.beta_tail ** delta_steps
+
+        if self.mu is None:
+            self.mu = loss
+            self.mu_prev = loss
+            self.prev_step = 0
+
+        self.mu = (1.0 - b) * loss + b * self.mu
+        r = loss - self.mu
+        self.v = (1.0 - b) * (r * r) + b * self.v
+        z = r / math.sqrt(self.v + self.eps)
+        self.tau = (1.0 - bt) * (abs(z) > 3.0) + bt * self.tau
+        self.c1 = (1.0 - b) * (r * self.r_prev) + b * self.c1
+        self.s  = (1.0 - b) * (r * r) + b * self.s
+        rho1 = self.c1 / (self.s + self.eps)
+        dmu = abs(self.mu - self.mu_prev)
+        self.mu_prev = self.mu
+        self.d = (1.0 - b) * dmu + b * self.d
+        dnr = math.sqrt(self.v + self.eps) / (self.d + self.eps)
+        self.r_prev = r
+        return self.tau, rho1, dnr
+
+    def _maybe_adapt(self, tau: float, rho1: float, dnr: float, delta_steps: int):
+        self.eval_accum += delta_steps
+        self.since_change += delta_steps
+
+        if self.eval_accum < self.H_eval or self.since_change < self.H_guard:
+            return
+
+        triggers = (tau > self.tau_hi) + (rho1 < self.rho1_lo) + (dnr > self.dnr_hi)
+        if triggers >= 2:
+            self.m = max(self.m * 0.70, self.m_min)
+            self.since_change = 0
+            self.stable_accum = 0
+            self.eval_accum = 0
+            return
+        if triggers == 1 and (tau > 0.045 or dnr > 4.0):
+            self.m = max(self.m * 0.85, self.m_min)
+            self.since_change = 0
+            self.stable_accum = 0
+            self.eval_accum = 0
+            return
+
+        if tau < self.tau_lo and rho1 > self.rho1_hi and dnr < self.dnr_lo:
+            self.stable_accum += self.eval_accum
+            if self.stable_accum >= self.H_stable:
+                self.m = min(1.0, self.m * 1.01)
+                self.since_change = 0
+                self.stable_accum = 0
+
+        self.eval_accum = 0
+
+    @staticmethod
+    def _lr_scale_base(s: float, cooldown_frac: float, cosine_frac: float = 1.0) -> float:
+        x = 0.0 if s < 0.0 else (1.0 if s > 1.0 else s)
+        if cooldown_frac <= 0.0 or x < 1.0 - cooldown_frac:
+            return 1.0
+        t = (x - (1.0 - cooldown_frac)) / max(cooldown_frac, 1e-8)
+        t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+        k = 0.0 if cosine_frac < 0.0 else (1.0 if cosine_frac > 1.0 else cosine_frac)
+        if t <= k:
+            return 0.5 * (1.0 + math.cos(math.pi * t))
+        yk = 0.5 * (1.0 + math.cos(math.pi * k))
+        return yk * (1.0 - (t - k) / max(1.0 - k, 1e-8))
+
+    def get_lr(self, step: int, loss: float, s: float, cooldown_frac: float) -> float:
+        if self.prev_step is None:
+            delta = 1
+        else:
+            delta = step - self.prev_step
+            if delta < 1:
+                delta = 1
+        self.prev_step = step
+
+        tau, rho1, dnr = self._update_stats(loss, delta)
+        self._maybe_adapt(tau, rho1, dnr, delta)
+        base = self._lr_scale_base(s, cooldown_frac, self.cosine_frac)
+        return base * self.m
+
 
 def get_lr_s(s: float, cooldown_frac: float) -> float:
     """Return LR scale factor given normalized progress s in [0,1].
-    1.0 during main phase, cosine-linear or linear decay during cooldown.
-    Mirrors previous get_lr(step, num_iterations, cooldown_frac) semantics but decoupled from steps.
+    1.0 during main phase, linear decay during cooldown.
     """
-    # Clamp progress to [0, 1]
     x = 0.0 if s < 0 else (1.0 if s > 1 else s)
-    if x < 1 - cooldown_frac:
-        return 1.0
-    else:
-        # Linear decay to zero over the cooldown tail
-        return max((1 - x) / max(cooldown_frac, 1e-8), 0.0)
+    return 1.0 if x < 1 - cooldown_frac else max((1 - x) / max(cooldown_frac, 1e-8), 0.0)
 
 # Global flag to force full-sized attention windows regardless of training progress
 _force_full_windows: bool = False
