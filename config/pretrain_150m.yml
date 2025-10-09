@@ -28,7 +28,7 @@ optimizers:
     weight_decay: 0.0
     params:
       - group: hidden_matrix_params
-        lr: 0.25
+        lr: 0.05
 full_windows: false
 # Gradient accumulation
 grad_acc_steps: 8
