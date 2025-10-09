@@ -1,11 +1,11 @@
 # Logging
 wandb_log: true
 wandb_project: 'daisy-wee'
-wandb_run_name: '350m'
+wandb_run_name: '350m-modded'
 # Pretraining configuration
 train_shards: "data/fineweb/fineweb_train_*.bin"
-target_tokens: 4000000000
-cooldown_frac: 0.5
+target_tokens: 3124756480  # 3124756480 = 5960 steps
+cooldown_frac: 0.7
 training_sequence_length: 65536        #  N * 1024; must be divisible by window_block_size
 train_attention_window_len: 3456        # largest sliding attention window used during training; must be divisible by window_block_size
 # Optimizers configuration
@@ -25,16 +25,16 @@ optimizers:
 
   - type: Muon
     momentum: 0.95
-    weight_decay: 0.0
+    weight_decay: 0.01
     params:
       - group: hidden_matrix_params
         lr: 0.025
 full_windows: false
 # Gradient accumulation
-grad_acc_steps: 3 # assumes world_size=8
+grad_acc_steps: 1 # assumes world_size=8
 # Evaluations
 val_shards: "data/fineweb/fineweb_val_*.bin"
-val_loss_every_tokens:     104857600
+val_loss_every_tokens:    524288000 # 524288000 = 1k steps
 val_seq_len: 262144       # 4 * 64 * 1024
 tot_val_tokens: 10485760  # 5 steps
 # Snapshots
