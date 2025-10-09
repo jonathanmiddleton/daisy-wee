@@ -14,7 +14,7 @@ MAX_SEQ_LEN = 16*1024
 parser = argparse.ArgumentParser(description="Generate text with a GPT model from a checkpoint.")
 parser.add_argument("checkpoint", type=str, help="Path to model checkpoint (.pt)")
 parser.add_argument("--max_tokens", type=int, default=256, help="Number of new tokens to generate")
-parser.add_argument("--repetition_penalty", type=float, default=1.10, help="Repetition penalty")
+parser.add_argument("--repetition_penalty", type=float, default=1.30, help="Repetition penalty")
 parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
 parser.add_argument("--top_k", type=int, default=100, help="Top-k sampling")
 parser.add_argument("--top_p", type=float, default=0.95, help="Top-p sampling")
