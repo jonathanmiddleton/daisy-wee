@@ -313,6 +313,22 @@ def get_lincos_lr_s(s: float, cooldown_frac: float) -> float:
     t = (x - (1.0 - c)) / max(c, 1e-8)  # t in [0,1]
     return 0.5 * (1.0 + math.cos(math.pi * t))
 
+# Dispatch table for LR schedules
+LEARNING_RATE_SCHEDULES: dict[str, callable] = {
+    "linear_decay": get_linear_decay_lr_s,
+    "linear_warmup_cosine_decay": get_lincos_lr_s,
+}
+
+def get_lr_scale(schedule_name: str, s: float, cooldown_frac: float) -> float:
+    """Resolve a schedule by name and compute the LR scale for progress s.
+
+    Raises ValueError for unknown schedule names.
+    """
+    fn = LEARNING_RATE_SCHEDULES.get(schedule_name)
+    if fn is None:
+        raise ValueError(f"Unknown learning_rate_schedule '{schedule_name}'. Valid options: {sorted(LEARNING_RATE_SCHEDULES.keys())}")
+    return fn(s, cooldown_frac)
+
 # Global flag to force full-sized attention windows regardless of training progress
 _force_full_windows: bool = False
 

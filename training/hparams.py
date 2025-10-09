@@ -133,7 +133,12 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
     if swt < 0:
         raise ValueError(f"snapshot_warmup_tokens must be >= 0, got {swt}")
     # Validate learning rate schedule option
-    valid_schedules = {"linear_decay", "linear_warmup_cosine_decay"}
+    # Validate learning rate schedule option against optim dispatch table
+    try:
+        from training.optim import LEARNING_RATE_SCHEDULES
+        valid_schedules = set(LEARNING_RATE_SCHEDULES.keys())
+    except Exception:
+        valid_schedules = {"linear_decay", "linear_warmup_cosine_decay"}
     if args.learning_rate_schedule not in valid_schedules:
         raise ValueError(
             f"learning_rate_schedule must be one of {sorted(valid_schedules)}, got '{args.learning_rate_schedule}'"
