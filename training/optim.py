@@ -412,6 +412,9 @@ def build_optimizers_from_cfg(
         opt_kwargs = {k: v for k, v in opt_cfg.items() if k not in ("type", "params")}
 
         if OptClass is Muon:
+            # Enforce explicit weight_decay in config for Muon (breaking change)
+            if "weight_decay" not in opt_kwargs:
+                raise ValueError("Muon optimizer now requires 'weight_decay' to be set explicitly in the training config")
             opt_kwargs.setdefault("rank", rank)
             opt_kwargs.setdefault("world_size", world_size)
 

@@ -179,6 +179,7 @@ How it works
 
       - type: Muon
         momentum: 0.95
+        weight_decay: 0.01
         params:
           - group: hidden_matrix_params
             lr: 0.03
