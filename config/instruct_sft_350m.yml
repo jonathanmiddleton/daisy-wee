@@ -1,3 +1,7 @@
+# Logging
+wandb_log: true
+wandb_project: 'daisy-wee'
+wandb_run_name: '350m-instruct'
 # Pretraining checkpoint path
 init_checkpoint: "checkpoints/state_step_100000.pt"
 # Instruct SFT training configuration

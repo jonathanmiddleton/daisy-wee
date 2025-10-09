@@ -1,7 +1,7 @@
 # Logging
 wandb_log: true
 wandb_project: 'daisy-wee'
-wandb_run_name: '350m-modded'
+wandb_run_name: '350m'
 # Pretraining configuration
 train_shards: "data/fineweb/fineweb_train_*.bin"
 target_tokens: 3124756480  # 3124756480 = 5960 steps
