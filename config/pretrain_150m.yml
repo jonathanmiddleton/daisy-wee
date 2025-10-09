@@ -17,18 +17,18 @@ optimizers:
     fused: true
     params:
       - group: head_params
-        lr: 0.02
+        lr: 0.2
       - group: embed_params
-        lr: 0.04
+        lr: 0.4
       - group: scalar_params
-        lr: 0.02
+        lr: 0.2
 
   - type: Muon
     momentum: 0.95
     weight_decay: 0.0
     params:
       - group: hidden_matrix_params
-        lr: 0.05
+        lr: 0.25
 full_windows: false
 # Gradient accumulation
 grad_acc_steps: 8
