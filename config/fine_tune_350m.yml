@@ -13,7 +13,7 @@ train_attention_window_len: 3456        # largest sliding attention window used 
 # Optimizers configuration
 optimizers:
   - type: AdamW
-    betas: [0.9, 0.95]
+    betas: [0.9, 0.99]
     eps: 1.0e-10
     weight_decay: 0.01
     fused: true

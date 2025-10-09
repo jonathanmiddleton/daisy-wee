@@ -133,7 +133,8 @@ def _save_run_checkpoint(
         best_val: float,
         args: Hyperparameters,
         tokens_per_step: int,
-        progress
+        progress,
+        overwrite: bool = False,
 ) -> str:
     """Create a run-scoped checkpoint filename, remove the previous run checkpoint if different,
     save the new checkpoint, and remember its path.
@@ -147,7 +148,7 @@ def _save_run_checkpoint(
         run_start_minute=run_start_minute,
         run_id=run_id,
     )
-    if _last_run_ckpt_path and os.path.exists(_last_run_ckpt_path) and _last_run_ckpt_path != fname:
+    if overwrite and _last_run_ckpt_path and os.path.exists(_last_run_ckpt_path) and _last_run_ckpt_path != fname:
         try:
             os.remove(_last_run_ckpt_path)
         except OSError:
@@ -343,6 +344,7 @@ while progress.tokens_processed < progress.target_tokens:
                     args=args,
                     tokens_per_step=_tokens_per_optim_step,
                     progress=progress,
+                    overwrite=True,
                 )
                 print0(f"Saved checkpoint to {fname} with val loss {float(cur_val):.6f}")
             else:
@@ -429,6 +431,7 @@ if master_process and args.save_checkpoint:
         args=args,
         tokens_per_step=_tokens_per_optim_step,
         progress=progress,
+        overwrite=False
     )
 
 print0(
