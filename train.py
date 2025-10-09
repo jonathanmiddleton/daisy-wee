@@ -25,7 +25,7 @@ import torch
 from torch import nn
 import torch.distributed as dist
 
-# torch._inductor.config.coordinate_descent_tuning = True
+torch._inductor.config.coordinate_descent_tuning = True
 torch._dynamo.config.compiled_autograd = True
 torch._dynamo.config.error_on_nested_fx_trace = False  # temp workaround/diagnostic for dynamo error
 
