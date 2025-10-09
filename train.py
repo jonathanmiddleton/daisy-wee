@@ -11,8 +11,8 @@ from dataclasses import asdict
 
 from models import get_model_class
 from training.data_gen import DistributedDataGenerator
-from training.optim import Muon
-from training.optim import get_lr_s, get_num_window_blocks, set_full_windows
+from training.optim import Muon, get_lincos_lr_s
+from training.optim import get_linear_decay_lr_s, get_num_window_blocks, set_full_windows
 from training.optim import build_optimizers_from_cfg
 from training.eval import Evaluator
 from tools.checkpoint import load_checkpoint, save_checkpoint, apply_model_state
@@ -381,7 +381,12 @@ while progress.tokens_processed < progress.target_tokens:
     }
     # set optimization hyperparameters based on s
     s = progress.s
-    lr_scale = get_lr_s(s, args.cooldown_frac)
+    # Compute LR scale by selected schedule
+    if args.learning_rate_schedule == "linear_decay":
+        lr_scale = get_linear_decay_lr_s(s, args.cooldown_frac)
+    elif args.learning_rate_schedule == "linear_warmup_cosine_decay":
+        lr_scale = get_lincos_lr_s(s, args.cooldown_frac)
+
     for opt in optimizers:
         for group in opt.param_groups:
             group["lr"] = group["initial_lr"] * lr_scale

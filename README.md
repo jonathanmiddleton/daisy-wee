@@ -137,6 +137,7 @@ How it works
   - window_block_size: Block granularity used by sliding window and masks; must divide both training_sequence_length and attention_window_len (e.g., 128).
   - target_tokens: Total number of training tokens to process before completion.
   - cooldown_frac: Fraction of the schedule spent in cooldown/decay; drives LR/window schedules via normalized progress s in [0,1].
+  - learning_rate_schedule: Choose the LR schedule. One of {linear_decay, linear_warmup_cosine_decay}. See LR Schedule section for details.
   - val_tokens: Number of tokens to evaluate during each validation pass.
   - val_seq_len: Per-device validation sequence length.
   - val_loss_every_tokens: Run validation every N training tokens processed.
@@ -331,6 +332,14 @@ This project builds on a decoder‑only Transformer (GPT) with pragmatic, effici
 
 **LR Schedule**
 - Warmup, then linear decay/cooldown variants tuned for depth and sequence length changes.
+- New: Select the LR schedule via training YAML key learning_rate_schedule with one of:
+  - linear_decay: scale is 1.0 for most of training, with a linear decay to 0.0 over the final cooldown_frac portion.
+  - linear_warmup_cosine_decay: linear warmup from 0.0 -> 1.0 over the initial (1 - cooldown_frac) portion, then cosine decay to 0.0 over the final cooldown_frac portion.
+- Example YAML:
+  ```yaml
+  cooldown_frac: 0.7
+  learning_rate_schedule: linear_warmup_cosine_decay
+  ```
 
 **BF16 & Casting Discipline**
 - BF16‑first with targeted casts to mitigate precision issues while retaining memory savings.

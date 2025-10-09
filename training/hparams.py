@@ -18,6 +18,8 @@ class Hyperparameters:
     val_seq_len: int
     target_tokens: int
     cooldown_frac: float
+    # Learning rate schedule selection
+    learning_rate_schedule: str  # {'linear_decay','linear_warmup_cosine_decay'}
     train_attention_window_len: int  # training-time sliding attention window (<= model spec max)
     window_block_size: int  # block granularity for sliding window/masks (from spec)
     # Common fields with defaults
@@ -130,6 +132,12 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
         raise ValueError(f"snapshot_per_n_tokens must be >= 0, got {spnt}")
     if swt < 0:
         raise ValueError(f"snapshot_warmup_tokens must be >= 0, got {swt}")
+    # Validate learning rate schedule option
+    valid_schedules = {"linear_decay", "linear_warmup_cosine_decay"}
+    if args.learning_rate_schedule not in valid_schedules:
+        raise ValueError(
+            f"learning_rate_schedule must be one of {sorted(valid_schedules)}, got '{args.learning_rate_schedule}'"
+        )
 
     return args
 

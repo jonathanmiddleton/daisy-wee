@@ -6,8 +6,9 @@ wandb_run_name: '350m-fine-tune'
 init_checkpoint: "checkpoints/20251009T1601-val2.980-step005960-run1.pt"
 # Instruct SFT training configuration
 train_shards: "data/fineweb/fineweb_train_*.bin"
-target_tokens: 1000000000
-cooldown_frac: 0.9
+target_tokens: 1500000000
+cooldown_frac: 0.5
+learning_rate_schedule: linear_warmup_cosine_decay
 training_sequence_length: 65536        #  N * 1024; must be divisible by window_block_size
 train_attention_window_len: 3456        # largest sliding attention window used during training; must be divisible by window_block_size
 # Optimizers configuration
@@ -19,20 +20,20 @@ optimizers:
     fused: true
     params:
       - group: head_params
-        lr: 0.003125
+        lr: 0.0015625
       - group: embed_params
-        lr: 0.3
+        lr: 0.15
       - group: scalar_params
-        lr: 0.015
+        lr: 0.0075
   - type: Muon
     momentum: 0.95
     weight_decay: 0.01
     params:
       - group: hidden_matrix_params
-        lr: 0.025
+        lr: 0.0125
 full_windows: true
 # Gradient accumulation
-grad_acc_steps: 4 # assumes world_size=8
+grad_acc_steps: 1 # assumes world_size=8
 # Evaluations
 val_shards: "data/fineweb/fineweb_val_*.bin"
 val_loss_every_tokens:     104857600

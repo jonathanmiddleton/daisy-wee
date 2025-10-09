@@ -4,6 +4,7 @@ from functools import lru_cache
 import torch.distributed as dist
 from typing import Any
 from torch import nn
+import math
 
 
 def derive_named_param_groups(model: nn.Module) -> dict[str, list[nn.Parameter]]:
@@ -275,12 +276,42 @@ class AdaptiveLR:
         return base * self.m
 
 
-def get_lr_s(s: float, cooldown_frac: float) -> float:
+def get_linear_decay_lr_s(s: float, cooldown_frac: float) -> float:
     """Return LR scale factor given normalized progress s in [0,1].
     1.0 during main phase, linear decay during cooldown.
     """
     x = 0.0 if s < 0 else (1.0 if s > 1 else s)
     return 1.0 if x < 1 - cooldown_frac else max((1 - x) / max(cooldown_frac, 1e-8), 0.0)
+
+
+def get_lincos_lr_s(s: float, cooldown_frac: float) -> float:
+    """Linear warmup to 1.0, then cosine decay to 0.0 during cooldown.
+
+    Args:
+        s: normalized training progress in [0, 1].
+        cooldown_frac: fraction of total progress reserved for cosine cooldown (in [0,1]).
+
+    Behavior:
+        - Warmup phase (0 <= s < 1 - cooldown_frac): linear ramp from 0 -> 1 over the warmup span.
+        - Cooldown phase (1 - cooldown_frac <= s <= 1): cosine decay from 1 -> 0 over the cooldown span.
+        - Inputs are clamped to valid ranges; cooldown_frac <= 0 disables cooldown (pure warmup).
+    """
+    # Clamp inputs
+    x = 0.0 if s < 0.0 else (1.0 if s > 1.0 else s)
+    c = 0.0 if cooldown_frac < 0.0 else (1.0 if cooldown_frac > 1.0 else cooldown_frac)
+
+    # No cooldown: pure linear warmup over the whole schedule
+    if c == 0.0:
+        return x  # ramps 0->1 as s goes 0->1
+
+    # Warmup: length is (1 - c), scale up to exactly 1 at the boundary
+    warmup_len = max(1.0 - c, 1e-8)
+    if x < 1.0 - c:
+        return x / warmup_len
+
+    # Cooldown: cosine decay over the final c fraction
+    t = (x - (1.0 - c)) / max(c, 1e-8)  # t in [0,1]
+    return 0.5 * (1.0 + math.cos(math.pi * t))
 
 # Global flag to force full-sized attention windows regardless of training progress
 _force_full_windows: bool = False

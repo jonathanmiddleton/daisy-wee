@@ -6,6 +6,7 @@ wandb_run_name: '350m'
 train_shards: "data/fineweb/fineweb_train_*.bin"
 target_tokens: 3124756480  # 3124756480 = 5960 steps
 cooldown_frac: 0.7
+learning_rate_schedule: linear_warmup_cosine_decay
 training_sequence_length: 65536        #  N * 1024; must be divisible by window_block_size
 train_attention_window_len: 3456        # largest sliding attention window used during training; must be divisible by window_block_size
 # Optimizers configuration
