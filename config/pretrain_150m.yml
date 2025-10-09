@@ -4,7 +4,7 @@ wandb_project: 'daisy-wee'
 wandb_run_name: '150m'
 # Pretraining configuration
 train_shards: "data/fineweb/fineweb_train_*.bin"
-target_tokens: 1000000000
+target_tokens: 2000000000
 cooldown_frac: 0.0
 training_sequence_length: 65536        #  N * 1024; must be divisible by window_block_size
 train_attention_window_len: 1792        # largest sliding attention window used during training; must be divisible by window_block_size
