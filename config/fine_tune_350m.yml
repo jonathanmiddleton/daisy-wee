@@ -19,20 +19,20 @@ optimizers:
     fused: true
     params:
       - group: head_params
-        lr: 0.0015625
+        lr: 0.003125
       - group: embed_params
-        lr: 0.15
+        lr: 0.3
       - group: scalar_params
-        lr: 0.0075
+        lr: 0.015
   - type: Muon
     momentum: 0.95
     weight_decay: 0.01
     params:
       - group: hidden_matrix_params
-        lr: 0.0125
+        lr: 0.025
 full_windows: true
 # Gradient accumulation
-grad_acc_steps: 2 # assumes world_size=8
+grad_acc_steps: 4 # assumes world_size=8
 # Evaluations
 val_shards: "data/fineweb/fineweb_val_*.bin"
 val_loss_every_tokens:     104857600
