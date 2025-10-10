@@ -413,7 +413,7 @@ while progress.tokens_processed < progress.target_tokens:
         warmup_end = approx_training_time_ms
     avg_step = f"avg_step:{(approx_training_time_ms - warmup_end) / max(step - 9, 1):.2f}ms" if step >= 10 else "avg_step: (warmup to step 10)"
     print0(
-        f"step:{step} train_loss:{train_loss_est:.4f} tokens:{progress.tokens_processed:,}/{progress.target_tokens:,} (s={progress.s:.4f}) train_time:{approx_training_time_ms:,.0f}ms {avg_step}")
+        f"step:{step} train_loss:{train_loss_est:.4f} tokens:{progress.tokens_processed:,}/{progress.target_tokens:,} (s={progress.s:.4f}) train_time:{approx_training_time_ms:,.0f}ms {avg_step} lr_scale:{lr_scale:.4f}")
     log_wandb({
                 "train/loss": train_loss_est,
                 "train/ppl": math.exp(train_loss_est) if train_loss_est < 20 else float("inf"),
