@@ -87,6 +87,8 @@ class Evaluator:
             loss_acc = torch.zeros((), device=device, dtype=torch.float32)
             for _ in range(steps):
                 inputs, targets = next(self._ddg)
+                while len(inputs) % self._wbs != 0 or len(targets) % self._wbs != 0:
+                    inputs, targets = next(self._ddg)
                 # Match training eval: use window schedule with s=1.0 (full windows) for stability
                 loss_acc = loss_acc + model(inputs, get_num_window_blocks(1.0, attention_window_len=self._tawt, window_block_size=self._wbs), targets)
             loss_acc = loss_acc / steps

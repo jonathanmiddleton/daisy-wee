@@ -314,6 +314,7 @@ while progress.tokens_processed < progress.target_tokens:
         training_time_ms += 1000 * (time.perf_counter() - t0)
         model.eval()
         # Evaluate using the Evaluator (per-rank tokens)
+        _evaluator.reset_generator()
         eval_out = _evaluator.eval(model=model, total_tokens=args.tot_val_tokens)
         cur_val = float(eval_out.get("val_loss", float("nan")))
         last_val_loss = cur_val
