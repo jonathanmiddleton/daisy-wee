@@ -8,7 +8,7 @@ Examples:
 
 This will execute torchrun multiple times, once for each combination of overrides.
 """
-from __future__ import annotations
+
 
 import argparse
 import itertools

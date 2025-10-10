@@ -1,5 +1,5 @@
 # gpt2 package exposing GPT-2 related modules under models.gpt2
-from __future__ import annotations
+
 
 # Re-export key classes/functions for convenience
 from .gpt_core import GPT2Core  # noqa: F401
