@@ -18,7 +18,7 @@ class ProgressMeter:
         self.tokens_processed = 0
         self.eval_every_tokens = int(eval_every_tokens) if eval_every_tokens else None
         self.next_eval_at = self.eval_every_tokens if self.eval_every_tokens else None
-        self.snapshot_per_n_tokens = int(snapshot_per_n_tokens) if snapshot_per_n_tokens else None
+        self.snapshot_per_n_tokens = int(snapshot_per_n_tokens) if snapshot_per_n_tokens is not None and snapshot_per_n_tokens >= 0 else None
         self.snapshot_warmup_tokens = int(snapshot_warmup_tokens or 0)
         self.next_snapshot_at = (
             self.snapshot_warmup_tokens + self.snapshot_per_n_tokens
