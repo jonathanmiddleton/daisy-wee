@@ -116,11 +116,11 @@ def _build_hparams_from_args(args: Hyperparameters) -> dict:
 
 # noinspection PyShadowingNames
 def _run_ckpt_filename(
-        *, val_value: float | None, step: int, run_start_minute: str, run_id: int
+        *, val_value: float | None, step: int, run_start_minute: str, run_id: int, suffix: str | None = None,
 ) -> str:
     os.makedirs("checkpoints", exist_ok=True)
     _val_trunc = math.trunc(val_value * 100) / 100 if val_value is not None else float("nan")
-    return f"checkpoints/{run_start_minute}-val{_val_trunc:.3f}-step{step:06d}-run{run_id}.pt"
+    return f"checkpoints/{run_start_minute}-val{_val_trunc:.3f}-step{step:06d}-run{run_id}" + (f"-{suffix}" if suffix else "") + ".pt"
 
 
 # noinspection PyShadowingNames
@@ -136,6 +136,7 @@ def _save_run_checkpoint(
         tokens_per_step: int,
         progress,
         overwrite: bool = False,
+        suffix: str | None = None,
 ) -> str:
     """Create a run-scoped checkpoint filename, remove the previous run checkpoint if different,
     save the new checkpoint, and remember its path.
@@ -148,6 +149,7 @@ def _save_run_checkpoint(
         step=step,
         run_start_minute=run_start_minute,
         run_id=run_id,
+        suffix=suffix,
     )
     if overwrite and _last_run_ckpt_path and os.path.exists(_last_run_ckpt_path) and _last_run_ckpt_path != fname:
         try:
@@ -347,6 +349,7 @@ while progress.tokens_processed < progress.target_tokens:
                     tokens_per_step=_tokens_per_optim_step,
                     progress=progress,
                     overwrite=True,
+                    suffix="best",
                 )
                 print0(f"Saved checkpoint to {fname} with val loss {float(cur_val):.6f}")
             else:
@@ -435,7 +438,8 @@ if master_process and args.save_checkpoint:
         args=args,
         tokens_per_step=_tokens_per_optim_step,
         progress=progress,
-        overwrite=False
+        overwrite=False,
+        suffix="final"
     )
 
 print0(
