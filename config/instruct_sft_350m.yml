@@ -8,7 +8,7 @@ torch.coordinate_descent_tuning: false
 init_checkpoint: "checkpoints/20251010T0013-val2.890-step000400-run1.pt"
 # Instruct SFT training configuration
 train_shards: "data/instruct_mix/instruct_train_*.bin"
-target_tokens: 2000000000
+target_tokens: 865075200
 cooldown_frac: 0.5
 learning_rate_schedule: linear_warmup_cosine_decay
 training_sequence_length: 65536        #  N * 1024; must be divisible by window_block_size
@@ -42,8 +42,8 @@ val_loss_every_tokens:     26214400
 val_seq_len: 262144       # 4 * 64 * 1024
 tot_val_tokens: 10485760
 # Snapshots
-snapshot_warmup_tokens:     0     # token warmup before snapshots
-snapshot_per_n_tokens:     0         # snapshot interval by tokens
+snapshot_warmup_tokens:     1     # token warmup before snapshots
+snapshot_per_n_tokens:     1         # snapshot interval by tokens
 save_checkpoint: true
 # Model Definition
 model_spec: gpt2_350m
