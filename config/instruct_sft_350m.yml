@@ -2,6 +2,8 @@
 wandb_log: true
 wandb_project: 'daisy-wee'
 wandb_run_name: '350m-instruct'
+# Torch config
+torch.coordinate_descent_tuning: false
 # Pretraining checkpoint path
 init_checkpoint: "checkpoints/20251009T1647-val2.920-step000954-run1.pt"
 # Instruct SFT training configuration

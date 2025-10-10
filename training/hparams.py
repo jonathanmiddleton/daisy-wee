@@ -44,6 +44,8 @@ class Hyperparameters:
     # Model selection
     model_spec: str    # name of model spec under model_specs/, or a path to a spec file
     model_class: str  # fully-qualified class name, e.g., 'models.gpt2.gpt_core.GPT2Core'
+    # Torch compile/tuning flags
+    torch_coordinate_descent_tuning: bool = False
     # Weights & Biases minimal logging config
     wandb_log: bool = False
     wandb_project: str = ""
@@ -65,6 +67,10 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
             cfg_dict = yaml.safe_load(f) or {}
     except FileNotFoundError as e:
         raise FileNotFoundError(f"Config file not found: {used_path}") from e
+
+    # Normalize/alias keys that use dots for namespacing
+    if "torch.coordinate_descent_tuning" in cfg_dict and "torch_coordinate_descent_tuning" not in cfg_dict:
+        cfg_dict["torch_coordinate_descent_tuning"] = cfg_dict.pop("torch.coordinate_descent_tuning")
 
     # If a model_spec name/path is provided, load the spec and merge recognized fields
     model_spec_name = cfg_dict.get("model_spec")
@@ -160,7 +166,7 @@ def apply_cli_overrides(args: Hyperparameters, override_args: List[str]) -> Hype
         if "=" not in s:
             continue
         k, v = s.split("=", 1)
-        k = k.strip().replace("-", "_")
+        k = k.strip().replace("-", "_").replace(".", "_")
         if k not in field_map:
             # Ignore unknown keys to allow torchrun args if any; alternatively, raise
             continue

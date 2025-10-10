@@ -145,6 +145,7 @@ How it works
   - snapshot_per_n_tokens: Snapshot interval measured in tokens.
   - save_checkpoint: Whether to write training checkpoints.
   - full_windows: If true, force full attention windows for the entire run (useful when resuming after training with smaller windows).
+  - torch.coordinate_descent_tuning: Controls torch._inductor.config.coordinate_descent_tuning. Default: false. Recommended: true for pretraining configs; false for fine‑tuning configs. Can be overridden from CLI via --torch.coordinate_descent_tuning=true|false.
   - wandb_log: If true, enable basic Weights & Biases logging. Defaults to false.
   - wandb_project: W&B project name; defaults to 'daisy-wee' when logging is enabled.
   - wandb_run_name: Optional run name; defaults to timestamp+run id when not provided.

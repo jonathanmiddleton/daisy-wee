@@ -25,16 +25,17 @@ import torch
 from torch import nn
 import torch.distributed as dist
 
-torch._inductor.config.coordinate_descent_tuning = True
-torch._dynamo.config.compiled_autograd = True
-torch._dynamo.config.error_on_nested_fx_trace = False  # temp workaround/diagnostic for dynamo error
-
 # Load config from YAML (first CLI arg if provided)
 _config_path = sys.argv[1] if len(sys.argv) > 1 else None
 args = load_hparams_from_yaml(_config_path)
 
 # Apply overrides from the remaining CLI args: support --key=value or key=value
 args = apply_cli_overrides(args, sys.argv[2:])
+
+# Configure PyTorch compile/tuning based on config
+torch._inductor.config.coordinate_descent_tuning = bool(getattr(args, "torch_coordinate_descent_tuning", False))
+torch._dynamo.config.compiled_autograd = True
+torch._dynamo.config.error_on_nested_fx_trace = False  # temp workaround/diagnostic for dynamo error
 
 # Apply scheduling toggle for attention windows
 set_full_windows(args.full_windows)
