@@ -5,7 +5,7 @@ wandb_run_name: '350m-instruct'
 # Torch config
 torch.coordinate_descent_tuning: false
 # Pretraining checkpoint path
-init_checkpoint: "checkpoints/20251009T1647-val2.920-step000954-run1.pt"
+init_checkpoint: "checkpoints/20251010T0013-val2.890-step000400-run1.pt"
 # Instruct SFT training configuration
 train_shards: "data/instruct_mix/instruct_train_*.bin"
 target_tokens: 2000000000
