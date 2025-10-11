@@ -5,7 +5,7 @@ wandb_run_name: '350m'
 # Torch config
 torch.coordinate_descent_tuning: true
 # Pretraining configuration
-train_shards: "data/fineweb/fineweb_train_*.bin"
+train_shards: "data/fineweb-edu/edu_fineweb_train_*.bin"
 target_tokens: 3124756480  # 3124756480 = 5960 steps
 cooldown_frac: 0.7
 learning_rate_schedule: linear_warmup_cosine_decay
@@ -36,7 +36,7 @@ full_windows: false
 # Gradient accumulation
 grad_acc_steps: 1 # assumes world_size=8
 # Evaluations
-val_shards: "data/fineweb/fineweb_val_*.bin"
+val_shards: "data/fineweb/edu_fineweb_val_*.bin"
 val_loss_every_tokens:    524288000 # 524288000 = 1k steps
 val_seq_len: 262144       # 4 * 64 * 1024
 tot_val_tokens: 10485760  # 5 steps
