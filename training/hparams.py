@@ -13,7 +13,8 @@ from tools.helpers import _coerce_value
 class Hyperparameters:
     # Required scenario-specific fields
     train_shards: str
-    val_shards: str
+    # List of evaluation datasets with descriptive type and path glob
+    val_shards: list[dict]
     training_sequence_length: int
     val_seq_len: int
     target_tokens: int
@@ -100,6 +101,25 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
     missing = [name for name in required if name not in cfg_dict]
     if missing:
         raise ValueError(f"Missing required hyperparameter(s) in {used_path}: {missing}")
+
+    # Normalize and validate new multi-eval schema for val_shards (no backward compatibility)
+    vcfg = cfg_dict.get("val_shards")
+    if not isinstance(vcfg, list) or len(vcfg) == 0:
+        raise ValueError("val_shards must be a non-empty list of objects with 'path' and optional 'type' fields")
+    norm_list: list[dict] = []
+    for i, item in enumerate(vcfg, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"val_shards[{i}] must be a mapping with keys: path (str), type (str, optional)")
+        path = item.get("path")
+        vtype = item.get("type")
+        if not isinstance(path, str) or not path:
+            raise ValueError(f"val_shards[{i}].path must be a non-empty string")
+        if vtype is not None and not isinstance(vtype, str):
+            raise ValueError(f"val_shards[{i}].type must be a string when provided")
+        if vtype is None:
+            vtype = f"val{i}"
+        norm_list.append({"type": vtype, "path": path})
+    cfg_dict["val_shards"] = norm_list
 
     args = Hyperparameters(**cfg_dict)
 

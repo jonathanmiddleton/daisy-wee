@@ -37,7 +37,9 @@ full_windows: true
 # Gradient accumulation
 grad_acc_steps: 1 # assumes world_size=8
 # Evaluations
-val_shards: "data/fineweb/fineweb_val_*.bin"
+val_shards:
+  - type: "fineweb"
+    path: "data/fineweb/fineweb_val_*.bin"
 val_loss_every_tokens:     104857600
 val_seq_len: 262144       # 4 * 64 * 1024
 tot_val_tokens: 10485760

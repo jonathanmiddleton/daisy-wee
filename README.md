@@ -131,7 +131,13 @@ How it works
 
 - Common training fields
   - model_spec: Name of a spec under model_specs/ (e.g., gpt2_350m) or a direct path to a spec file.
-  - train_shards, val_shards: Glob patterns for tokenized shard files used for training/validation.
+  - train_shards: Glob pattern for training shards. val_shards: List of evaluation datasets. Each item is a map with keys: type (string label for logging) and path (glob pattern for shards). Example:
+    
+    val_shards:
+      - type: "A string description for documentation, unused by the code"
+        path: "path/to/shards/dataset_val_*.bin"
+      - type: "Another eval dataset..."
+        path: "path/to/another/dataset2_val_*.bin"
   - training_sequence_length: Per-device microstep sequence length used for training batches.
   - attention_window_len: Largest sliding attention window actually used during training (e.g., 3456).
   - window_block_size: Block granularity used by sliding window and masks; must divide both training_sequence_length and attention_window_len (e.g., 128).
@@ -141,6 +147,7 @@ How it works
   - val_tokens: Number of tokens to evaluate during each validation pass.
   - val_seq_len: Per-device validation sequence length.
   - val_loss_every_tokens: Run validation every N training tokens processed.
+  - Multi-eval behavior: If more than one val dataset is provided, training will automatically run a full evaluation on each dataset at every eval interval. The following attributes are common across all evaluations and configured once: val_loss_every_tokens, val_seq_len, tot_val_tokens. Checkpointing and the legacy val/loss and val/ppl metrics track the first dataset listed; per-dataset metrics are logged under val/<type>/loss and val/<type>/ppl.
   - snapshot_warmup_tokens: Minimum tokens to process before taking snapshots.
   - snapshot_per_n_tokens: Snapshot interval measured in tokens.
   - save_checkpoint: Whether to write training checkpoints.
@@ -195,7 +202,9 @@ Examples
   ```yaml
   # config/instruct_sft.yml
   train_shards: "data/instruct_mix/instruct_train_*.bin"
-  val_shards: "data/instruct_mix/instruct_val_*.bin"
+  val_shards:
+    - type: "instruct"
+      path: "data/instruct_mix/instruct_val_*.bin"
   val_seq_len: 262144
   model_spec: gpt2_350m       # resolved from model_specs/gpt2_350m.yml
   target_tokens: 30000000

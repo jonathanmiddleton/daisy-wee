@@ -49,7 +49,9 @@ full_windows: false
 # Gradient accumulation
 grad_acc_steps: 1
 # Evaluations
-val_shards: "data/fineweb/fineweb_val_*.bin"
+val_shards:
+  - type: "fineweb"
+    path: "data/fineweb/fineweb_val_*.bin"
 val_loss_every_tokens: 65536
 val_seq_len: 262144
 tot_val_tokens: 10485760
@@ -118,7 +120,9 @@ full_windows: false
 # Gradient accumulation
 grad_acc_steps: 1
 # Evaluations
-val_shards: "data/fineweb/fineweb_val_*.bin"
+val_shards:
+  - type: "fineweb"
+    path: "data/fineweb/fineweb_val_*.bin"
 val_loss_every_tokens: 65536
 val_seq_len: 262144
 tot_val_tokens: 10485760

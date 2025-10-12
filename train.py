@@ -269,15 +269,20 @@ _train_ddg = DistributedDataGenerator(args.train_shards, world_size * args.train
 val_batch_size = world_size * args.val_seq_len
 if args.tot_val_tokens % val_batch_size != 0:
     raise ValueError(f"tot_val_tokens ({args.tot_val_tokens}) must be divisible by val_batch_size ({val_batch_size})")
-# Build a persistent validation data generator and evaluator
-_val_ddg = DistributedDataGenerator(args.val_shards, val_batch_size, rank, world_size)
-_evaluator: Evaluator = Evaluator(
-    data_generator=_val_ddg,
-    distributed_enabled=use_distributed,
-    rank=rank,
-    train_attention_window_len=args.train_attention_window_len,
-    window_block_size=args.window_block_size,
-)
+# Build persistent validation data generators and evaluators for each configured dataset
+_val_evals: list[tuple[str, Evaluator]] = []
+for _v in args.val_shards:
+    _label = _v.get("type")
+    _path = _v.get("path")
+    _ddg = DistributedDataGenerator(_path, val_batch_size, rank, world_size)
+    _eval = Evaluator(
+        data_generator=_ddg,
+        distributed_enabled=use_distributed,
+        rank=rank,
+        train_attention_window_len=args.train_attention_window_len,
+        window_block_size=args.window_block_size,
+    )
+    _val_evals.append((_label, _eval))
 
 # Tokens per training micro-step (includes padding by design)
 tokens_per_step = world_size * args.training_sequence_length
@@ -315,25 +320,39 @@ while progress.tokens_processed < progress.target_tokens:
             dist.barrier()
         training_time_ms += 1000 * (time.perf_counter() - t0)
         model.eval()
-        # Evaluate using the Evaluator (per-rank tokens)
-        _evaluator.reset_generator()
-        eval_out = _evaluator.eval(model=model, total_tokens=args.tot_val_tokens)
-        cur_val = float(eval_out.get("val_loss", float("nan")))
+        # Evaluate using all configured Evaluators (per-rank tokens)
+        per_ds_results: list[tuple[str, dict]] = []
+        for _label, _ev in _val_evals:
+            _ev.reset_generator()
+            _out = _ev.eval(model=model, total_tokens=args.tot_val_tokens)
+            per_ds_results.append((_label, _out))
+        # Canonical/primary val metrics use the first dataset
+        primary_label, primary_out = per_ds_results[0]
+        cur_val = float(primary_out.get("val_loss", float("nan")))
         last_val_loss = cur_val
-        ema_dloss_per_token = eval_out.get("ema_dloss_per_token", ema_dloss_per_token)
+        ema_dloss_per_token = primary_out.get("ema_dloss_per_token", ema_dloss_per_token)
+        # Print a compact per-dataset summary line
+        parts = [f"{lbl}:{float(out.get('val_loss', float('nan'))):.6f}" for lbl, out in per_ds_results]
         print0(
             f"step:{step} tokens:{progress.tokens_processed:,}/{progress.target_tokens:,} (s={progress.s:.4f}) "
-            f"val_loss:{cur_val:.6f} train_time:{training_time_ms:,.0f}ms ema_dloss_per_1e6_tokens:{ema_dloss_per_token*1e6:.6f}")
-        log_wandb({
-                    "val/loss": cur_val,
-                    "val/ppl": math.exp(cur_val) if cur_val < 20 else float("inf"),
-                    "val/ema_dloss_per_token": ema_dloss_per_token,
-                    "tokens": progress.tokens_processed,
-                    "s": progress.s,
-                    "train/time_ms": training_time_ms + 1000 * (time.perf_counter() - t0),
-                    "step": step,
-                })
-        # checkpoints by tokens (save only if validation improves)
+            + " ".join(parts) +
+            f" train_time:{training_time_ms:,.0f}ms ema_dloss_per_1e6_tokens:{ema_dloss_per_token*1e6:.6f}")
+        # W&B logging: primary under legacy keys; all datasets under namespaced keys
+        wb = {
+            "val/loss": cur_val,
+            "val/ppl": math.exp(cur_val) if cur_val < 20 else float("inf"),
+            "val/ema_dloss_per_token": ema_dloss_per_token,
+            "tokens": progress.tokens_processed,
+            "s": progress.s,
+            "train/time_ms": training_time_ms + 1000 * (time.perf_counter() - t0),
+            "step": step,
+        }
+        for lbl, out in per_ds_results:
+            _loss = float(out.get("val_loss", float("nan")))
+            wb[f"val/{lbl}/loss"] = _loss
+            wb[f"val/{lbl}/ppl"] = math.exp(_loss) if _loss < 20 else float("inf")
+        log_wandb(wb)
+        # checkpoints by tokens (save only if validation improves) using primary dataset
         if master_process and args.save_checkpoint and progress.should_snapshot():
             if cur_val < best_val:
                 best_val = cur_val
