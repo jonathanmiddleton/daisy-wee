@@ -323,6 +323,10 @@ while progress.tokens_processed < progress.target_tokens:
         # Evaluate using all configured Evaluators (per-rank tokens)
         per_ds_results: list[tuple[str, dict]] = []
         for _label, _ev in _val_evals:
+            # Announce dataset evaluation with expected steps for better visibility
+            _world_batch = val_batch_size
+            _steps = args.tot_val_tokens // _world_batch if _world_batch > 0 else 0
+            print0(f"[eval] dataset={_label} steps={_steps} (global_batch={_world_batch}, tot_tokens={args.tot_val_tokens})")
             _ev.reset_generator()
             _out = _ev.eval(model=model, total_tokens=args.tot_val_tokens)
             per_ds_results.append((_label, _out))

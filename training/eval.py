@@ -85,7 +85,8 @@ class Evaluator:
             t0 = time.perf_counter()
             device = next(model.parameters()).device
             loss_acc = torch.zeros((), device=device, dtype=torch.float32)
-            for _ in range(steps):
+            interval = max(1, steps // 10)
+            for i in range(steps):
                 inputs, targets = next(self._ddg)
                 # bugfix: drop any partial tail across both tensors
                 n_in = len(inputs)
@@ -93,6 +94,9 @@ class Evaluator:
                 n = min(n_in, n_tg)
                 cut = n - (n % self._wbs)
                 if cut == 0:
+                    # still advance silently; optionally emit rare heartbeat
+                    if self._rank == 0 and (i % interval == 0 or i == steps - 1):
+                        print(f"[eval] step {i+1}/{steps}: skipped (insufficient tokens in shard)" )
                     continue
                 if n_in != cut:
                     inputs = inputs[:cut]
@@ -100,6 +104,8 @@ class Evaluator:
                     targets = targets[:cut]
                 # Match training eval: use window schedule with s=1.0 (full windows) for stability
                 loss_acc = loss_acc + model(inputs, get_num_window_blocks(1.0, attention_window_len=self._tawt, window_block_size=self._wbs), targets)
+                if self._rank == 0 and (i % interval == 0 or i == steps - 1):
+                    print(f"[eval] step {i+1}/{steps} done")
             loss_acc = loss_acc / steps
 
             if self._use_dist:
