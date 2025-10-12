@@ -1,5 +1,6 @@
 import argparse
 import sys
+import re
 import torch
 from torch import nn, tensor
 import tiktoken
@@ -14,8 +15,8 @@ MAX_SEQ_LEN = 16*1024
 parser = argparse.ArgumentParser(description="Generate text with a GPT model from a checkpoint.")
 parser.add_argument("checkpoint", type=str, help="Path to model checkpoint (.pt)")
 parser.add_argument("--max_tokens", type=int, default=256, help="Number of new tokens to generate")
-parser.add_argument("--repetition_penalty", type=float, default=1.25, help="Repetition penalty")
-parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
+parser.add_argument("--repetition_penalty", type=float, default=1.2, help="Repetition penalty")
+parser.add_argument("--temperature", type=float, default=0.6, help="Sampling temperature")
 parser.add_argument("--top_k", type=int, default=100, help="Top-k sampling")
 parser.add_argument("--top_p", type=float, default=0.95, help="Top-p sampling")
 parser.add_argument("--max_seq_len", type=int, default=MAX_SEQ_LEN, help="Maximum sequence length")
@@ -101,8 +102,43 @@ gen = Generator(
     seed=cli.seed,
 )
 
+def _parse_leading_params(s: str):
+    s = s.lstrip()
+    if not s:
+        return {}, ""
+    tokens = s.split()
+    i = 0
+    updates = {}
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok.startswith('/t='):
+            try:
+                updates['temperature'] = float(tok[3:])
+            except ValueError:
+                pass
+            i += 1
+            continue
+        if tok.startswith('/rp='):
+            try:
+                updates['repetition_penalty'] = float(tok[4:])
+            except ValueError:
+                pass
+            i += 1
+            continue
+        if tok.startswith('/new'):
+            try:
+                updates['new'] = True
+            except ValueError:
+                pass
+            i += 1
+            continue
+        break
+    remaining = " ".join(tokens[i:])
+    return updates, remaining
+
 if cli.chat:
     print("Starting turn-based chat. Type 'exit', 'quit', or press Ctrl-D/Ctrl-C to end.\n")
+    print("Tip: Adjust settings inline, e.g., '/t=0.4', '/rp=1.2', or '/t=0.4 /rp=1.2 write something'.")
     transcript = ""
     while True:
         try:
@@ -115,7 +151,27 @@ if cli.chat:
         if user.lower() in {"exit", "quit", "q"}:
             break
 
-        prompt_text = transcript + template.format(prompt=user)
+        updates, remaining = _parse_leading_params(user)
+        if 'temperature' in updates:
+            gen.set_temperature(updates['temperature'])
+        if 'repetition_penalty' in updates:
+            gen.set_repetition_penalty(updates['repetition_penalty'])
+        if 'new' in updates:
+            transcript = ""
+            print("\033[2J\033[H", end="", flush=True)  # CSI 2J = clear, CSI H = home
+            continue
+        # If the user only passed settings, acknowledge and reprompt
+        if remaining.strip() == "" and len(updates) > 0:
+            parts = []
+            if 'temperature' in updates:
+                parts.append(f"temperature={updates['temperature']}")
+            if 'repetition_penalty' in updates:
+                parts.append(f"repetition_penalty={updates['repetition_penalty']}")
+            print("Updated settings: " + ", ".join(parts) + "\n")
+            continue
+
+        effective_user = remaining if len(updates) > 0 else user
+        prompt_text = transcript + template.format(prompt=effective_user)
         start_ids = encode(prompt_text)
         x = tensor(start_ids, dtype=torch.long, device=device)
         with torch.no_grad():
