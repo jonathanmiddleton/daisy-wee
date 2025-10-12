@@ -1,458 +1,202 @@
-# Daisy-Wee - Efficient GPT for Small‑B Models
+# Daisy‑Wee — Efficient GPT Training & Inference for Small‑B Models
 
-<table>
-  <tr>
-    <td>
-      <img src="assets/daisy-wee.png" alt="Daisy‑Wee" width="160">
+A compact, high‑efficiency GPT training stack optimized for small‑to‑mid‑scale decoder‑only models. Clear defaults, disciplined precision (BF16‑first), sliding‑window attention, and pragmatic tooling.
+
+
+
+<table border="0" style="border: 0 !important; border-collapse: collapse;">
+  <tr style="border: 0 !important;">
+    <td style="border: 0 !important;">
+        <ul>
+        <li><b>Targets:</b> ~150M–1.6B GPT‑style models</li>
+        <li><b>Context:</b> long‑context via sliding windows and block masks</li>
+        <li><b>Precision:</b> BF16 by default; selective upcasting at numerically sensitive ops</li>
+        <li><b>Attention:</b> fused projections, windowed/block‑sparse masks, RoPE</li>
+        <li><b>Training:</b> DDP via torchrun, token‑based eval cadence, checkpoint utilities</li>
+        <li><b>Configs:</b> YAML training configs + YAML model specs with CLI overrides</li>
+        <li><b>Optional:</b> W&B logging</li>
+        </ul>
     </td>
-    <td>
-      Soup-to-nuts hyper-efficient training and inference tools for small-B models for learners without large budgets. CUDA GPU is required.
+    <td style="border: 0 !important;">
+      <img src="assets/daisy-wee.png" alt="Daisy‑Wee" width="160">
     </td>
   </tr>
 </table>
 
 
-## Highlights
 
-- Efficient attention with sliding‑window and block‑sparse masking for long contexts.
-- Rotary positional embeddings (RoPE).
-- Fused QKV(+O) projections for speed.
-- Learned residual gating/scaling to stabilize deeper networks.
-- Parameter grouping and optimizer specialization (including a matrix‑preconditioned optimizer) for convergence and throughput.
-- BF16‑first training with careful casting at hot spots.
-- Data sharding pipeline for instruction‑tuning corpora.
- 
+## Quickstart
+
+### 1) Environment
+```bash
+conda env create -f environment.yml
+conda activate daisy-wee
+# or: pip install -r requirements.txt
+```
+
+### 2) (Optional) Fetch sample data
+```bash
+python data/cached_fineweb100B.py
+# or the EDU variant:
+# python data/cached_fineweb_edu_100B.py
+```
+
+### 3) Train (recommended wrapper)
+```bash
+./run.sh config/pretrain_350m.yml -n 8 target_tokens=3000000000
+```
+Notes:
+- `-n` → processes per node (passed to `torchrun --nproc_per_node`).
+- Any YAML key can be overridden on the CLI: `key=value` or `--key=value`.
+
+### 4) Sample from a checkpoint
+```bash
+python sample.py checkpoints/state_step_100000.pt --device cuda   --max_tokens 256 --temperature 0.7 --top_k 50 --repetition_penalty 1.15 --seed 123
+```
+
 ---
 
-## Training and Inference
+## Training
 
-Below are the current, tested ways to launch training, run inference sampling, and work with the provided YAML configuration files.
+### Using `run.sh`
+```bash
+./run.sh CONFIG [-n NUM_PROCS] [-p CHECKPOINT] [-s BEGIN_SHARD] [-r RUN_ID] [key=value ...]
+```
+Common patterns:
+```bash
+# 1.6B warm‑start (weights only), 8 GPUs
+./run.sh config/pretrain_1.6B.yml -n 8 -p checkpoints/state_step_100000.pt
 
-### Training: run.sh (recommended wrapper)
-- Syntax
-  ```sh
-  ./run.sh CONFIG_FILE [-n NUM_PROCS] [-p CHECKPOINT_PATH] [-s BEGIN_SHARD] [-r RUN_ID] [key=value ...]
-  ```
-- Arguments
-  - CONFIG_FILE: Path to a YAML config (e.g., config/pretrain_350m.yml, config/pretrain_1.6B.yml, config/instruct_sft.yml, or config/instruct_sft_1.6B.yml). Required.
-  - -n NUM_PROCS: Number of processes per node (passed to torchrun --nproc_per_node). Default: 8.
-  - -p CHECKPOINT_PATH: Optional checkpoint to initialize model weights only (fresh schedule; no steps/optimizer/best-val are resumed).
-  - -s BEGIN_SHARD: Optional starting shard index for training data (exported as BEGIN_SHARD). Useful for resuming data traversal.
-  - -r RUN_ID: Optional run identifier. Exported as RUN_ID and used in checkpoint filenames and the default wandb run name.
-  - key=value or --key=value: Any additional overrides forwarded to train.py as --key=value. Examples: target_tokens=3000000000, training_sequence_length=32768, attention_window_len=3456, window_block_size=128.
-- Notes
-  - run.sh requires CONFIG_FILE as the first positional argument. Options -n/-p/-s/-r must appear after CONFIG_FILE.
-  - Overrides without a leading -- are automatically rewritten to --key=value.
-  - To force full attention windows (useful when resuming after training on smaller windows), pass the bare flag --full_windows (or --full-windows). run.sh will normalize this to --full_windows=true for train.py.
-  - By default, every run starts a fresh schedule. Passing -p only loads weights (no steps/optimizer/best-val are resumed).
-  - The script sets sensible environment defaults (e.g., OMP_NUM_THREADS) and launches torchrun in standalone mode.
-- Examples
-  - Pretraining (350M), 8 GPUs:
-    ```sh
-    ./run.sh config/pretrain_350m.yml -n 8 target_tokens=3000000000
-    ```
-  - Pretraining (1.6B), warm-start from checkpoint on 8 GPUs:
-    ```sh
-    ./run.sh config/pretrain_1.6B.yml -n 8 -p checkpoints/state_step_100000.pt
-    ```
-  - Single-GPU debug run:
-    ```sh
-    ./run.sh config/pretrain_350m.yml -n 1 val_loss_every_tokens=200000000
-    ```
-  - Resume training after earlier small windows, now force full attention windows:
-    ```sh
-    ./run.sh config/pretrain_350m.yml -n 8 --full_windows
-    # or equivalently
-    ./run.sh config/pretrain_350m.yml -n 8 --full_windows=true
-    ```
-  - Supervised fine-tuning (SFT) from a pretraining checkpoint, starting a fresh schedule (recommended):
-    ```sh
-    ./run.sh config/instruct_sft.yml -n 8 -p checkpoints/state_step_200000.pt
-    ```
+# Single‑GPU debug
+./run.sh config/pretrain_350m.yml -n 1 val_loss_every_tokens=200000000
 
-### Weights & Biases logging (optional)
-- Enable logging by setting wandb_log: true in your YAML or by passing CLI overrides via run.sh.
-- Defaults:
-  - Project defaults to 'daisy-wee' if wandb_project is not provided.
-  - Run name defaults to {YYYYMMDD-HHMM}-run{RUN_ID} if wandb_run_name is not provided. RUN_ID is set via -r or --run_id and is exported to the environment.
-- Examples:
-  ```sh
-  ./run.sh config/pretrain_350m.yml -n 8 wandb_log=true wandb_project=myproj wandb_run_name=exp1
-  ./run.sh config/pretrain_350m.yml -n 8 -r 2 wandb_log=true
-  # or using long option
-  ./run.sh config/pretrain_350m.yml -n 8 --run_id=2 wandb_log=true
-  ```
-- Logged metrics:
-  - train/loss, tokens, s, train/time_ms, step
-  - val/loss, val/ppl
-- Notes:
-  - wandb is optional; if not installed or initialization fails, training continues without logging.
+# Force full attention windows for the entire run
+./run.sh config/pretrain_350m.yml -n 8 --full_windows
+```
+Behavior:
+- `-p/--init_checkpoint` loads weights + essential arch hparams; **schedules/optimizer/steps do not resume**.
+- Data traversal can be resumed approximately with `-s BEGIN_SHARD`.
+- `--full_windows` forces long attention windows for the whole run.
 
-### Inference: sample.py
-- Syntax
-  ```sh
-  python sample.py /path/to/checkpoint.pt [--device DEVICE] [--max_tokens N] [--temperature T] [--top_k K] [--repetition_penalty RP] [--seed SEED] [--max_seq_len L]
-  ```
-- Behavior
-  - Loads the model class and hparams from the checkpoint and constructs the model accordingly.
-  - Uses tiktoken (gpt2) encoding and an instruction-style prompt template:
+### Direct `train.py`
+```bash
+python -u train.py config/pretrain_350m.yml
+python train.py --help
+```
 
-    ```python
-    """
-    ### Instruction:
-    {your prompt}
-    
-    ### Response:
-    """
-    ```
-  - The default prompt string is defined in sample.py; edit the variable prompt in the file to change it, or adapt the script to accept a CLI prompt.
-  - Generation runs under torch.bfloat16 autocast when available and stops on eos_token_id (from hparams).
-- Examples
-  - Minimal GPU example:
-    ```sh
-    python sample.py checkpoints/state_step_100000.pt --device cuda
-    ```
-  - Deterministic sampling with a longer continuation:
-    ```sh
-    python sample.py checkpoints/state_step_100000.pt --device cuda --max_tokens 256 --temperature 0.7 --top_k 50 --repetition_penalty 1.15 --seed 123
-    ```
+### Weights & Biases (optional)
+```bash
+./run.sh config/pretrain_350m.yml -n 8 wandb_log=true wandb_project=myproj wandb_run_name=exp1
+```
+Logs: `train/loss`, tokens, time; `val/loss`, `val/ppl`.
 
-### Configuration files: YAML (config/*.yml)
+---
 
-Configuration is split into two parts:
-- Training configs (config/*.yml): contain run/training settings and reference a model spec via model_spec.
-- Model specs (model_specs/*.yml): contain model architecture settings (e.g., layers/heads/dims).
+## Configuration
 
-How it works
-- If a training YAML contains model_spec: NAME (or a file path), train.py will load model_specs/NAME.yml (or that path) and merge it.
-- Precedence: values in the training config override the model spec; CLI overrides override both.
-- Breaking change: configs and specs now use attention_window_len and include max_seq_len; legacy keys are not supported.
-- Checkpoints: saved hparams are the merged set used to reconstruct models later.
+Two layers of YAML:
 
-- Common training fields
-  - model_spec: Name of a spec under model_specs/ (e.g., gpt2_350m) or a direct path to a spec file.
-  - train_shards: Glob pattern for training shards. val_shards: List of evaluation datasets. Each item is a map with keys: type (string label for logging) and path (glob pattern for shards). Example:
-    
-    val_shards:
-      - type: "A string description for documentation, unused by the code"
-        path: "path/to/shards/dataset_val_*.bin"
-      - type: "Another eval dataset..."
-        path: "path/to/another/dataset2_val_*.bin"
-  - training_sequence_length: Per-device microstep sequence length used for training batches.
-  - attention_window_len: Largest sliding attention window actually used during training (e.g., 3456).
-  - window_block_size: Block granularity used by sliding window and masks; must divide both training_sequence_length and attention_window_len (e.g., 128).
-  - target_tokens: Total number of training tokens to process before completion.
-  - cooldown_frac: Fraction of the schedule spent in cooldown/decay; drives LR/window schedules via normalized progress s in [0,1].
-  - learning_rate_schedule: Choose the LR schedule. One of {linear_decay, linear_warmup_cosine_decay}. See LR Schedule section for details.
-  - val_tokens: Number of tokens to evaluate during each validation pass.
-  - val_seq_len: Per-device validation sequence length.
-  - val_loss_every_tokens: Run validation every N training tokens processed.
-  - Multi-eval behavior: If more than one val dataset is provided, training will automatically run a full evaluation on each dataset at every eval interval. The following attributes are common across all evaluations and configured once: val_loss_every_tokens, val_seq_len, tot_val_tokens. Checkpointing and the legacy val/loss and val/ppl metrics track the first dataset listed; per-dataset metrics are logged under val/<type>/loss and val/<type>/ppl.
-  - checkpoint_warmup_tokens: Minimum tokens to process before taking checkpoints.
-  - checkpoint_per_n_tokens: Checkpoint interval measured in tokens (0 = checkpoint every update after warmup).
-  - save_checkpoint: Whether to write training checkpoints.
-  - full_windows: If true, force full attention windows for the entire run (useful when resuming after training with smaller windows).
-  - torch.coordinate_descent_tuning: Controls torch._inductor.config.coordinate_descent_tuning. Default: false. Recommended: true for pretraining configs; false for fine‑tuning configs. Can be overridden from CLI via --torch.coordinate_descent_tuning=true|false.
-  - wandb_log: If true, enable basic Weights & Biases logging. Defaults to false.
-  - wandb_project: W&B project name; defaults to 'daisy-wee' when logging is enabled.
-  - wandb_run_name: Optional run name; defaults to timestamp+run id when not provided.
-  - init_checkpoint: Optional weights to warm start from (weights only; schedules/resume are fresh).
-  - Validation rules: training_sequence_length % window_block_size == 0; attention_window_len % window_block_size == 0; training_sequence_length >= attention_window_len.
+1) **Training config** (`config/*.yml`): run hyperparameters and dataset shards.  
+2) **Model spec** (`model_specs/*.yml`): architecture (`num_layers`, `num_heads`, `head_dim`, `model_dim`, `attention_window_len`, `max_seq_len`, `vocab_size`, `eos_token_id`, `model_class`).
 
-- Model spec fields (model_specs/*.yml)
-  - model_class: Fully-qualified class name used to construct the model (e.g., models.gpt2.gpt_core.GPT2Core). No defaults.
-  - vocab_size: Vocabulary size (e.g., 50257 for GPT-2 BPE).
-  - eos_token_id: End-of-sequence token id. Required; no defaults.
-  - num_layers, num_heads, head_dim, model_dim: Transformer depth/width and per-head/overall dimensions.
-  - attention_window_len: Largest sliding attention window supported by the model. Must be divisible by window_block_size.
-  - max_seq_len: Maximum context size supported by the model (used to instantiate GPT2Core).
+Resolution order: model spec ← training config ← CLI overrides.
 
-- Optimizers (in training configs)
-  - optimizers: List of optimizer definitions. Each entry has a type (e.g., AdamW, Muon), optional hyperparameters, and a params section listing parameter groups with their learning rates.
-  - Supported parameter groups: hidden_matrix_params, embed_params, scalar_params, head_params.
-  - Example:
-    ```yaml
-    optimizers:
-      - type: AdamW
-        betas: [0.9, 0.95]
-        eps: 1.0e-10
-        weight_decay: 0.01
-        fused: true
-        params:
-          - group: head_params
-            lr: 0.0085
-          - group: embed_params
-            lr: 0.025
-          - group: scalar_params
-            lr: 0.025
+Key fields (training):
+- `train_shards`, `val_shards`: glob(s) for tokenized binary shards
+- `training_sequence_length`, `val_seq_len`
+- `attention_window_len`, `window_block_size` (must divide both seq len and window)
+- `target_tokens`, `cooldown_frac`
+- `learning_rate_schedule`: `linear_decay` | `linear_warmup_cosine_decay`
+- `val_loss_every_tokens`, `tot_val_tokens`
+- `save_checkpoint`, `checkpoint_per_n_tokens`, `checkpoint_warmup_tokens`
+- `full_windows`: force long attention windows throughout
+- `optimizers`: list of optimizers with per‑group LRs (e.g., `embed_params`, `hidden_matrix_params`, `scalar_params`, `head_params`)
 
-      - type: Muon
-        momentum: 0.95
-        weight_decay: 0.01
-        params:
-          - group: hidden_matrix_params
-            lr: 0.03
-    ```
+Example model spec (350M):
+```yaml
+model_class: models.gpt2.gpt_core.GPT2Core
+eos_token_id: 50256
+vocab_size: 50257
+num_layers: 24
+num_heads: 16
+head_dim: 64
+model_dim: 1024
+attention_window_len: 3456
+max_seq_len: 65536
+```
 
-- SFT-specific (in training configs)
-  - init_checkpoint: Path to a pretraining checkpoint used to warm-start SFT. Weights are loaded; optimizer state, steps, and best-val are not resumed; schedules start fresh.
+---
 
-Examples
-- Minimal SFT training config that references a named spec:
-  ```yaml
-  # config/instruct_sft.yml
-  train_shards: "data/instruct_mix/instruct_train_*.bin"
-  val_shards:
-    - type: "instruct"
-      path: "data/instruct_mix/instruct_val_*.bin"
-  val_seq_len: 262144
-  model_spec: gpt2_350m       # resolved from model_specs/gpt2_350m.yml
-  target_tokens: 30000000
-  cooldown_frac: 0.9
-  tot_val_tokens: 10485760
-  val_loss_every_tokens: 5000000
-  save_checkpoint: true
-  ```
+## Inference
 
-- Example model spec file (model_specs/gpt2_350m.yml):
-  ```yaml
-  model_class: models.gpt2.gpt_core.GPT2Core
-  eos_token_id: 50256
-  vocab_size: 50257
-  num_layers: 24
-  num_heads: 16
-  head_dim: 64
-  model_dim: 1024
-  attention_window_len: 3456
-  max_seq_len: 65536
-  ```
+`sample.py` reconstructs the model from the checkpointed hparams and runs generation:
+```bash
+python sample.py /path/to/checkpoint.pt --device cuda   --max_tokens 256 --temperature 0.7 --top_k 50 --repetition_penalty 1.15 --seed 123
+```
 
-- Referencing a spec by path instead of name:
-  ```yaml
-  model_spec: /abs/path/to/my_custom_spec.yml
-  ```
+Programmatic:
+```python
+import torch
+from tools.checkpoint import model_from_checkpoint
+m = model_from_checkpoint('checkpoints/state_step_100000.pt', device='cuda')
+m.eval()
+```
 
-Overriding config values at launch
-- Any YAML key can be overridden via run.sh using key=value (or --key=value). CLI overrides take precedence over both the training YAML and the model spec, e.g.:
-  ```sh
-  ./run.sh config/pretrain_350m.yml -n 8 target_tokens=3000000000 training_sequence_length=32768
-  ./run.sh config/instruct_sft.yml -n 8 -p checkpoints/state_step_200000.pt val_loss_every_tokens=50000000
-  ```
+---
 
+## Checkpoints
 
-### Checkpoints: saving, loading, inspecting
-- What gets saved (tools/checkpoint.save_checkpoint):
-  - model: PyTorch state_dict of model weights (with any compile-time wrappers stripped)
-  - hparams: merged hyperparameters used to build the model (from model_spec + training YAML + CLI overrides)
-  - step: training step index when saved
-  - best_val: best validation loss seen so far
-  - tokens_per_step: number of tokens processed per training micro-step (world_size × training_sequence_length)
-  - progress_state: serialized training progress meter (tokens processed, checkpoint/eval counters)
+Saved: model weights, merged `hparams`, `step`, `best_val`, `tokens_per_step`, and a compact progress state.
 
-- Warm-start vs. resume
-  - Warm-start weights: pass -p / --init_checkpoint to run.sh (forwarded as --init_checkpoint to train.py). This loads weights and rehydrates essential architecture hparams (vocab_size, num_layers, num_heads, model_dim, head_dim, training_sequence_length, val_seq_len, attention_window_len, window_block_size, eos_token_id, model_class). Optimizer state, step counters, and best_val are NOT resumed; schedules start fresh.
-  - Full resume of optimizer/steps: currently not supported. You can approximate a data resume via the BEGIN_SHARD env and force full attention windows with --full_windows when needed.
-
-- Common warm-start examples
-  ```sh
-  # Pretraining 1.6B, initialize from a prior checkpoint (weights only)
-  ./run.sh config/pretrain_1.6B.yml -n 8 -p checkpoints/20250918T1240-val3.121-step090000-run1.pt
-
-  # SFT warm-start from a pretraining checkpoint
-  ./run.sh config/instruct_sft.yml -n 8 -p checkpoints/state_step_200000.pt
-
-  # Force full attention windows during warm-start (useful if earlier run trained with smaller windows)
-  ./run.sh config/pretrain_350m.yml -n 8 -p checkpoints/state_step_100000.pt --full_windows
-  ```
-
-- Inspect a checkpoint
-  ```sh
-  # Pretty report (model dims, parameter counts, near-zero scalars)
+- **Warm‑start** (`-p/--init_checkpoint`): weights + core arch hparams; schedules and optimizer state start fresh.
+- **Full resume** (optimizer/steps): not currently supported.
+- Utilities:
+  ```bash
   python -m tools.inspect_checkpoint checkpoints/state_step_100000.pt
-
-  # JSON output
   python -m tools.inspect_checkpoint checkpoints/state_step_100000.pt --json
-
-  # Quick peek at hparams without building a model
-  python - << 'PY'
-  from tools.checkpoint import peek_hparams
-  print(peek_hparams('checkpoints/state_step_100000.pt'))
-  PY
   ```
-
-- Programmatic loading for inference
-  ```python
-  import torch
-  from tools.checkpoint import model_from_checkpoint
-
-  device = 'cuda' if torch.cuda.is_available() else 'cpu'
-  model = model_from_checkpoint('checkpoints/state_step_100000.pt', device=device, map_location='cpu')
-  model.eval()
-  ```
-
-- Related utilities
-  - tools/model_report.py: build and format a detailed model report (used by inspect_checkpoint)
-  - inference/generate.py and sample.py: example generation scripts that construct the model from the checkpoint hparams
 
 ---
 
-## Architecture Overview
-
-This project builds on a decoder‑only Transformer (GPT) with pragmatic, efficiency‑oriented enhancements.
-
-**Token Embeddings and Head**
-- Standard learned token embeddings and a projection to vocabulary logits.
-- Weight shapes/casting organized for BF16 efficiency; numerically sensitive reductions are upcast.
-
-**Rotary Positional Embeddings (RoPE)**
-- RoPE is applied to queries/keys for position information compatible with long contexts and sliding windows.
-
-**Attention: Fused, Windowed, Block‑Sparse**
-- Multi‑head self‑attention with fused QKV(+O) projection to reduce kernel launches and improve locality.
-- Sliding‑window attention bounds complexity to O(T·W) vs. O(T²); block masks blend local dense windows with periodic long‑range links.
-- Masks are constructed at runtime to mix local and scheduled long‑distance connectivity.
-
-**Feed‑Forward and Residual Path**
-- Standard two‑layer MLP sized for target scales.
-- Learned scalar gates on residual paths to stabilize depth and enable selective multi‑path mixing.
-
-**Depth Skips with Learned Gating**
-- Optional skip connections from earlier layers, gated by learned scalars, to improve gradient flow in deeper stacks.
-
-**Value‑Embedding Side Channels (conditioning)**
-- Lightweight value‑like embeddings can be injected at chosen layers for instruction conditioning; a no‑op when unused.
-
-**Long‑Context via Block Masks**
-- A mask generator produces short‑range and long‑range block patterns; layers can alternate or interleave them.
-
-**Precision Strategy**
-- BF16 by default in compute‑heavy paths; upcast where needed (e.g., reductions, logits) for stability.
+## Repo Layout (typical)
+```
+config/           # training YAMLs
+model_specs/      # architecture specs
+models/gpt2/      # attention, block, mlp, core
+training/         # training loop, hparams, optimizers, progress
+tools/            # checkpoint, inspect, LR sweeps, reports
+data/             # dataset scripts (FineWeb, SFT)
+inference/        # generation, KV cache
+run.sh            # launcher
+train.py          # training entrypoint
+sample.py         # minimal sampling
+```
 
 ---
 
-## Training System and Optimizations
+## Design Notes
 
-**Distributed Training**
-- Multi‑GPU via DDP. Per‑rank sharded data, consistent validation, and checkpointing.
-
-**Optimizer Strategy**
-- Parameter grouping (embeddings, large matrices, scalars/gates, output head).
-- Dual‑optimizer option: matrix‑preconditioned optimizer for large matrices; lightweight first‑order for small params.
-- Preconditioning uses an approximate inverse square‑root (e.g., Newton–Schulz‑type updates) to control curvature at reasonable cost.
-
-**LR Schedule**
-- Warmup, then linear decay/cooldown variants tuned for depth and sequence length changes.
-- New: Select the LR schedule via training YAML key learning_rate_schedule with one of:
-  - linear_decay: scale is 1.0 for most of training, with a linear decay to 0.0 over the final cooldown_frac portion.
-  - linear_warmup_cosine_decay: linear warmup from 0.0 -> 1.0 over the initial (1 - cooldown_frac) portion, then cosine decay to 0.0 over the final cooldown_frac portion.
-- Example YAML:
-  ```yaml
-  cooldown_frac: 0.7
-  learning_rate_schedule: linear_warmup_cosine_decay
-  ```
-
-**BF16 & Casting Discipline**
-- BF16‑first with targeted casts to mitigate precision issues while retaining memory savings.
-
-**Attention Backends**
-- Attention path is swappable; optimized kernels (e.g., Flash/Flex‑style) can be used when available.
-- Sliding‑window and block masks are computed efficiently and applied compatibly with fused kernels.
-
-**Data Pipeline**
-- Tokenized datasets stored in compact binary shards with lightweight headers.
-- Instruction‑mix builder generates training/validation shards; tiny validation shards support fast sanity checks.
+- Decoder‑only Transformer (GPT) with RoPE.  
+- Sliding‑window + block‑mask attention; fused QKV(+O) projections.  
+- Residual path uses learned scalar gates; optional depth skips.  
+- BF16‑first; targeted upcasting for numerically fragile ops.  
+- DDP training; sharded eval; token‑based checkpoint cadence.
 
 ---
 
-## Instruction‑Following Fine‑Tuning
+## Roadmap
 
-**Data Format**
-- 16‑bit token ID streams with a small per‑shard header.
-- Instruction–response pairs concatenated with consistent separators/special tokens for next‑token prediction.
+Mixture‑of‑Experts FFN (top‑k routing), router regularization, expert‑parallel placement, MLA.
 
-**Sharding**
-- Helper script builds/refreshes shards to a token budget and creates a small validation shard.
-
-**Training**
-- Fine‑tuning reuses the same model/training scaffolding with adjusted sequencing/sampling.
-- For small/mid‑size models, use a modest LR, warmup, and conservative batch sizes to avoid overfitting.
-
----
-
-## Roadmap: Mixture‑of‑Experts (MoE)
-
-Planned features:
-- **Expert‑Parallel FFN:** Replace dense MLPs with top‑k gated experts per token; attention remains shared.
-- **Router Regularization & Load Balancing:** Prevent expert collapse.
-- **Efficient Expert Placement:** Expert parallelism across devices; cache‑friendly layouts and fused scatter/collect.
-- **Compatibility:** Same attention/masking stack and precision strategy; drop‑in dense‑MLP replacement.
-
-MoE will be introduced incrementally and benchmarked against the dense baseline for quality and throughput.
-
----
-
-## Setup
-
-**Environment**
-- Conda environment file and requirements are provided. Use your preferred Conda workflow.
-- We use the Torch nightlies (currently 2.10) and CUDA 12.6
-- Training requires your CUDA device of choice. run.sh assumes 8x H100 but 1x H100 is fine.
-
-**Quickstart**
-1. Download pretraining data. (data/cached_fineweb100B.py - you need only the first 103 files for 10B, edit the script to download more)
-2. Launch training for the 350M baseline.
-3. Prepare data shards for instruction fine‑tuning. 
-4. Launch SFT.
-
-**Example Commands**
-- Inspect training options:
-  ```sh
-  python train.py --help
-  ```
-- Start a pretraining run:
-  ```sh
-  python -u train.py config/pretrain_350m.yml
-  ```
-- Generate samples after training:
-  ```sh
-  python sample.py
-  ```
-- Build SFT data shards:
-  ```sh
-  python data/build_instruct_shards.py
-  ```
-- Start an SFT run:
-  ```sh
-  python -u train.py config/instruct_sft.yml
-  ```
-
-
----
-
-## Repository Structure (high level)
-
-- Model definition: GPT blocks with RoPE, fused attention projections, block masks for sliding windows, and learned residual gating/scaling.
-- Training script: ~350M baseline demonstrating data/optimizer/schedule setup and sliding‑window attention.
-- Utilities: generation and instruction‑data sharding.
-
-Refactors will consolidate model definitions as the single source of truth; training scaffolding remains modular.
-
----
-
-## Contributing
-
-Issues and PRs are welcome. Please open an issue to discuss substantial changes or new experiments.
 
 ---
 
 ## Acknowledgements
 
-- Originally launched as a fork of **modded‑nanogpt** (Keller Jordan & contributors) and inspired by ← **nanoGPT** (Andrej Karpathy). This project currently reproduces
-substantial portions of training code from **modded‑nanogpt**.
-- Thanks to the open‑source community for ongoing work on efficient attention kernels, distributed training, and optimizer research.
+Originally launched as a fork of **modded‑nanogpt** (Keller Jordan & contributors) and inspired by **nanoGPT** (Andrej Karpathy). This project currently reproduces
+substantial portions of optimized model code from **modded‑nanogpt** for training efficiency.
 
----
 
 ## License
 
-Released under the terms of the license in the `LICENSE` file.
+See `LICENSE`.
