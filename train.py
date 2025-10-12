@@ -95,7 +95,7 @@ def log_wandb(d: dict):
 
 def print0(st):
     if master_process:
-        print(st)
+        print(st, flush=True)
 
 # noinspection PyShadowingNames
 def _build_hparams_from_args(args: Hyperparameters) -> dict:
@@ -316,6 +316,7 @@ warmup_end = 0.0
 while progress.tokens_processed < progress.target_tokens:
     # --------------- Evaluation -----------------
     if progress.should_eval():
+        print0("[eval] starting evaluations...")
         if use_distributed:
             dist.barrier()
         training_time_ms += 1000 * (time.perf_counter() - t0)
