@@ -148,8 +148,8 @@ How it works
   - val_seq_len: Per-device validation sequence length.
   - val_loss_every_tokens: Run validation every N training tokens processed.
   - Multi-eval behavior: If more than one val dataset is provided, training will automatically run a full evaluation on each dataset at every eval interval. The following attributes are common across all evaluations and configured once: val_loss_every_tokens, val_seq_len, tot_val_tokens. Checkpointing and the legacy val/loss and val/ppl metrics track the first dataset listed; per-dataset metrics are logged under val/<type>/loss and val/<type>/ppl.
-  - snapshot_warmup_tokens: Minimum tokens to process before taking snapshots.
-  - snapshot_per_n_tokens: Snapshot interval measured in tokens.
+  - checkpoint_warmup_tokens: Minimum tokens to process before taking checkpoints.
+  - checkpoint_per_n_tokens: Checkpoint interval measured in tokens (0 = checkpoint every update after warmup).
   - save_checkpoint: Whether to write training checkpoints.
   - full_windows: If true, force full attention windows for the entire run (useful when resuming after training with smaller windows).
   - torch.coordinate_descent_tuning: Controls torch._inductor.config.coordinate_descent_tuning. Default: false. Recommended: true for pretraining configs; false for fine‑tuning configs. Can be overridden from CLI via --torch.coordinate_descent_tuning=true|false.
@@ -247,7 +247,7 @@ Overriding config values at launch
   - step: training step index when saved
   - best_val: best validation loss seen so far
   - tokens_per_step: number of tokens processed per training micro-step (world_size × training_sequence_length)
-  - progress_state: serialized training progress meter (tokens processed, snapshot/eval counters)
+  - progress_state: serialized training progress meter (tokens processed, checkpoint/eval counters)
 
 - Warm-start vs. resume
   - Warm-start weights: pass -p / --init_checkpoint to run.sh (forwarded as --init_checkpoint to train.py). This loads weights and rehydrates essential architecture hparams (vocab_size, num_layers, num_heads, model_dim, head_dim, training_sequence_length, val_seq_len, attention_window_len, window_block_size, eos_token_id, model_class). Optimizer state, step counters, and best_val are NOT resumed; schedules start fresh.

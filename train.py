@@ -296,8 +296,8 @@ from training.progress import ProgressMeter
 progress = ProgressMeter(
     target_tokens=int(args.target_tokens),
     eval_every_tokens=int(args.val_loss_every_tokens) if int(args.val_loss_every_tokens) > 0 else None,
-    snapshot_per_n_tokens=int(args.snapshot_per_n_tokens) if int(args.snapshot_per_n_tokens) > 0 else None,
-    snapshot_warmup_tokens=int(args.snapshot_warmup_tokens),
+    checkpoint_per_n_tokens=int(args.checkpoint_per_n_tokens),  # allow 0 to mean every update after warmup
+    checkpoint_warmup_tokens=int(args.checkpoint_warmup_tokens),
 )
 
 # Tracking for eval stats and ETA
@@ -358,7 +358,7 @@ while progress.tokens_processed < progress.target_tokens:
             wb[f"val/{lbl}/ppl"] = math.exp(_loss) if _loss < 20 else float("inf")
         log_wandb(wb)
         # checkpoints by tokens (save only if validation improves) using primary dataset
-        if master_process and args.save_checkpoint and progress.should_snapshot():
+        if master_process and args.save_checkpoint and progress.should_checkpoint():
             if cur_val < best_val:
                 best_val = cur_val
                 # Save checkpoint (handles filename, cleanup, and bookkeeping)
@@ -379,7 +379,7 @@ while progress.tokens_processed < progress.target_tokens:
             else:
                 print0(f"No improvement in val loss: best={best_val:.6f}, current={cur_val:.6f}. Skipping checkpoint.")
 
-            progress.mark_snapshot_done()
+            progress.mark_checkpoint_done()
         # resume training clock
         model.train()
         if use_distributed:

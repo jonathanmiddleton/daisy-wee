@@ -5,7 +5,7 @@ wandb_run_name: '350m-instruct'
 # Torch config
 torch.coordinate_descent_tuning: false
 # Pretraining checkpoint path
-init_checkpoint: "checkpoints/20251010T0013-val2.890-step000400-run1.pt"
+init_checkpoint: "checkpoints/20251012T0302-val3.100-step007630-run1-final.pt"
 # Instruct SFT training configuration
 train_shards: "data/instruct_mix/instruct_train_*.bin"
 target_tokens: 865075200
@@ -16,23 +16,23 @@ train_attention_window_len: 3456        # largest sliding attention window used 
 # Optimizers configuration
 optimizers:
   - type: AdamW
-    betas: [0.9, 0.99]
+    betas: [0.9, 0.999]
     eps: 1.0e-10
     weight_decay: 0.01
     fused: true
     params:
       - group: head_params
-        lr: 0.000546875
+        lr: .000031
       - group: embed_params
-        lr: 0.06
+        lr: 0.0
       - group: scalar_params
-        lr: 0.003
+        lr: .00015
   - type: Muon
     momentum: 0.95
     weight_decay: 0.01
     params:
       - group: hidden_matrix_params
-        lr: 0.005
+        lr: .00025
 full_windows: true
 # Gradient accumulation
 grad_acc_steps: 1 # assumes world_size=8
@@ -43,9 +43,9 @@ val_shards:
 val_loss_every_tokens:     26214400
 val_seq_len: 262144       # 4 * 64 * 1024
 tot_val_tokens: 10485760
-# Snapshots
-snapshot_warmup_tokens:     1     # token warmup before snapshots
-snapshot_per_n_tokens:     1         # snapshot interval by tokens
+# Checkpoints
+checkpoint_warmup_tokens:     1     # token warmup before checkpoints
+checkpoint_per_n_tokens:     1         # checkpoint interval by tokens
 save_checkpoint: true
 # Model Definition
 model_spec: gpt2_350m

@@ -28,8 +28,8 @@ class Hyperparameters:
     eos_token_id: int
     tot_val_tokens: int  # how many tokens of validation data
     val_loss_every_tokens: int  # num tokens between validation passes (0 disables)
-    snapshot_warmup_tokens: int  # tokens to skip before taking snapshots
-    snapshot_per_n_tokens: int  # interval in tokens between snapshots
+    checkpoint_warmup_tokens: int  # tokens to skip before taking checkpoints
+    checkpoint_per_n_tokens: int  # interval in tokens between checkpoints (0 = every update after warmup)
     save_checkpoint: bool
     num_layers: int
     num_heads: int
@@ -72,6 +72,12 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
     # Normalize/alias keys that use dots for namespacing
     if "torch.coordinate_descent_tuning" in cfg_dict and "torch_coordinate_descent_tuning" not in cfg_dict:
         cfg_dict["torch_coordinate_descent_tuning"] = cfg_dict.pop("torch.coordinate_descent_tuning")
+
+    # Backward compatibility: alias old snapshot_* keys to checkpoint_* keys
+    if "snapshot_warmup_tokens" in cfg_dict and "checkpoint_warmup_tokens" not in cfg_dict:
+        cfg_dict["checkpoint_warmup_tokens"] = cfg_dict.pop("snapshot_warmup_tokens")
+    if "snapshot_per_n_tokens" in cfg_dict and "checkpoint_per_n_tokens" not in cfg_dict:
+        cfg_dict["checkpoint_per_n_tokens"] = cfg_dict.pop("snapshot_per_n_tokens")
 
     # If a model_spec name/path is provided, load the spec and merge recognized fields
     model_spec_name = cfg_dict.get("model_spec")
@@ -131,8 +137,8 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
         gas = int(args.grad_acc_steps)
         cdf = float(args.cooldown_frac)
         vlet = int(args.val_loss_every_tokens)
-        spnt = int(args.snapshot_per_n_tokens)
-        swt = int(args.snapshot_warmup_tokens)
+        spnt = int(args.checkpoint_per_n_tokens)
+        swt = int(args.checkpoint_warmup_tokens)
     except Exception as e:
         raise ValueError(f"Invalid types in Hyperparameters: {e}")
     if tsl % wbs != 0:
@@ -155,9 +161,9 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
     if vlet < 0:
         raise ValueError(f"val_loss_every_tokens must be >= 0, got {vlet}")
     if spnt < 0:
-        raise ValueError(f"snapshot_per_n_tokens must be >= 0, got {spnt}")
+        raise ValueError(f"checkpoint_per_n_tokens must be >= 0, got {spnt}")
     if swt < 0:
-        raise ValueError(f"snapshot_warmup_tokens must be >= 0, got {swt}")
+        raise ValueError(f"checkpoint_warmup_tokens must be >= 0, got {swt}")
     # Validate learning rate schedule option
     # Validate learning rate schedule option against optim dispatch table
     try:

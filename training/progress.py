@@ -1,7 +1,7 @@
 class ProgressMeter:
     """
     Tracks training progress in terms of processed tokens, and coordinates
-    evaluation and snapshot scheduling based on configurable intervals.
+    evaluation and checkpoint scheduling based on configurable intervals.
 
     API preserved from inline definition in train.py.
     """
@@ -11,18 +11,24 @@ class ProgressMeter:
         target_tokens: int,
         *,
         eval_every_tokens: int | None,
-        snapshot_per_n_tokens: int | None,
-        snapshot_warmup_tokens: int = 0,
+        checkpoint_per_n_tokens: int | None,
+        checkpoint_warmup_tokens: int = 0,
     ) -> None:
         self.target_tokens = int(target_tokens)
         self.tokens_processed = 0
         self.eval_every_tokens = int(eval_every_tokens) if eval_every_tokens else None
         self.next_eval_at = self.eval_every_tokens if self.eval_every_tokens else None
-        self.snapshot_per_n_tokens = int(snapshot_per_n_tokens) if snapshot_per_n_tokens is not None and snapshot_per_n_tokens >= 0 else None
-        self.snapshot_warmup_tokens = int(snapshot_warmup_tokens or 0)
-        self.next_snapshot_at = (
-            self.snapshot_warmup_tokens + self.snapshot_per_n_tokens
-        ) if self.snapshot_per_n_tokens else None
+        # checkpoint schedule: allow 0 meaning "after warmup, then once per update"
+        self.checkpoint_per_n_tokens = int(checkpoint_per_n_tokens) if checkpoint_per_n_tokens is not None and checkpoint_per_n_tokens >= 0 else None
+        self.checkpoint_warmup_tokens = int(checkpoint_warmup_tokens or 0)
+        if self.checkpoint_per_n_tokens is None:
+            self.next_checkpoint_at = None
+        else:
+            # initial schedule: at warmup + interval (interval may be 0)
+            self.next_checkpoint_at = self.checkpoint_warmup_tokens + self.checkpoint_per_n_tokens
+            # if interval is 0, ensure we at least schedule on or after warmup boundary
+            if self.checkpoint_per_n_tokens == 0 and self.next_checkpoint_at < self.checkpoint_warmup_tokens:
+                self.next_checkpoint_at = self.checkpoint_warmup_tokens
 
     @property
     def s(self) -> float:
@@ -43,27 +49,31 @@ class ProgressMeter:
             while self.tokens_processed >= self.next_eval_at:
                 self.next_eval_at += self.eval_every_tokens
 
-    def should_snapshot(self) -> bool:
-        if self.snapshot_per_n_tokens is None or self.next_snapshot_at is None:
+    def should_checkpoint(self) -> bool:
+        if self.checkpoint_per_n_tokens is None or self.next_checkpoint_at is None:
             return False
-        if self.tokens_processed < self.snapshot_warmup_tokens:
+        if self.tokens_processed < self.checkpoint_warmup_tokens:
             return False
-        return self.tokens_processed >= self.next_snapshot_at
+        return self.tokens_processed >= self.next_checkpoint_at
 
-    def mark_snapshot_done(self) -> None:
-        if self.snapshot_per_n_tokens is not None and self.next_snapshot_at is not None:
-            while self.tokens_processed >= self.next_snapshot_at:
-                self.next_snapshot_at += self.snapshot_per_n_tokens
+    def mark_checkpoint_done(self) -> None:
+        if self.checkpoint_per_n_tokens is not None and self.next_checkpoint_at is not None:
+            if self.checkpoint_per_n_tokens == 0:
+                # schedule next checkpoint at least one token after current to avoid retriggering at same count
+                self.next_checkpoint_at = self.tokens_processed + 1
+            else:
+                while self.tokens_processed >= self.next_checkpoint_at:
+                    self.next_checkpoint_at += self.checkpoint_per_n_tokens
 
     def state_dict(self) -> dict:
         return {
             "tokens_processed": self.tokens_processed,
             "next_eval_at": self.next_eval_at,
-            "next_snapshot_at": self.next_snapshot_at,
+            "next_checkpoint_at": self.next_checkpoint_at,
             "target_tokens": self.target_tokens,
         }
 
     def load_state_dict(self, d: dict) -> None:
         self.tokens_processed = int(d.get("tokens_processed", 0))
         self.next_eval_at = d.get("next_eval_at", self.eval_every_tokens)
-        self.next_snapshot_at = d.get("next_snapshot_at", self.next_snapshot_at)
+        self.next_checkpoint_at = d.get("next_checkpoint_at", self.next_checkpoint_at)
