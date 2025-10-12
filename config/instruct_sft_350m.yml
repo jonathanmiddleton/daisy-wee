@@ -40,6 +40,8 @@ grad_acc_steps: 1 # assumes world_size=8
 val_shards:
   - type: "instruct-mix"
     path: "data/instruct_mix/instruct_val_*.bin"
+  - type: "fineweb-edu"
+    path: "data/fineweb-edu/edu_fineweb_val_000000.bin"
 val_loss_every_tokens:     26214400
 val_seq_len: 262144       # 4 * 64 * 1024
 tot_val_tokens: 10485760
