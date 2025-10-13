@@ -15,12 +15,12 @@ MAX_SEQ_LEN = 16*1024
 parser = argparse.ArgumentParser(description="Generate text with a GPT model from a checkpoint.")
 parser.add_argument("checkpoint", type=str, help="Path to model checkpoint (.pt)")
 parser.add_argument("--max_tokens", type=int, default=256, help="Number of new tokens to generate")
-parser.add_argument("--repetition_penalty", type=float, default=1.2, help="Repetition penalty")
-parser.add_argument("--temperature", type=float, default=0.6, help="Sampling temperature")
+parser.add_argument("--repetition_penalty", type=float, default=1.25, help="Repetition penalty")
+parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
 parser.add_argument("--top_k", type=int, default=100, help="Top-k sampling")
 parser.add_argument("--top_p", type=float, default=0.95, help="Top-p sampling")
 parser.add_argument("--max_seq_len", type=int, default=MAX_SEQ_LEN, help="Maximum sequence length")
-parser.add_argument("--seed", type=int, default=None, help="Random seed for deterministic sampling")
+parser.add_argument("--seed", type=int, default=1337, help="Random seed for deterministic sampling")
 parser.add_argument(
     "--device",
     type=str,
@@ -138,7 +138,8 @@ def _parse_leading_params(s: str):
 
 if cli.chat:
     print("Starting turn-based chat. Type 'exit', 'quit', or press Ctrl-D/Ctrl-C to end.")
-    print("Hyperparameters: temperature =", cli.temperature, ", repetition_penalty =", cli.repetition_penalty, ", top_k =", cli.top_k, ", top_p =", cli.top_p)
+    print("Hyperparameters: temperature =", cli.temperature, ", repetition_penalty =", cli.repetition_penalty, ", top_k =", cli.top_k, ", top_p =", cli.top_p,
+          ", max_seq_len =", max_seq_len, ", seed =", cli.seed,)
     print("Tip: Adjust settings inline, e.g., '/t=0.4', '/rp=1.2', or '/t=0.4 /rp=1.2 write something'. Type '/new' to start a new conversation.\n")
     transcript = ""
     while True:
