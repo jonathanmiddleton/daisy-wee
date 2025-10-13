@@ -5,12 +5,12 @@ from pathlib import Path
 import numpy as np
 
 def _load_data_shard(file: Path):
-    header = torch.from_file(str(file), False, 256, dtype=torch.int32) # header is 256 int32
+    header = torch.from_file(str(file), False, 256, dtype=torch.int32, device='cpu') # header is 256 int32
     assert header[0] == 20240520, "magic number mismatch in the data .bin file"
     assert header[1] == 1, "unsupported version"
     num_tokens = int(header[2]) # number of tokens (claimed)
     with file.open("rb", buffering=0) as f:
-        tokens = torch.empty(num_tokens, dtype=torch.uint16, pin_memory=True) # avoid pin_memory copy by @YouJiacheng
+        tokens = torch.empty(num_tokens, dtype=torch.uint16, pin_memory=True).to('cpu') #to('cpu') required on Mac with Metal # avoid pin_memory copy by @YouJiacheng
         f.seek(256 * 4)
         nbytes = f.readinto(tokens.numpy()) # avoid bytes->array copy by @YouJiacheng
         assert nbytes == 2 * num_tokens, "number of tokens read does not match header"
