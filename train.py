@@ -372,7 +372,7 @@ while progress.tokens_processed < progress.target_tokens:
                     args=args,
                     tokens_per_step=_tokens_per_optim_step,
                     progress=progress,
-                    overwrite=True,
+                    overwrite=False,
                     suffix="best",
                 )
                 print0(f"Saved checkpoint to {fname} with val loss {float(cur_val):.6f}")
