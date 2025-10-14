@@ -111,7 +111,8 @@ class CausalSelfAttention(nn.Module):
     def step(self, x, k_ctx: Tensor, v_ctx: Tensor, pos: int, ve: Tensor | None, lambdas: Tensor, window: int):
         B, _, _ = x.shape
         x = x.to(self.qkvo_w.dtype)
-        q, k, v = F.linear(x, self.qkvo_w[:3].flatten(end_dim=1)).view(B, 1, 3 * self.num_heads, self.head_dim).chunk(3, dim=-2)
+        f= self.qkvo_w[:3].flatten(end_dim=1)
+        q, k, v = F.linear(x, f).view(B, 1, 3 * self.num_heads, self.head_dim).chunk(3, dim=-2)
         q, k = norm(q), norm(k) # QK norm @Grad62304977
         q, k = self.rotary.step(q, pos), self.rotary.step(k, pos)
         v = norm(v)
@@ -143,7 +144,9 @@ class CausalSelfAttention(nn.Module):
                 attn_mask: torch.Tensor | None = None):
         B, T, _ = x.shape
         x = x.to(self.qkvo_w.dtype)
-        qkv = torch.nn.functional.linear(x, self.qkvo_w[:3].flatten(end_dim=1)).view(B, T, 3 * self.num_heads, self.head_dim)
+        w = self.qkvo_w[:3]
+        w = w.flatten(end_dim=1)
+        qkv = torch.nn.functional.linear(x, w).view(B, T, 3 * self.num_heads, self.head_dim)
         q, k, v = qkv.chunk(3, dim=-2)
         q, k = norm(q), norm(k)
         q, k = self.rotary(q), self.rotary(k)
