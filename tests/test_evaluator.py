@@ -77,11 +77,11 @@ def test_eval_consumes_total_tokens_globally_across_world_sizes(world_size, glob
             world_size=world_size,
             rank=rank,
             train_attention_window_len=128,
-            window_block_size=64,
+            window_block_size=1,
         )
         model = ToyModel().eval()
 
-        result = evaluator.eval(model, total_tokens=total_tokens)
+        result = evaluator.eval(model=model, total_tokens=total_tokens)
         assert "val_loss" in result and isinstance(result["val_loss"], float)
 
         # Each rank should have been advanced exactly `steps` by the evaluator
@@ -115,11 +115,11 @@ def test_eval_uses_data_generator_batches_exactly():
             world_size=world_size,
             rank=rank,
             train_attention_window_len=128,
-            window_block_size=64,
+            window_block_size=1,
         )
         model = ToyModel().eval()
 
-        evaluator.eval(model, total_tokens=total_tokens)
+        evaluator.eval(model=model, total_tokens=total_tokens)
 
         # The model should have seen exactly `steps` batches, each matching the FakeDataGenerator pattern
         assert len(model.seen_batches) == steps

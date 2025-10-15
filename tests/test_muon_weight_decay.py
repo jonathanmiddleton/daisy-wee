@@ -22,6 +22,7 @@ wandb_run_name: 'test-tiny'
 train_shards: "data/fineweb/fineweb_train_*.bin"
 target_tokens: 1000000
 cooldown_frac: 0.7
+learning_rate_schedule: linear_decay
 training_sequence_length: 1024
 train_attention_window_len: 1024
 # Optimizers configuration
@@ -94,6 +95,7 @@ wandb_run_name: 'test-tiny'
 train_shards: "data/fineweb/fineweb_train_*.bin"
 target_tokens: 1000000
 cooldown_frac: 0.7
+learning_rate_schedule: linear_decay
 training_sequence_length: 1024
 train_attention_window_len: 1024
 # Optimizers configuration
