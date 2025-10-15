@@ -100,19 +100,7 @@ def print0(st):
 # noinspection PyShadowingNames
 def _build_hparams_from_args(args: Hyperparameters) -> dict:
     """Build a checkpoint hparams dict from training args."""
-    return {
-        "vocab_size": args.vocab_size,
-        "num_layers": args.num_layers,
-        "num_heads": args.num_heads,
-        "model_dim": args.model_dim,
-        "head_dim": args.head_dim,
-        "training_sequence_length": args.training_sequence_length,
-        "val_seq_len": args.val_seq_len,
-        "train_attention_window_len": args.train_attention_window_len,
-        "window_block_size": args.window_block_size,
-        "eos_token_id": args.eos_token_id,
-        "model_class": args.model_class,
-    }
+    return asdict(args)
 
 # noinspection PyShadowingNames
 def _run_ckpt_filename(
@@ -209,6 +197,7 @@ model: nn.Module = _ModelClass(
     num_layers=args.num_layers,
     num_heads=args.num_heads,
     model_dim=args.model_dim,
+    # RoPE requires a potentially different max_seq_len than may be specified in the model spec
     max_seq_len=max(args.training_sequence_length, args.val_seq_len),
     head_dim=args.head_dim,
     window_block_size=args.window_block_size,
