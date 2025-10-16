@@ -31,10 +31,10 @@ class Block(nn.Module):
         x = x + self.mlp(norm(x))
         return x, k_new, v_new
 
-    def prefill(self, x, ve, x0, lambdas, sa_lambdas, attn_mask):
+    def prefill(self, x, ve, x0, lambdas, sa_lambdas, attn_mask, debug=False):
         x = lambdas[0] * x + lambdas[1] * x0
         if self.attn is not None:
-            y, k, v = self.attn.prefill(x, ve, sa_lambdas, attn_mask)
+            y, k, v = self.attn.prefill(x, ve, sa_lambdas, attn_mask, debug=debug)
             x = x + y
         else:
             k = v = None

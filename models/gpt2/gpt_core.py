@@ -42,9 +42,9 @@ class GPT2Core(nn.Module):
         self.window_block_size = int(window_block_size)
         assert num_layers % 2 == 0
         self.scalars = nn.Parameter(torch.cat([
-            torch.ones(num_layers),
-            *[torch.tensor([1.0, 0.0]) for _ in range(num_layers)],
-            *[torch.tensor([0.5, 0.5]) for _ in range(num_layers)],
+            torch.ones(num_layers),                                     # skip_weights
+            *[torch.tensor([1.0, 0.0]) for _ in range(num_layers)],     # residual mixing
+            *[torch.tensor([0.5, 0.5]) for _ in range(num_layers)],     # value embedding mixing
         ]))
 
     def create_blockmasks(self, input_seq: Tensor, sliding_window_num_blocks: Tensor):
@@ -170,7 +170,7 @@ class GPT2Core(nn.Module):
         return logits, k_new_list, v_new_list
 
     @torch.no_grad()
-    def prefill_batch(self, input_ids: Tensor, window: int | None = None):
+    def prefill_batch(self, input_ids: Tensor, window: int | None = None, debug: bool = False):
         assert input_ids.ndim == 2
         B, T = input_ids.shape
         L = len(self.blocks)
@@ -199,7 +199,7 @@ class GPT2Core(nn.Module):
         for i in range(L):
             if i in skip_map:
                 x = x + skip_weights[skip_map[i]] * skip_connections[skip_map[i]]
-            x, k, v = self.blocks[i].prefill(x, ve[i], x0, lambdas[i], sa_lambdas[i], attn_mask)
+            x, k, v = self.blocks[i].prefill(x, ve[i], x0, lambdas[i], sa_lambdas[i], attn_mask, debug=debug)
             skip_connections.append(x)
             k_list.append(k)
             v_list.append(v)

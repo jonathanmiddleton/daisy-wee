@@ -10,7 +10,7 @@ def _apply_rope(x_BTHD , cos, sin):
     x1, x2 = x_BTHD.to(dtype=torch.float32).chunk(2, dim=-1)
     y1 = x1 * cos + x2 * sin
     y2 = x1 * (-sin) + x2 * cos
-    return torch.cat((y1, y2), dim=3).type_as(x_BTHD)
+    return torch.cat((y1, y2), dim=-1).type_as(x_BTHD)
 
 #@torch.compile
 def _flex_call(q, k, v, block_mask, scale):
@@ -78,10 +78,10 @@ class CausalSelfAttention(nn.Module):
         # scale the attention logits by given constant, instead of the default head_dim**-0.5, by @leloykun
         # inspired by learnable scalars used by @brendanh0gan https://x.com/hi_tysam/status/1879693583898591283
         self.attn_scale = 0.12
-        self.in_t = None
+        self.last_q = None
+        self.last_k = None
 
     def forward(self, x: Tensor, ve: Tensor | None, block_mask: BlockMask, lambdas: Tensor):
-        self.in_t = x
         B, T = x.size(0), x.size(1) # batch size, sequence length
         assert B == 1, "Must use batch size = 1 for FlexAttention"
         x = x.to(self.qkvo_w.dtype)
@@ -111,7 +111,6 @@ class CausalSelfAttention(nn.Module):
         return y
 
     def step(self, x, k_ctx: Tensor, v_ctx: Tensor, pos: int, ve: Tensor | None, lambdas: Tensor, window: int):
-        self.in_t = x
         B, _, _ = x.shape
         x = x.to(self.qkvo_w.dtype)
         f= self.qkvo_w[:3].flatten(end_dim=1)
@@ -144,8 +143,7 @@ class CausalSelfAttention(nn.Module):
         return y, k, v
 
     def prefill(self, x: torch.Tensor, ve: torch.Tensor | None, lambdas: torch.Tensor,
-                attn_mask: torch.Tensor | None = None):
-        self.in_t = x
+                attn_mask: torch.Tensor | None = None, debug: bool = False,):
         B, T, _ = x.shape
         x = x.to(self.qkvo_w.dtype)
         w = self.qkvo_w[:3]
@@ -154,6 +152,9 @@ class CausalSelfAttention(nn.Module):
         q, k, v = qkv.chunk(3, dim=-2)
         q, k = norm(q), norm(k)
         q, k = self.rotary(q), self.rotary(k)
+        if debug:
+            self.last_q = q
+            self.last_k = k
         v = norm(v)
         target_dtype = q.dtype
         v = v.to(target_dtype)
