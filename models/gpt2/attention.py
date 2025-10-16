@@ -78,8 +78,10 @@ class CausalSelfAttention(nn.Module):
         # scale the attention logits by given constant, instead of the default head_dim**-0.5, by @leloykun
         # inspired by learnable scalars used by @brendanh0gan https://x.com/hi_tysam/status/1879693583898591283
         self.attn_scale = 0.12
+        self.in_t = None
 
     def forward(self, x: Tensor, ve: Tensor | None, block_mask: BlockMask, lambdas: Tensor):
+        self.in_t = x
         B, T = x.size(0), x.size(1) # batch size, sequence length
         assert B == 1, "Must use batch size = 1 for FlexAttention"
         x = x.to(self.qkvo_w.dtype)
@@ -109,6 +111,7 @@ class CausalSelfAttention(nn.Module):
         return y
 
     def step(self, x, k_ctx: Tensor, v_ctx: Tensor, pos: int, ve: Tensor | None, lambdas: Tensor, window: int):
+        self.in_t = x
         B, _, _ = x.shape
         x = x.to(self.qkvo_w.dtype)
         f= self.qkvo_w[:3].flatten(end_dim=1)
@@ -142,6 +145,7 @@ class CausalSelfAttention(nn.Module):
 
     def prefill(self, x: torch.Tensor, ve: torch.Tensor | None, lambdas: torch.Tensor,
                 attn_mask: torch.Tensor | None = None):
+        self.in_t = x
         B, T, _ = x.shape
         x = x.to(self.qkvo_w.dtype)
         w = self.qkvo_w[:3]
