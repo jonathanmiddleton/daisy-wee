@@ -140,10 +140,10 @@ def _parse_leading_params(s: str):
     remaining = " ".join(tokens[i:])
     return updates, remaining
 
+print("Hyperparameters: temperature =", cli.temperature, ", repetition_penalty =", cli.repetition_penalty, ", top_k =", cli.top_k, ", top_p =", cli.top_p,
+      ", max_seq_len =", max_seq_len, ", seed =", cli.seed,)
 if cli.chat:
     print("Starting turn-based chat. Type 'exit', 'quit', or press Ctrl-D/Ctrl-C to end.")
-    print("Hyperparameters: temperature =", cli.temperature, ", repetition_penalty =", cli.repetition_penalty, ", top_k =", cli.top_k, ", top_p =", cli.top_p,
-          ", max_seq_len =", max_seq_len, ", seed =", cli.seed,)
     print("Tip: Adjust settings inline, e.g., '/t=0.4', '/rp=1.2', or '/t=0.4 /rp=1.2 write something'. Type '/new' to start a new conversation.\n")
     transcript = ""
     while True:
