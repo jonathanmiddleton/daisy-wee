@@ -1,3 +1,5 @@
+from typing import Generator
+
 import torch
 import torch.nn.functional as F
 from inference.kv_cache import KVCache
@@ -84,7 +86,7 @@ class Generator:
         return logits
 
     @torch.inference_mode()
-    def generate(self, prompt_ids: torch.Tensor, max_new_tokens, seed=None):
+    def generate(self, prompt_ids: torch.Tensor, max_new_tokens, seed=None) -> Generator[int, None, list[int]]:
         if seed is not None:
             self.set_seed(seed)
         assert prompt_ids.ndim == 1
@@ -98,6 +100,7 @@ class Generator:
             next_id = self._sample(logits[0])
             if self.eos_token_id is not None and next_id == self.eos_token_id:
                 break
+            yield next_id
             logits = self._step(next_id)
             out.append(int(next_id))
         return out

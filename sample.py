@@ -1,5 +1,6 @@
 import argparse
 import sys
+import time
 
 import tiktoken
 import torch
@@ -114,6 +115,8 @@ if cli.chat:
     print("Starting turn-based chat. Type 'exit', 'quit', or press Ctrl-D/Ctrl-C to end.")
     print("Tip: Adjust settings inline, e.g., '/t=0.4', '/rp=1.2', or '/t=0.4 /rp=1.2 write something'. Type '/new' to start a new conversation.\n")
     transcript = ""
+    def print_token(t):
+        print(enc.decode([t]), end="", flush=True)
     while True:
         try:
             user = input("You: ").strip()
@@ -149,12 +152,23 @@ if cli.chat:
         prompt_text = transcript + template.format(prompt=effective_user)
         start_ids = encode(prompt_text)
         x = tensor(start_ids, dtype=torch.long, device=device)
-        out_ids = gen.generate(x, max_new_tokens=cli.max_tokens)
-        new_ids = out_ids[len(start_ids):]
-        reply = decode(new_ids).strip()
-        print(f"Assistant: {reply}\n")
+        gen_iter = gen.generate(x, max_new_tokens=cli.max_tokens)
+        print(f"Assistant: ", end="", flush=True)
+        sys.stdout.flush()
 
-        transcript = prompt_text + reply + "\n\n"
+        start = time.time()
+        try:
+            while True:
+                t = next(gen_iter)
+                print_token(t)
+        except StopIteration as e:
+            out_ids = e.value
+        end = time.time()
+        new_ids = out_ids[len(start_ids):]
+        tps = len(new_ids) / (end - start)
+        reply = decode(new_ids).strip()
+        transcript = prompt_text + reply + "\n\n" #anything added to transcript becomes the prefix of the next prompt
+        print(f"\n({tps:.1f} tokens/s)\n\n")
     sys.exit(0)
 else:
     # Single-shot sample
