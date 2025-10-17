@@ -113,8 +113,8 @@ class CausalSelfAttention(nn.Module):
     def step(self, x, k_ctx: Tensor, v_ctx: Tensor, pos: int, ve: Tensor | None, lambdas: Tensor, window: int):
         B, _, _ = x.shape
         x = x.to(self.qkvo_w.dtype)
-        f= self.qkvo_w[:3].flatten(end_dim=1)
-        q, k, v = F.linear(x, f).view(B, 1, 3 * self.num_heads, self.head_dim).chunk(3, dim=-2)
+        w = self.qkvo_w[:3].flatten(end_dim=1)
+        q, k, v = F.linear(x, w).view(B, 1, 3 * self.num_heads, self.head_dim).chunk(3, dim=-2)
         q, k = norm(q), norm(k) # QK norm @Grad62304977
         q, k = self.rotary.step(q, pos), self.rotary.step(k, pos)
         v = norm(v)
