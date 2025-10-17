@@ -122,8 +122,8 @@ def peek_hparams(path: str, map_location: Any | None = None) -> Dict[str, Any]:
     ckpt = _normalize(obj)
     return ckpt.hparams or {}
 
-def model_from_checkpoint(path: str, device: torch.device | str, map_location: Any | None = None) -> nn.Module:
-    ckpt = load_checkpoint(path, map_location=map_location)
+def model_from_checkpoint(path: str, device: torch.device | str) -> nn.Module:
+    ckpt = load_checkpoint(path, map_location=device)
     state_dict = ckpt.model
     hparams = ckpt.hparams or {}
 
@@ -154,4 +154,4 @@ def model_from_checkpoint(path: str, device: torch.device | str, map_location: A
     ).to(device)
 
     apply_model_state(model, state_dict, strict=False)
-    return model
+    return model, hparams

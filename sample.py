@@ -1,12 +1,12 @@
 import argparse
 import sys
-import re
+
+import tiktoken
 import torch
 from torch import nn, tensor
-import tiktoken
-from models import get_model_class
+
 from inference.generate import Generator
-from tools.checkpoint import load_checkpoint, apply_model_state
+from tools.checkpoint import model_from_checkpoint
 
 VOCAB_SIZE = 50257
 MAX_SEQ_LEN = 16*1024
@@ -39,38 +39,8 @@ if len(sys.argv) == 1:
 cli = parser.parse_args()
 
 device = cli.device
-ckpt = load_checkpoint(cli.checkpoint, map_location=device)
-state_dict = ckpt.model
-hparams = ckpt.hparams or {}
-
-vocab_size = int(hparams.get('vocab_size'))
-num_layers = int(hparams.get('num_layers'))
-num_heads = int(hparams.get('num_heads'))
-model_dim = int(hparams.get('model_dim'))
-head_dim = int(hparams.get('head_dim'))
-max_seq_len = int(hparams.get('max_seq_len', cli.max_seq_len))
-window_block_size = int(hparams.get('window_block_size', 128))
-model_class = str(hparams.get('model_class'))
-if not model_class:
-    raise ValueError("Checkpoint hparams must include 'model_class' (fully-qualified class name)")
-if 'eos_token_id' not in hparams:
-    raise ValueError("Checkpoint hparams must include 'eos_token_id' (no default)")
-eos_token_id = int(hparams.get('eos_token_id'))
-
-ModelClass = get_model_class(model_class)
-model: nn.Module = ModelClass(
-    vocab_size=vocab_size,
-    num_layers=num_layers,
-    num_heads=num_heads,
-    model_dim=model_dim,
-    max_seq_len=max_seq_len,
-    head_dim=head_dim,
-    window_block_size=window_block_size,
-    eos_token_id=eos_token_id,
-).to(device)
-
-apply_model_state(model, state_dict, strict=False)
-
+devtype = "cuda" if str(device).startswith("cuda") else ("mps" if str(device).startswith("mps") else "cpu")
+model, hparams = model_from_checkpoint(cli.checkpoint, device=device)
 model.eval()
 for m in model.modules():
     if isinstance(m, nn.Embedding):
@@ -92,18 +62,16 @@ use_instruct = not cli.base
 '''
 template = "### Instruction:\n{prompt}\n\n### Response:\n" if use_instruct else "{prompt}"
 
-devtype = "cuda" if str(device).startswith("cuda") else ("mps" if str(device).startswith("mps") else "cpu")
-ctx = torch.amp.autocast(device_type=devtype, dtype=torch.bfloat16)
-
 gen = Generator(
     model=model,
     window=int(hparams['train_attention_window_len']),
-    eos_token_id=eos_token_id,
+    eos_token_id=hparams['eos_token_id'],
     temperature=cli.temperature,
     top_k=cli.top_k,
     top_p=cli.top_p,
     repetition_penalty=cli.repetition_penalty,
     seed=cli.seed,
+    device=device,
 )
 
 def _parse_leading_params(s: str):
@@ -141,7 +109,7 @@ def _parse_leading_params(s: str):
     return updates, remaining
 
 print("Hyperparameters: temperature =", cli.temperature, ", repetition_penalty =", cli.repetition_penalty, ", top_k =", cli.top_k, ", top_p =", cli.top_p,
-      ", max_seq_len =", max_seq_len, ", seed =", cli.seed,)
+      ", max_seq_len =", hparams['training_sequence_length'], ", seed =", cli.seed,) #TODO add max_seq_len to hparams
 if cli.chat:
     print("Starting turn-based chat. Type 'exit', 'quit', or press Ctrl-D/Ctrl-C to end.")
     print("Tip: Adjust settings inline, e.g., '/t=0.4', '/rp=1.2', or '/t=0.4 /rp=1.2 write something'. Type '/new' to start a new conversation.\n")
@@ -164,6 +132,7 @@ if cli.chat:
             gen.set_repetition_penalty(updates['repetition_penalty'])
         if 'new' in updates:
             transcript = ""
+            gen.reset()
             print("\033[2J\033[H", end="", flush=True)  # CSI 2J = clear, CSI H = home
             continue
         # If the user only passed settings, acknowledge and reprompt
@@ -180,10 +149,7 @@ if cli.chat:
         prompt_text = transcript + template.format(prompt=effective_user)
         start_ids = encode(prompt_text)
         x = tensor(start_ids, dtype=torch.long, device=device)
-        with torch.no_grad():
-            with ctx:
-                gen.reset()
-                out_ids = gen.generate(x, max_new_tokens=cli.max_tokens)
+        out_ids = gen.generate(x, max_new_tokens=cli.max_tokens)
         new_ids = out_ids[len(start_ids):]
         reply = decode(new_ids).strip()
         print(f"Assistant: {reply}\n")
@@ -195,7 +161,5 @@ else:
     prompt = template.format(prompt=cli.prompt)
     start_ids = encode(prompt)
     x = tensor(start_ids, dtype=torch.long, device=device)
-    with torch.no_grad():
-        with ctx:
-            out_ids = gen.generate(x, max_new_tokens=cli.max_tokens)
+    out_ids = gen.generate(x, max_new_tokens=cli.max_tokens)
     print(decode(out_ids))

@@ -135,10 +135,12 @@ python sample.py /path/to/checkpoint.pt --device cuda   --max_tokens 256 --tempe
 ```
 
 Programmatic:
+
 ```python
 import torch
 from tools.checkpoint import model_from_checkpoint
-m = model_from_checkpoint('checkpoints/state_step_100000.pt', device='cuda')
+
+m, hyperparameters = model_from_checkpoint('checkpoints/state_step_100000.pt', device='cuda')
 m.eval()
 ```
 

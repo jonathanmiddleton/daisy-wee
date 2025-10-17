@@ -13,12 +13,13 @@ def _apply_repetition_penalty(logits, prev_ids, rep_p, rep_w=128, rep_h=140.0, c
     scale = rep_p ** s
     return torch.where(logits > 0, logits / scale, logits * scale)
 
-
 class Generator:
     def __init__(self, model, window, device=None, dtype=torch.bfloat16, temperature=1.0, top_k=None, top_p=None, repetition_penalty=1.0, eos_token_id=None, seed=None):
         self.model = model.eval()
         self.device = next(model.parameters()).device if device is None else device
         assert self.device is not None
+        devtype = "cuda" if str(device).startswith("cuda") else ("mps" if str(device).startswith("mps") else "cpu")
+        self.amp_ctx = torch.autocast(device_type=devtype, dtype=torch.bfloat16)
         h = None; d = None
         for b in self.model.blocks:
             a = getattr(b, "attn", None)
@@ -37,40 +38,43 @@ class Generator:
         if seed is not None:
             self.set_seed(seed)
 
+    @torch.inference_mode()
     def set_temperature(self, temperature: float):
         self.temperature = float(temperature)
         return self
 
+    @torch.inference_mode()
     def set_repetition_penalty(self, repetition_penalty: float):
         self.repetition_penalty = float(repetition_penalty)
         return self
 
+    @torch.inference_mode()
     def set_seed(self, seed: int):
         g = torch.Generator(device=self.device)
         g.manual_seed(int(seed))
         self.rng = g
         return self
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def reset(self):
         self.cache.reset()
         self.history = torch.empty(0, dtype=torch.long, device=self.device)
 
-    @torch.no_grad()
-    def prefill(self, prompt_ids):
-        logits, kv = self.model.prefill_batch(prompt_ids[None,:], window=self.window)
+    def _prefill(self, prompt_ids):
+        with self.amp_ctx:
+            logits, kv = self.model.prefill_batch(prompt_ids[None,:], window=self.window)
         self.cache.bulk_write_packed(kv.bfloat16(), len(prompt_ids), window=self.window)
         self.history = torch.cat([self.history, prompt_ids], dim=0)
         return logits
 
-    @torch.no_grad()
-    def step(self, token_id):
+    def _step(self, token_id):
         k_ctxs, v_ctxs = [], []
         for i in range(len(self.model.blocks)):
             kc, vc = self.cache.view(i)
             k_ctxs.append(kc); v_ctxs.append(vc)
         token = torch.tensor(token_id, device=self.device, dtype=torch.long)
-        logits, k_new, v_new = self.model.step(token, k_ctxs, v_ctxs, self.cache.t, self.window)
+        with self.amp_ctx:
+            logits, k_new, v_new = self.model.step(token, k_ctxs, v_ctxs, self.cache.t, self.window)
         logits = logits[..., :self.vocab_size]
         for i in range(len(self.model.blocks)):
             if k_new[i] is not None:
@@ -79,23 +83,25 @@ class Generator:
         self.history = torch.cat([self.history, token.view(1)], dim=0)
         return logits
 
-    @torch.no_grad()
-    def generate(self, prompt_ids, max_new_tokens, seed=None):
+    @torch.inference_mode()
+    def generate(self, prompt_ids: torch.Tensor, max_new_tokens, seed=None):
         if seed is not None:
             self.set_seed(seed)
         assert prompt_ids.ndim == 1
         assert prompt_ids.size(0) > 0 # must have at least one token
-        logits = self.prefill(prompt_ids)
+        assert prompt_ids.size(0) <= self.window, "prompt length must be <= attention window"
+        assert prompt_ids.size(0)
+        prompt_ids = prompt_ids[self.history.size(0):]
+        logits = self._prefill(prompt_ids)
         out = list(self.history.tolist())
         for _ in range(max_new_tokens):
             next_id = self._sample(logits[0])
             if self.eos_token_id is not None and next_id == self.eos_token_id:
                 break
-            logits = self.step(next_id)
+            logits = self._step(next_id)
             out.append(int(next_id))
         return out
 
-    @torch.no_grad()
     def _sample(self, logits_1xb):
         x = logits_1xb.float().view(-1)
         x = _apply_repetition_penalty(x, self.history, self.repetition_penalty)

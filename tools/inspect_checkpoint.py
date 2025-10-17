@@ -36,7 +36,7 @@ def main():
 
     # Build model and load state
     try:
-        model = model_from_checkpoint(path, device=args.device, map_location=args.device)
+        model = model_from_checkpoint(path, device=args.device)
     except Exception as e:
         print(f"Failed to load model from checkpoint: {e}")
         # Try partial: just state_dict for scalars analysis
