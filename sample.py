@@ -23,7 +23,7 @@ parser.add_argument("--top_p", type=float, default=0.95, help="Top-p sampling")
 parser.add_argument("--max_seq_len", type=int, default=MAX_SEQ_LEN, help="Maximum sequence length")
 parser.add_argument("--seed", type=int, default=1337, help="Random seed for deterministic sampling")
 parser.add_argument("--base", type=bool, default=False, help="Flag for base sampling")
-parser.add_argument("--prompt", type=str, default="Write a short story about a child who is playing with a ball.", help="Optional one-shot prompt")
+parser.add_argument("--prompt", type=str, default="Write a short story about a child playing with a ball.", help="Optional one-shot prompt")
 parser.add_argument(
     "--device",
     type=str,
@@ -111,12 +111,14 @@ def _parse_leading_params(s: str):
 
 print("Hyperparameters: temperature =", cli.temperature, ", repetition_penalty =", cli.repetition_penalty, ", top_k =", cli.top_k, ", top_p =", cli.top_p,
       ", max_seq_len =", hparams['training_sequence_length'], ", seed =", cli.seed,) #TODO add max_seq_len to hparams
+def print_token(t):
+    print(enc.decode([t]), end="", flush=True)
+
 if cli.chat:
     print("Starting turn-based chat. Type 'exit', 'quit', or press Ctrl-D/Ctrl-C to end.")
     print("Tip: Adjust settings inline, e.g., '/t=0.4', '/rp=1.2', or '/t=0.4 /rp=1.2 write something'. Type '/new' to start a new conversation.\n")
     transcript = ""
-    def print_token(t):
-        print(enc.decode([t]), end="", flush=True)
+
     while True:
         try:
             user = input("You: ").strip()
@@ -175,5 +177,15 @@ else:
     prompt = template.format(prompt=cli.prompt)
     start_ids = encode(prompt)
     x = tensor(start_ids, dtype=torch.long, device=device)
-    out_ids = gen.generate(x, max_new_tokens=cli.max_tokens)
-    print(decode(out_ids))
+    gen_iter = gen.generate(x, max_new_tokens=cli.max_tokens)
+    start = time.time()
+    try:
+        while True:
+            t = next(gen_iter)
+            print_token(t)
+    except StopIteration as e:
+        out_ids = e.value
+    end = time.time()
+    new_ids = out_ids[len(start_ids):]
+    tps = len(new_ids) / (end - start)
+    print(f"\n({tps:.1f} tokens/s)\n\n")
