@@ -58,14 +58,11 @@ Notes: `*` “amx” is shorthand for autocast(bf16) policy; rename as desired. 
 - **Compile inputs**: fix sequence lengths, strides, and batch sizes to a single static signature for compiled runs.
 
 ## 6) Datasets
-- 200–500 prompts spanning short (≤64), medium (≤512), long (≥2k) contexts.
-- Domains: prose, code, math. Public prompts or internal benchmark set.
-- Target ≥50k evaluated token positions for open-loop metrics.
-- Store canonicalized prompt set (`utf-8`, normalized whitespace); ship a content hash list.
+- Any dataset provided by DistributedDataGenerator
 
 ## 7) Procedures
 ### 7.1 Open-loop (Teacher Forcing)
-1. Tokenize all prompts; truncate/pad per configured sequence length policy.
+1. Use pre-tokenized data provided by DistributedDataGenerator.
 2. For each case, run forward passes over fixed prefixes without generating new tokens.
 3. At each position *t*:
    - Capture final logits `ẑ_t` and reference logits `z_t`.
@@ -223,6 +220,6 @@ aggregate_and_write_reports()
 - Tokenizer discrepancies → lock exact files and versions; hash inputs.
 
 ---
-**Deliverables**: artifacts folder with raw metrics (Parquet/JSONL), summary JSON, and an HTML/MD report implementing Section 16.
+
 
 
