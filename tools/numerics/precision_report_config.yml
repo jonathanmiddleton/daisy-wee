@@ -16,8 +16,10 @@ controls:
   kv_cache_dtype: "fp16"            # or "bf16" / "fp32"; held constant
   rope_cache_dtype: "fp32"
 dataset:
-  path: "prompts.jsonl"
-  min_prompts: 200
+  shard_pattern: "/data/shards/train_*.bin"
+# or:
+#  path: "prompts.jsonl"
+#  min_prompts: 200
   max_prompts: 500
   length_buckets: [64, 512, 2048]
 metrics:
