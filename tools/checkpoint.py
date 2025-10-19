@@ -132,7 +132,7 @@ def model_from_checkpoint(path: str, device: torch.device | str) -> nn.Module:
     num_heads = int(hparams.get('num_heads'))
     model_dim = int(hparams.get('model_dim'))
     head_dim = int(hparams.get('head_dim'))
-    max_seq_len = int(hparams.get('max_seq_len', max(hparams.get('training_sequence_length', 1024), hparams.get('val_seq_len', 1024))))
+    max_seq_len = int(hparams.get('max_seq_len'))
     window_block_size = int(hparams.get('window_block_size', 128))
     model_class = str(hparams.get('model_class'))
     if not model_class:

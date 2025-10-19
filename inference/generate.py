@@ -1,8 +1,10 @@
-from typing import Generator
+from typing import Generator, Callable
 
 import torch
 import torch.nn.functional as F
 from inference.kv_cache import KVCache
+from tools.helpers import measure_time
+
 
 def _apply_repetition_penalty(logits, prev_ids, rep_p, rep_w=128, rep_h=140.0, cap=3.0):
     if rep_p == 1.0 or prev_ids is None or prev_ids.numel() == 0:
@@ -86,7 +88,7 @@ class Generator:
         return logits
 
     @torch.inference_mode()
-    def generate(self, prompt_ids: torch.Tensor, max_new_tokens, seed=None) -> Generator[int, None, list[int]]:
+    def generate(self, prompt_ids: torch.Tensor, max_new_tokens, seed=None) -> Generator[int, None, tuple[list[int], float, float]]:
         if seed is not None:
             self.set_seed(seed)
         assert prompt_ids.ndim == 1
@@ -94,16 +96,22 @@ class Generator:
         assert prompt_ids.size(0) <= self.window, "prompt length must be <= attention window"
         assert prompt_ids.size(0)
         prompt_ids = prompt_ids[self.history.size(0):]
-        logits = self._prefill(prompt_ids)
+        with measure_time() as pre_time:
+            logits = self._prefill(prompt_ids)
+        prefill_duration = pre_time()
         out = list(self.history.tolist())
+        step_duration = 0
         for _ in range(max_new_tokens):
             next_id = self._sample(logits[0])
             if self.eos_token_id is not None and next_id == self.eos_token_id:
                 break
             yield next_id
-            logits = self._step(next_id)
+            with measure_time() as step_time:
+                logits = self._step(next_id)
+            step_duration += step_time()
             out.append(int(next_id))
-        return out
+
+        return out, prefill_duration, step_duration
 
     def _sample(self, logits_1xb):
         x = logits_1xb.float().view(-1)

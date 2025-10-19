@@ -55,4 +55,25 @@ def _coerce_value(val_str: str, typ):
         return val_str
 
 
-__all__ = ["_coerce_value"]
+import time
+from contextlib import contextmanager
+
+@contextmanager
+def measure_time():
+    """
+    Measure wall-clock time for a code block.
+
+    Usage:
+        with measure_time() as elapsed:
+            do_work()
+        print(elapsed())  # seconds as float
+
+    Yields:
+        Callable[[], float]: A zero-arg function that returns the elapsed
+        seconds since entering the context.
+    """
+    t0 = time.perf_counter()
+    yield lambda: time.perf_counter() - t0
+
+
+__all__ = ["_coerce_value", "measure_time"]

@@ -16,18 +16,18 @@ MAX_SEQ_LEN = 16*1024
 parser = argparse.ArgumentParser(description="Generate text with a GPT model from a checkpoint.")
 parser.add_argument("checkpoint", type=str, help="Path to model checkpoint (.pt)")
 parser.add_argument("--max_tokens", type=int, default=256, help="Number of new tokens to generate")
-parser.add_argument("--repetition_penalty", type=float, default=1.25, help="Repetition penalty")
-parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
+parser.add_argument("-rp", "--repetition_penalty", type=float, default=1.25, help="Repetition penalty")
+parser.add_argument("-t", "--temperature", type=float, default=0.7, help="Sampling temperature")
 parser.add_argument("--top_k", type=int, default=100, help="Top-k sampling")
 parser.add_argument("--top_p", type=float, default=0.95, help="Top-p sampling")
-parser.add_argument("--max_seq_len", type=int, default=MAX_SEQ_LEN, help="Maximum sequence length")
-parser.add_argument("--seed", type=int, default=1337, help="Random seed for deterministic sampling")
+parser.add_argument("-s", "--seed", type=int, default=1337, help="Random seed for deterministic sampling")
 parser.add_argument("--base", type=bool, default=False, help="Flag for base sampling")
-parser.add_argument("--prompt", type=str, default="Write a short story about a child playing with a ball.", help="Optional one-shot prompt")
+parser.add_argument("-p", "--prompt", type=str, default="Write a short story about a child playing with a ball.", help="Optional one-shot prompt")
 parser.add_argument(
+    "-d",
     "--device",
     type=str,
-    default="cuda",
+    default="cpu",
     help="Device to run on: e.g., 'cpu', 'cuda', 'cuda:0'"
 )
 parser.add_argument("--chat", action="store_true", help="Start an interactive turn-based CLI chat")
@@ -40,12 +40,9 @@ if len(sys.argv) == 1:
 cli = parser.parse_args()
 
 device = cli.device
-devtype = "cuda" if str(device).startswith("cuda") else ("mps" if str(device).startswith("mps") else "cpu")
 model, hparams = model_from_checkpoint(cli.checkpoint, device=device)
 model.eval()
-for m in model.modules():
-    if isinstance(m, nn.Embedding):
-        m.bfloat16()
+
 if device != 'cpu':
     model = torch.compile(model, dynamic=True)
 enc = tiktoken.get_encoding("gpt2")
@@ -110,7 +107,7 @@ def _parse_leading_params(s: str):
     return updates, remaining
 
 print("Hyperparameters: temperature =", cli.temperature, ", repetition_penalty =", cli.repetition_penalty, ", top_k =", cli.top_k, ", top_p =", cli.top_p,
-      ", max_seq_len =", hparams['training_sequence_length'], ", seed =", cli.seed,) #TODO add max_seq_len to hparams
+      ", max_seq_len =", hparams['max_seq_len'], ", seed =", cli.seed,)
 def print_token(t):
     print(enc.decode([t]), end="", flush=True)
 
@@ -153,24 +150,23 @@ if cli.chat:
         effective_user = remaining if len(updates) > 0 else user
         prompt_text = transcript + template.format(prompt=effective_user)
         start_ids = encode(prompt_text)
-        x = tensor(start_ids, dtype=torch.long, device=device)
-        gen_iter = gen.generate(x, max_new_tokens=cli.max_tokens)
+        X = tensor(start_ids, dtype=torch.long, device=device)
+        gen_iter = gen.generate(X, max_new_tokens=cli.max_tokens)
         print(f"Assistant: ", end="", flush=True)
         sys.stdout.flush()
 
-        start = time.time()
         try:
             while True:
                 t = next(gen_iter)
                 print_token(t)
         except StopIteration as e:
-            out_ids = e.value
-        end = time.time()
+            out_ids, pre_time, step_time = e.value
         new_ids = out_ids[len(start_ids):]
-        tps = len(new_ids) / (end - start)
+        pre_tps = len(start_ids) / pre_time
+        step_tps = len(new_ids) / step_time
         reply = decode(new_ids).strip()
         transcript = prompt_text + reply + "\n\n" #anything added to transcript becomes the prefix of the next prompt
-        print(f"\n({tps:.1f} tokens/s)\n\n")
+        print(f"\n({step_tps:.1f} step tokens/s, {pre_tps:.1f} prefill tokens/s)\n\n")
     sys.exit(0)
 else:
     # Single-shot sample
@@ -178,14 +174,13 @@ else:
     start_ids = encode(prompt)
     x = tensor(start_ids, dtype=torch.long, device=device)
     gen_iter = gen.generate(x, max_new_tokens=cli.max_tokens)
-    start = time.time()
     try:
         while True:
             t = next(gen_iter)
             print_token(t)
     except StopIteration as e:
-        out_ids = e.value
-    end = time.time()
+        (out_ids, pre_time, step_time) = e.value
     new_ids = out_ids[len(start_ids):]
-    tps = len(new_ids) / (end - start)
-    print(f"\n({tps:.1f} tokens/s)\n\n")
+    pre_tps = len(start_ids) / pre_time
+    step_tps = len(new_ids) / step_time
+    print(f"\n({step_tps:.1f} step tokens/s, {pre_tps:.1f} prefill tokens/s)\n\n")
