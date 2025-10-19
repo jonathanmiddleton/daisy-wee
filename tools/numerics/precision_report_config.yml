@@ -16,7 +16,7 @@ controls:
   kv_cache_dtype: "fp16"            # or "bf16" / "fp32"; held constant
   rope_cache_dtype: "fp32"
 dataset:
-  shard_pattern: "/data/shards/train_*.bin"
+  shard_pattern: "/data/fineweb/fineweb_train_000001.bin"
 # or:
 #  path: "prompts.jsonl"
 #  min_prompts: 200
