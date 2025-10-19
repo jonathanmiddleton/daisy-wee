@@ -1,4 +1,4 @@
-# Numerical Precision Characterization Spec — GPT Decoding across Device × Compile × DType
+# Numerical Precision Characterization Report Spec — GPT Decoding across Device × Compile × DType
 **Version:** 1.0 • **Date:** 2025-10-19 • **Reference:** CPU–FP32 (compile=off)
 
 ## 1) Objective
@@ -6,7 +6,7 @@ Quantify and localize numerical deviations in GPT decoding caused by device, com
 
 ## 2) Scope
 - Models: GPT-style decoder-only transformers (causal attention), any size.
-- Devices: `cpu`, `mps` (extendable).
+- Devices: `cpu`, `mps`, `cuda` (extendable).
 - Compile: PyTorch eager vs `torch.compile` (backend=inductor or best-available).
 - DType policies:
   - `fp32`
