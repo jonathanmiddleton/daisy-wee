@@ -109,6 +109,10 @@ class PrecisionRunner:
             except Exception:
                 tokenizer = lambda s: [0, 1, 2, 3]
             prompts = [Prompt(id=f"p{i:05d}", text=t, tokens=tokenizer(t)[:min(ds.length_buckets)]) for i, t in enumerate(texts[: self.cfg.dataset.max_prompts])]
+        # Filter out any prompts with zero tokens
+        prompts = [p for p in prompts if len(p.tokens) > 0]
+        if not prompts:
+            raise ValueError("No non-empty prompts available; ensure dataset has at least one token per prompt.")
         # Persist manifest per spec (id, text hash)
         write_prompts_manifest(os.path.join(self.root, "prompts", "prompts.jsonl"), prompts)
         return prompts
@@ -178,7 +182,11 @@ class PrecisionRunner:
         gen.amp_ctx = self._autocast_ctx(case.device, case.dtype_policy)
         max_new = int(self.cfg.decoding.mode_closed_loop.get("max_new_tokens", 256))
         for p in prompts:
-            prompt_ids = torch.tensor(p.tokens, dtype=torch.long, device=case.device)
+            gen.reset()
+            toks = p.tokens[:window]
+            if len(toks) == 0:
+                continue
+            prompt_ids = torch.tensor(toks, dtype=torch.long, device=case.device)
             with measure_time() as ctx_time:
                 it = gen.generate(prompt_ids, max_new_tokens=max_new)
             out_ids = []
@@ -239,7 +247,11 @@ class PrecisionRunner:
         ref_outs: Dict[str, List[int]] = {}
         max_new = int(self.cfg.decoding.mode_closed_loop.get("max_new_tokens", 256))
         for p in prompts:
-            ids = torch.tensor(p.tokens, dtype=torch.long, device=ref_case.device)
+            gen.reset()
+            toks = p.tokens[:window]
+            if len(toks) == 0:
+                continue
+            ids = torch.tensor(toks, dtype=torch.long, device=ref_case.device)
             it = gen.generate(ids, max_new_tokens=max_new)
             out_ids: List[int] = []
             try:
