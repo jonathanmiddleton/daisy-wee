@@ -37,7 +37,7 @@ def _iter_gsm8k(subset: str, split: str):
         if y: yield y
 
 def _iter_smoltalk(split: str, stop: int | None = None):
-    ds = load_dataset("HuggingFaceTB/smoltalk", split=split)
+    ds = load_dataset("HuggingFaceTB/smol-smoltalk", split=split)
     n = 0
     for r in ds:
         msgs = r.get("messages") or []
@@ -67,7 +67,7 @@ def _mixture(train: list[tuple[str, dict]]):
         if name == "ARC-Easy": gens.append(_iter_arc("ARC-Easy", kw.get("split","train")))
         elif name == "ARC-Challenge": gens.append(_iter_arc("ARC-Challenge", kw.get("split","train")))
         elif name == "GSM8K": gens.append(_iter_gsm8k(kw.get("subset","main"), kw.get("split","train")))
-        elif name == "SmolTalk": gens.append(_iter_smoltalk(kw.get("split","train"), kw.get("stop")))
+        elif name == "smol-smoltalk": gens.append(_iter_smoltalk(kw.get("split","train"), kw.get("stop")))
         else: raise ValueError(f"unknown source {name}")
     while True:
         active = [g for g in gens]
@@ -116,8 +116,8 @@ if __name__ == "__main__":
         ("ARC-Easy", {"split": "train"}),
         ("ARC-Challenge", {"split": "train"}),
         ("GSM8K", {"subset": "main", "split": "train"}),
-        ("SmolTalk", {"split": "train", "stop": 10_000}),
+        ("smol-smoltalk", {"split": "train", "stop": 10_000}),
     ]
-    val_sources = [("SmolTalk", {"split": "test"})]
+    val_sources = [("smol-smoltalk", {"split": "test"})]
     build_task_shards("data/instruct_tasks", "train", "gpt2", 100_000, train_sources)
     build_task_shards("data/instruct_tasks", "val",   "gpt2", 100_000, val_sources)
