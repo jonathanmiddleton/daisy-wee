@@ -296,13 +296,26 @@ def main(argv: Optional[list[str]] = None) -> int:
                 pass
     return 0
 
+def _profile_main() -> None:
+    import cProfile, pstats, io
+
+    pr = cProfile.Profile()
+    pr.enable()
+
+    main()
+
+    pr.disable()
+    s = io.StringIO()
+    ps = pstats.Stats(pr, stream=s).sort_stats("cumulative")
+    ps.print_stats(50)  # top 50
+    print(s.getvalue())
 
 if __name__ == "__main__":
     start_wall = datetime.now(timezone.utc)
     start_cpu = time.perf_counter()
     print(f"[START] {start_wall.isoformat()}")
     try:
-        main()
+        _profile_main()
     finally:
         end_wall = datetime.now(timezone.utc)
         elapsed_sec = time.perf_counter() - start_cpu

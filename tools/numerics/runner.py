@@ -52,6 +52,7 @@ class PrecisionRunner:
         ensure_dir(self.root)
         record_env(self.root)
         self.unsupported: List[Dict[str, Any]] = []
+        self.cached_models = {}
 
     def _should_skip(self, case: Case) -> str | None:
         if case.device == "cpu" and case.dtype_policy == "fp16":
@@ -82,7 +83,8 @@ class PrecisionRunner:
             return model, False, str(e)
 
     def _load_model(self, checkpoint: str, device: str) -> tuple[torch.nn.Module, Dict[str, Any]]:
-        m, h = model_from_checkpoint(checkpoint, device=device)
+        m, h = model_from_checkpoint(checkpoint, device=device) if (checkpoint,device) not in self.cached_models else self.cached_models[checkpoint]
+        self.cached_models[(checkpoint,device)] = (m, h)
         m.eval()
         return m, h
 
@@ -255,8 +257,7 @@ class PrecisionRunner:
             if len(toks) == 0:
                 continue
             prompt_ids = torch.tensor(toks, dtype=torch.long, device=case.device)
-            with measure_time() as ctx_time:
-                it = gen.generate(prompt_ids, max_new_tokens=max_new)
+            it = gen.generate(prompt_ids, max_new_tokens=max_new)
             out_ids = []
             try:
                 while True:
@@ -290,6 +291,7 @@ class PrecisionRunner:
                 "ctx_time_ms": float(prefill_dur * 1000.0),
                 "tok_time_ms": float(step_dur * 1000.0),
             })
+            # print(f"ctx_time_ms: {prefill_dur}, tok_time_ms: {step_dur}")
         return gens_rows, div_rows
 
     @torch.inference_mode()
