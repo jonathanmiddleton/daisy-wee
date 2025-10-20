@@ -2,6 +2,8 @@ import argparse
 import json
 import math
 import os
+import time
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 
 from .config import RunConfig
@@ -296,4 +298,14 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    start_wall = datetime.now(timezone.utc)
+    start_cpu = time.perf_counter()
+    print(f"[START] {start_wall.isoformat()}")
+    try:
+        main()
+    finally:
+        end_wall = datetime.now(timezone.utc)
+        elapsed_sec = time.perf_counter() - start_cpu
+        print(f"[END]   {end_wall.isoformat()}  (elapsed: {elapsed_sec:.3f}s)")
+
+
