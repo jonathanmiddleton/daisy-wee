@@ -9,7 +9,7 @@ import copy
 from datetime import datetime
 from pathlib import Path
 
-from data_gen_stream import DistributedDataGenerator
+from data.data_gen_stream import DistributedDataGenerator
 from training.optim import get_num_window_blocks
 
 

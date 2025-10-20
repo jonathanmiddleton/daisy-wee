@@ -6,7 +6,7 @@ from torch import nn
 
 from models import model_from_spec
 from training.hparams import load_hparams_from_yaml, apply_cli_overrides
-from data_gen_stream import DistributedDataGenerator
+from data.data_gen_stream import DistributedDataGenerator
 from training.optim import build_optimizers_from_cfg, get_num_window_blocks, get_referenced_groups
 
 

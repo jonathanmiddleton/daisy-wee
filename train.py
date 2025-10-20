@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from dataclasses import asdict
 
 from models import get_model_class
-from data_gen_stream import DistributedDataGenerator
+from data.data_gen_stream import DistributedDataGenerator
 from training.optim import Muon, get_lr_scale
 from training.optim import get_num_window_blocks, set_full_windows
 from training.optim import build_optimizers_from_cfg

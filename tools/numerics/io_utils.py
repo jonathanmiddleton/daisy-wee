@@ -86,7 +86,7 @@ def read_prompts_jsonl(path: str, tokenizer=None, max_prompts: Optional[int] = N
 
 def prompts_from_token_shards(pattern: str, device: str, count: int, bucket_lens: List[int]) -> List[Prompt]:
     # Sample simple prompts from the token shards via DistributedDataGenerator
-    from data_gen_stream import DistributedDataGenerator
+    from data.data_gen_stream import DistributedDataGenerator
     import torch
 
     gen = DistributedDataGenerator(filename_pattern=pattern, batch_size=128, rank=0, world_size=1, device=device)
