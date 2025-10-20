@@ -10,7 +10,7 @@ def _final_from_gsm8k(ans: str) -> str:
     m = re.findall(r"####\s*([^\n]+)", ans)
     return (m[-1] if m else ans).strip()
 
-def _fmt(instr: str, resp: str) -> tuple[str, str]:
+def _fmt(instr: str, resp: str):
     instr, resp = (instr or "").strip(), (resp or "").strip()
     if not instr or not resp: return None
     return instr, resp
@@ -22,7 +22,6 @@ def _iter_arc(subset: str, split: str):
         labels = r["choices"]["label"]
         texts = r["choices"]["text"]
         key = r["answerKey"]
-        table = {l: t for l, t in zip(labels, texts)}
         instr = q + "\nOptions:\n" + "\n".join(f"{l}. {t}" for l, t in zip(labels, texts)) + "\nAnswer with the correct option letter."
         resp = key
         y = _fmt(instr, resp)
@@ -55,10 +54,23 @@ def _iter_smoltalk(split: str, stop: int | None = None):
 
 def _tok_pair(tok, instr: str, resp: str, eos_id: int):
     prompt = f"### Instruction:\n{instr}\n\n### Response:\n"
-    p = tok(prompt, add_special_tokens=False).input_ids
-    r = tok(resp, add_special_tokens=False).input_ids + [eos_id]
-    x = np.array(p + r, dtype=np.uint32)  # upcast; will downcast on save
-    y = np.array([-100] * len(p) + r, dtype=np.int32)
+    p_ids = tok(prompt, add_special_tokens=False).input_ids
+    r_ids = tok(resp, add_special_tokens=False).input_ids + [eos_id]
+    x = p_ids + r_ids  # full sequence
+
+    # Next-token targets aligned with logits at same positions:
+    # y[t] = x[t+1]; y[-1] = -100.
+    # Do NOT supervise on prompt content: mask positions whose next token is still inside the prompt.
+    y = [-100] * len(x)
+    for t in range(len(x) - 1):
+        nxt = x[t + 1]
+        if t + 1 < len(p_ids):
+            y[t] = -100
+        else:
+            y[t] = nxt
+
+    x = np.array(x, dtype=np.uint32)
+    y = np.array(y, dtype=np.int32)
     return x, y
 
 def _mixture(train: list[tuple[str, dict]]):
@@ -90,12 +102,16 @@ def _write_shard(out_dir: Path, shard_id: int, X: list[np.ndarray], Y: list[np.n
     np.save(d / "tokens.npy", flat_x)
     np.save(d / "labels.npy", flat_y)
     np.save(d / "offsets.npy", offsets)
-    meta = {"magic": MAGIC, "version": VERSION, "num_examples": len(L), "num_tokens": int(offsets[-1]), "tokenizer": tok_name, "eos_id": int(eos_id), "format": "tasks-v1"}
-    # meta.update({
-    #     "tokenizer_len": int(len(tok)),
-    #     "eos_id": int(eos),
-    #     "tokenizer_name_or_path": str(getattr(tok, "name_or_path", "")),
-    # })
+    meta = {
+        "magic": MAGIC,
+        "version": VERSION,
+        "num_examples": len(L),
+        "num_tokens": int(offsets[-1]),
+        "tokenizer": tok_name,
+        "eos_id": int(eos_id),
+        "format": "tasks-v1",
+        "labels": "next-token-shifted"
+    }
     (d / "meta.json").write_text(json.dumps(meta))
 
 def build_task_shards(out_dir: str, split: str, tokenizer_name: str, max_examples_per_shard: int, sources: list[tuple[str, dict]], seed: int = 1337):
@@ -103,9 +119,8 @@ def build_task_shards(out_dir: str, split: str, tokenizer_name: str, max_example
     out = Path(out_dir) / split
     out.mkdir(parents=True, exist_ok=True)
     tok = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True, model_max_length=1_000_000)
-    assert tok.eos_token_id is not None, "Tokenizer has no EOS. Define EOS in the model/tokenizer config, resize embeddings, and re-export before building shards."
-    eos = tok.eos_token_id
-    t0 = time.time()
+    assert tok.eos_token_id is not None, "Tokenizer has no EOS. Configure EOS in the tokenizer/model before building shards."
+    eos = int(tok.eos_token_id)
     shard, buf_x, buf_y, n = 0, [], [], 0
     for instr, resp in _mixture(sources):
         x, y = _tok_pair(tok, instr, resp, eos)

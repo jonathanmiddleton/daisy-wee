@@ -11,7 +11,7 @@ class _Shard:
         self.offsets = np.load(self.dir / "offsets.npy", mmap_mode="r")
         assert self.tokens.shape[0] == self.labels.shape[0] == int(self.offsets[-1])
         assert self.meta["version"] >= 2
-        self.pad_id = int(self.meta["eos_id"])
+        self.pad_id = int(self.meta["eos_id"])  # pad with EOS
 
     def __len__(self): return len(self.offsets) - 1
 
@@ -20,22 +20,19 @@ class _Shard:
         return self.tokens[s:e], self.labels[s:e]
 
 def _pad(batch, pad_id: int):
-    # Batch is a list of (tokens_np, labels_np) pairs, each 1-D
     L = [len(x[0]) for x in batch]
     T = max(L)
     B = len(batch)
-    # Hugging Face models expect torch.long for input_ids
     x = torch.full((B, T), pad_id, dtype=torch.long)
     y = torch.full((B, T), -100, dtype=torch.long)
     for i, (inp, lab) in enumerate(batch):
         t = len(inp)
-        # Cast to long without copies when possible
         x[i, :t] = torch.from_numpy(inp.astype(np.int64, copy=False))
         y[i, :t] = torch.from_numpy(lab.astype(np.int64, copy=False))
     return x, y
 
 class TaskDataGenerator:
-    def __init__(self, root: str, split: str, batch_size: int, world_size: int = 1, rank: int = 0, seed: int = 1337, device: str = "cpu", start_shard: int | None = None, drop_remainder: bool = False, infinite: bool = True):
+    def __init__(self, root: str, split: str, batch_size: int, world_size: int = 1, rank: int = 0, seed: int = 1337, device: str = "cpu", start_shard: int | None = None, drop_remainder: bool = False, infinite: bool = True, squeeze_singleton_batch: bool = True):
         p = Path(root) / split
         self.files = sorted([d for d in p.iterdir() if d.is_dir() and (d / "meta.json").exists()])
         if not self.files: raise FileNotFoundError(f"no shards in {p}")
@@ -47,6 +44,7 @@ class TaskDataGenerator:
         self.device = torch.device(device)
         self.drop_remainder = drop_remainder
         self.infinite = infinite
+        self.squeeze_single = bool(squeeze_singleton_batch)
         i0 = (start_shard or 0) % len(self.files)
         self._file_iter = itertools.cycle(self.files[i0:] + self.files[:i0])
         self._rng = np.random.default_rng(self.seed)
@@ -83,4 +81,8 @@ class TaskDataGenerator:
         if len(b) < self.local_bsz and self.drop_remainder: raise StopIteration
         x, y = _pad(b, self._pad_id)
         non_blocking = self.device.type == "cuda" and torch.cuda.is_available()
-        return x.to(self.device, non_blocking=non_blocking), y.to(self.device, non_blocking=non_blocking)
+        x = x.to(self.device, non_blocking=non_blocking)
+        y = y.to(self.device, non_blocking=non_blocking)
+        if self.squeeze_single and x.size(0) == 1:
+            return x[0], y[0]
+        return x, y
