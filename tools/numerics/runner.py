@@ -128,6 +128,63 @@ class PrecisionRunner:
         return logits
 
     @torch.inference_mode()
+    def _all_prefix_logits(
+        self,
+        model: torch.nn.Module,
+        input_ids_1d: torch.Tensor,
+        *,
+        window: int | None = None,
+        amp_ctx=None,
+    ) -> List[torch.Tensor]:
+        """
+        Compute logits for every prefix (positions 0..T-2) with a single full prefill + O(T) step calls.
+        Returns a list of T-1 tensors with shape (1, V), where entry t corresponds to prefix length t+1.
+        """
+        ids = input_ids_1d
+        assert ids.ndim == 1
+        T = int(ids.numel())
+        if T <= 1:
+            return []
+        win = int(window) if window is not None else T
+        # 1) Run a single prefill on the full sequence to build K/V for all layers/positions
+        if amp_ctx is not None:
+            with amp_ctx:
+                _, kv = model.prefill_batch(ids[None, :], window=win)
+        else:
+            _, kv = model.prefill_batch(ids[None, :], window=win)
+        # kv shape: (2, L, B=1, H, T, D)
+        L = int(kv.size(1))
+        # 2) First position (t=1, pos=0): do a tiny prefill once
+        if amp_ctx is not None:
+            with amp_ctx:
+                z1, _ = model.prefill_batch(ids[:1][None, :], window=1)
+        else:
+            z1, _ = model.prefill_batch(ids[:1][None, :], window=1)
+        out: List[torch.Tensor] = [z1]
+        # 3) Positions t=2..T-1 via step() using sliced KV as context
+        for t in range(2, T):
+            pos = t - 1  # index of current token
+            tok = ids[pos]
+            k_ctxs: List[torch.Tensor] = []
+            v_ctxs: List[torch.Tensor] = []
+            # Enforce sliding window context: last (win-1) tokens before current pos
+            start = max(0, pos - win + 1)
+            for i in range(L):
+                # kv[0]=K, kv[1]=V; shape per layer: (B=1, H, T, D)
+                k_layer = kv[0, i, 0, :, start:pos, :]
+                v_layer = kv[1, i, 0, :, start:pos, :]
+                # Step expects context shaped (B, Tctx, H, D) where dim=1 is time
+                k_ctxs.append(k_layer.permute(1, 0, 2).unsqueeze(0).contiguous())
+                v_ctxs.append(v_layer.permute(1, 0, 2).unsqueeze(0).contiguous())
+            if amp_ctx is not None:
+                with amp_ctx:
+                    z, _, _ = model.step(tok, k_ctxs, v_ctxs, pos, win)
+            else:
+                z, _, _ = model.step(tok, k_ctxs, v_ctxs, pos, win)
+            out.append(z)
+        return out
+
+    @torch.inference_mode()
     def _open_loop_case(self, case: Case, model: torch.nn.Module, prompts: List[Prompt], ref_logits: Dict[str, List[torch.Tensor]], topk: List[int]) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
         for p in prompts:
@@ -135,10 +192,16 @@ class PrecisionRunner:
             T = ids.numel()
             # Targets are next tokens
             targets = ids[1:]
-            for t in range(T - 1):
-                prefix = ids[: t + 1]
-                with self._autocast_ctx(case.device, case.dtype_policy):
-                    z_hat = self._prefill_logits(model, prefix)[0]
+            if T <= 1:
+                continue
+            # Compute all prefix logits in O(T) using full prefill + step()
+            amp = self._autocast_ctx(case.device, case.dtype_policy)
+            hat_list = self._all_prefix_logits(model, ids, window=T, amp_ctx=amp)
+            # Safety: ensure we have T-1 entries
+            if not hat_list:
+                continue
+            for t in range(min(len(hat_list), T - 1)):
+                z_hat = hat_list[t][0]
                 z_ref = ref_logits[p.id][t].to(device=case.device)[0]
                 # Basic metrics
                 diff = (z_hat - z_ref).float()
@@ -239,12 +302,9 @@ class PrecisionRunner:
         for p in prompts:
             ids = torch.tensor(p.tokens, dtype=torch.long, device=ref_case.device)
             T = ids.numel()
-            logits_per_pos: List[torch.Tensor] = []
-            for t in range(T - 1):
-                prefix = ids[: t + 1]
-                z, _ = model.prefill_batch(prefix[None, :], window=int(prefix.numel()))
-                logits_per_pos.append(z.detach().cpu())
-            logits_map[p.id] = logits_per_pos
+            # Compute all prefix logits using one full prefill + step()
+            logits_list = self._all_prefix_logits(model, ids, window=T, amp_ctx=None)
+            logits_map[p.id] = [z.detach().cpu() for z in logits_list]
         # Closed-loop greedy reference outputs
         window = int(hparams.get("train_attention_window_len", hparams.get("max_seq_len", 2048)))
         gen = Generator(model=model, window=window, device=ref_case.device, dtype=torch.bfloat16, temperature=0.0, top_k=None, top_p=1.0, eos_token_id=int(hparams["eos_token_id"]))
