@@ -16,7 +16,7 @@ def _fmt(instr: str, resp: str) -> tuple[str, str]:
     return instr, resp
 
 def _iter_arc(subset: str, split: str):
-    ds = load_dataset("allenai/ai2_arc", subset, split=split)
+    ds = load_dataset("allenai/ai2_arc", subset, split=split).shuffle(seed=1337)
     for r in ds:
         q = r["question"]
         labels = r["choices"]["label"]
@@ -29,7 +29,7 @@ def _iter_arc(subset: str, split: str):
         if y: yield y
 
 def _iter_gsm8k(subset: str, split: str):
-    ds = load_dataset("openai/gsm8k", subset, split=split)
+    ds = load_dataset("openai/gsm8k", subset, split=split).shuffle(seed=1337)
     for r in ds:
         instr = r["question"]
         resp = _final_from_gsm8k(r["answer"])
@@ -37,7 +37,7 @@ def _iter_gsm8k(subset: str, split: str):
         if y: yield y
 
 def _iter_smoltalk(split: str, stop: int | None = None):
-    ds = load_dataset("HuggingFaceTB/smol-smoltalk", split=split)
+    ds = load_dataset("HuggingFaceTB/smol-smoltalk", split=split).shuffle(seed=1337)
     n = 0
     for r in ds:
         msgs = r.get("messages") or []
