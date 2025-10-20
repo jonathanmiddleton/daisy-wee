@@ -9,7 +9,8 @@ from tools.checkpoint import model_from_checkpoint
 from tools.helpers import measure_time
 from inference.generate import Generator
 
-from .config import RunConfig
+from tools.numerics.config import RunConfig
+
 from .io_utils import Prompt, ensure_dir, prompts_from_token_shards, read_prompts_jsonl, write_jsonl, write_parquet_or_csv, write_prompts_manifest
 from .metrics import (
     bootstrap_ci,
