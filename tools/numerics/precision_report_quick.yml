@@ -2,12 +2,12 @@ run_id: "gpt-numerics-v1"
 reference: { device: cpu, dtype: fp32, compile: false }
 devices: [cpu, mps]
 compile_modes: [false, true]
-dtype_policies: [bf16]  # add fp32/fp16 if you want more cells
+dtype_policies: [bf16]
 
 dataset:
   shard_pattern: "data/fineweb/fineweb_train_000001.bin"  # or: path: "prompts.jsonl"
-  max_prompts: 4
-  length_buckets: [4] #64
+  max_prompts: 8
+  length_buckets: [8] #64
 
 decoding:
   mode_open_loop: { enabled: true }

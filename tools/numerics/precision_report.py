@@ -16,22 +16,9 @@ def _ensure_parent(path: str) -> None:
 
 def _load_table(path_parquet: str):
     # Try pandas parquet, fall back to CSV if parquet missing or engine unavailable
-    try:
-        import pandas as pd  # type: ignore
-    except Exception:
-        pd = None  # type: ignore
+    import pandas as pd  # type: ignore
     # Prefer parquet
-    if pd is not None and os.path.exists(path_parquet):
-        try:
-            return pd.read_parquet(path_parquet)
-        except Exception:
-            pass
-    # Fallback to CSV with same stem
-    csv_path = path_parquet[:-8] + ".csv" if path_parquet.endswith(".parquet") else path_parquet
-    if pd is not None and os.path.exists(csv_path):
-        return pd.read_csv(csv_path)
-    # Final fallback: no table
-    return None
+    return pd.read_parquet(path_parquet)
 
 
 def _format_mean_pm_ci(entry: Dict[str, Any], digits: int = 4) -> str:
@@ -103,10 +90,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             div_summ = json.load(f)
 
     # Create tables by case: ΔNLL, JS, flip rate, top-k overlaps (mean ± 95% CI)
-    try:
-        import pandas as pd  # type: ignore
-    except Exception:  # pragma: no cover
-        pd = None  # type: ignore
+    import pandas as pd
     tokens_df = _load_table(tokens_path)
     div_df = _load_table(div_path)
 
@@ -166,12 +150,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     # Generate figures per §15
     figs = []
     # 1) Boxplots of per-token L2 and JS by case
-    try:
-        import matplotlib.pyplot as plt  # type: ignore
-        import seaborn as sns  # type: ignore
-    except Exception:
-        plt = None  # type: ignore
-        sns = None  # type: ignore
+    import matplotlib.pyplot as plt  # type: ignore
+    import seaborn as sns  # type: ignore
 
     if plt is not None and sns is not None and tokens_df is not None and "case_id" in tokens_df.columns:
         # Cap extreme values for nicer plots (optional)
