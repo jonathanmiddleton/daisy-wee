@@ -20,7 +20,7 @@ class Hyperparameters:
     target_tokens: int
     cooldown_frac: float
     # Learning rate schedule selection
-    learning_rate_schedule: str  # {'linear_decay','linear_warmup_cosine_decay','constant_with_linear_decay','constant_with_cosine_decay'}
+    learning_rate_schedule: str  # {'linear_decay','linear_warmup_cosine_decay','constant_with_cosine_decay'}
     train_attention_window_len: int  # training-time sliding attention window (<= model spec max)
     window_block_size: int  # block granularity for sliding window/masks (from spec)
     # Common fields with defaults
@@ -170,7 +170,7 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
         from training.optim import LEARNING_RATE_SCHEDULES
         valid_schedules = set(LEARNING_RATE_SCHEDULES.keys())
     except Exception:
-        valid_schedules = {"linear_decay", "linear_warmup_cosine_decay"}
+        valid_schedules = {"linear_decay", "linear_warmup_cosine_decay", "constant_with_cosine_decay"}
     if args.learning_rate_schedule not in valid_schedules:
         raise ValueError(
             f"learning_rate_schedule must be one of {sorted(valid_schedules)}, got '{args.learning_rate_schedule}'"

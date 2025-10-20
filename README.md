@@ -106,7 +106,7 @@ Key fields (training):
 - `training_sequence_length`, `val_seq_len`
 - `attention_window_len`, `window_block_size` (must divide both seq len and window)
 - `target_tokens`, `cooldown_frac`
-- `learning_rate_schedule`: `linear_decay` | `linear_warmup_cosine_decay` | `constant_with_linear_decay` | `constant_with_cosine_decay`
+- `learning_rate_schedule`: `linear_decay` | `linear_warmup_cosine_decay` | `constant_with_cosine_decay`
 - `val_loss_every_tokens`, `tot_val_tokens`
 - `save_checkpoint`, `checkpoint_per_n_tokens`, `checkpoint_warmup_tokens`
 - `full_windows`: force long attention windows throughout
@@ -208,7 +208,6 @@ See `LICENSE`.
 
 Training uses a normalized progress meter s in [0,1] (tokens_processed/target_tokens) to drive schedules:
 - linear_decay: Constant LR scale of 1.0 until the final cooldown_frac of training, then linear decay to 0.0.
-- constant_with_linear_decay: Same as linear_decay (constant, then linear decay to 0.0 during cooldown).
 - linear_warmup_cosine_decay: Linear warmup from 0.0 to 1.0 until 1 - cooldown_frac, then cosine decay to 0.0 over the final cooldown_frac.
 - constant_with_cosine_decay: Constant LR scale of 1.0 until 1 - cooldown_frac, then cosine decay to 0.0 over the final cooldown_frac.
 
