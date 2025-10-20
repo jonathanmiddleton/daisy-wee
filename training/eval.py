@@ -6,7 +6,7 @@ import torch
 import torch.distributed as dist
 from torch import nn
 
-from training.data_gen import DistributedDataGenerator
+from data_gen_stream import DistributedDataGenerator
 from training.optim import get_num_window_blocks
 
 
@@ -53,7 +53,7 @@ class Evaluator:
         import itertools
         self._ddg._file_iter = itertools.cycle(self._ddg.files)  # type: ignore[attr-defined]
         self._ddg._current_file = next(self._ddg._file_iter)  # type: ignore[attr-defined]
-        from training.data_gen import _load_data_shard  # type: ignore
+        from data_gen_stream import _load_data_shard  # type: ignore
         self._ddg._tokens = _load_data_shard(self._ddg._current_file)  # type: ignore[attr-defined]
         self._ddg._pos = 0  # type: ignore[attr-defined]
         # Also reset internal counters used for ema calc

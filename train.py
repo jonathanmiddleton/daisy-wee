@@ -1,23 +1,20 @@
-import dataclasses
 import os
 import sys
 import time
 import json
 import math
 from datetime import datetime, timezone
-from pathlib import Path
 
 from dataclasses import asdict
 
 from models import get_model_class
-from training.data_gen import DistributedDataGenerator
+from data_gen_stream import DistributedDataGenerator
 from training.optim import Muon, get_lr_scale
 from training.optim import get_num_window_blocks, set_full_windows
 from training.optim import build_optimizers_from_cfg
 from training.eval import Evaluator
 from tools.checkpoint import load_checkpoint, save_checkpoint, apply_model_state
 from training.hparams import Hyperparameters, load_hparams_from_yaml, apply_cli_overrides
-from torch.profiler import profile, ProfilerActivity, schedule, tensorboard_trace_handler
 
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import torch

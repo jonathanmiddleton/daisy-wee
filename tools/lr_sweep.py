@@ -1,7 +1,7 @@
 import math
 import time
 from argparse import ArgumentParser
-from typing import Iterable, List, Tuple, Dict, Any
+from typing import Iterable, List, Dict, Any
 
 import torch
 import json
@@ -9,7 +9,7 @@ import copy
 from datetime import datetime
 from pathlib import Path
 
-from training.data_gen import DistributedDataGenerator
+from data_gen_stream import DistributedDataGenerator
 from training.optim import get_num_window_blocks
 
 
