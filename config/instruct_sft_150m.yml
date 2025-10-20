@@ -24,11 +24,11 @@ optimizers:
       - group: head_params
         lr: .00008
       - group: embed_params
-        lr: 0.004
+        lr: .004
       - group: scalar_params
         lr: .0003
   - type: Muon
-    momentum: 0.95
+    momentum: .95
     weight_decay: 0.0
     params:
       - group: hidden_matrix_params

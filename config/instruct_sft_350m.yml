@@ -5,12 +5,12 @@ wandb_run_name: '350m-instruct'
 # Torch config
 torch.coordinate_descent_tuning: false
 # Pretraining checkpoint path
-init_checkpoint: "checkpoints/20251012T0302-val3.100-step007630-run1-final.pt"
+init_checkpoint: "20251020T1936-val2.670-step013000-run1-best.pt"
 # Instruct SFT training configuration
 train_shards: "data/instruct_mix/instruct_train_*.bin"
-target_tokens: 1730150400
-cooldown_frac: 0.95
-learning_rate_schedule: linear_warmup_cosine_decay
+target_tokens: 6055526400
+cooldown_frac: 0.999
+learning_rate_schedule: linear_decay
 training_sequence_length: 65536        #  N * 1024; must be divisible by window_block_size
 train_attention_window_len: 3456        # largest sliding attention window used during training; must be divisible by window_block_size
 # Optimizers configuration
@@ -18,7 +18,7 @@ optimizers:
   - type: AdamW
     betas: [0.9, 0.999]
     eps: 1.0e-10
-    weight_decay: 0.01
+    weight_decay: 0.0
     fused: true
     params:
       - group: head_params
@@ -46,7 +46,7 @@ val_loss_every_tokens:     26214400
 val_seq_len: 262144       # 4 * 64 * 1024
 tot_val_tokens: 10485760
 # Checkpoints
-checkpoint_warmup_tokens:     1     # token warmup before checkpoints
+checkpoint_warmup_tokens:     162201600     # token warmup before checkpoints
 checkpoint_per_n_tokens:     1         # checkpoint interval by tokens
 save_checkpoint: true
 # Model Definition
