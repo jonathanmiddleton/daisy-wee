@@ -313,10 +313,28 @@ def get_lincos_lr_s(s: float, cooldown_frac: float) -> float:
     t = (x - (1.0 - c)) / max(c, 1e-8)  # t in [0,1]
     return 0.5 * (1.0 + math.cos(math.pi * t))
 
+def get_constant_with_linear_decay_lr_s(s: float, cooldown_frac: float) -> float:
+    """Constant 1.0 until cooldown, then linear decay to 0.0 over cooldown span."""
+    return get_linear_decay_lr_s(s, cooldown_frac)
+
+
+def get_constant_with_cosine_decay_lr_s(s: float, cooldown_frac: float) -> float:
+    """Constant 1.0 until cooldown, then cosine decay to 0.0 over cooldown span."""
+    x = 0.0 if s < 0.0 else (1.0 if s > 1.0 else s)
+    c = 0.0 if cooldown_frac < 0.0 else (1.0 if cooldown_frac > 1.0 else cooldown_frac)
+    if c <= 0.0:
+        return 1.0
+    if x < 1.0 - c:
+        return 1.0
+    t = (x - (1.0 - c)) / max(c, 1e-8)  # normalized to [0,1]
+    return 0.5 * (1.0 + math.cos(math.pi * t))
+
 # Dispatch table for LR schedules
 LEARNING_RATE_SCHEDULES: dict[str, callable] = {
     "linear_decay": get_linear_decay_lr_s,
     "linear_warmup_cosine_decay": get_lincos_lr_s,
+    "constant_with_linear_decay": get_constant_with_linear_decay_lr_s,
+    "constant_with_cosine_decay": get_constant_with_cosine_decay_lr_s,
 }
 
 def get_lr_scale(schedule_name: str, s: float, cooldown_frac: float) -> float:
