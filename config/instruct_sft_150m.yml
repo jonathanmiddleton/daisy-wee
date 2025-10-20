@@ -8,7 +8,7 @@ torch.coordinate_descent_tuning: false
 init_checkpoint: "checkpoints/20251020T1650-val2.860-step007500-run1-best.pt"
 # Instruct SFT training configuration
 train_shards: "data/instruct_mix/instruct_train_*.bin"
-target_tokens: 1730150400
+target_tokens: 2595225600
 cooldown_frac: 0.999
 learning_rate_schedule: constant_with_linear_decay
 training_sequence_length: 65536        #  N * 1024; must be divisible by window_block_size
@@ -46,7 +46,7 @@ val_loss_every_tokens:     13107200
 val_seq_len: 262144       # 4 * 64 * 1024
 tot_val_tokens: 10485760
 # Checkpoints
-checkpoint_warmup_tokens:     1     # token warmup before checkpoints
+checkpoint_warmup_tokens:     162201600     # token warmup before checkpoints
 checkpoint_per_n_tokens:     1         # checkpoint interval by tokens
 save_checkpoint: true
 # Model Definition

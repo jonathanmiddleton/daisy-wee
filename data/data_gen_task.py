@@ -51,6 +51,8 @@ class TaskDataGenerator:
         self._shard = None
         self._order = None
         self._pos = 0
+        # assert meta["eos_id"] == model.config.eos_token_id
+        # assert meta["tokenizer_len"] == model.get_input_embeddings().weight.shape[0]
 
     def _load_next(self):
         d = next(self._file_iter)

@@ -91,6 +91,11 @@ def _write_shard(out_dir: Path, shard_id: int, X: list[np.ndarray], Y: list[np.n
     np.save(d / "labels.npy", flat_y)
     np.save(d / "offsets.npy", offsets)
     meta = {"magic": MAGIC, "version": VERSION, "num_examples": len(L), "num_tokens": int(offsets[-1]), "tokenizer": tok_name, "eos_id": int(eos_id), "format": "tasks-v1"}
+    # meta.update({
+    #     "tokenizer_len": int(len(tok)),
+    #     "eos_id": int(eos),
+    #     "tokenizer_name_or_path": str(getattr(tok, "name_or_path", "")),
+    # })
     (d / "meta.json").write_text(json.dumps(meta))
 
 def build_task_shards(out_dir: str, split: str, tokenizer_name: str, max_examples_per_shard: int, sources: list[tuple[str, dict]], seed: int = 1337):
@@ -98,7 +103,7 @@ def build_task_shards(out_dir: str, split: str, tokenizer_name: str, max_example
     out = Path(out_dir) / split
     out.mkdir(parents=True, exist_ok=True)
     tok = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True, model_max_length=1_000_000)
-    if tok.eos_token_id is None: tok.add_special_tokens({"eos_token": "</s>"})
+    assert tok.eos_token_id is not None, "Tokenizer has no EOS. Define EOS in the model/tokenizer config, resize embeddings, and re-export before building shards."
     eos = tok.eos_token_id
     t0 = time.time()
     shard, buf_x, buf_y, n = 0, [], [], 0
