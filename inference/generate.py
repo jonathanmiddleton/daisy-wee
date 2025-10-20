@@ -87,7 +87,6 @@ class Generator:
         self.history = torch.cat([self.history, token.view(1)], dim=0)
         return logits
 
-    @torch.inference_mode()
     def generate(self, prompt_ids: torch.Tensor, max_new_tokens, seed=None) -> Generator[int, None, tuple[list[int], float, float]]:
         if seed is not None:
             self.set_seed(seed)
@@ -96,20 +95,23 @@ class Generator:
         assert prompt_ids.size(0) <= self.window, "prompt length must be <= attention window"
         assert prompt_ids.size(0)
         prompt_ids = prompt_ids[self.history.size(0):]
-        with measure_time() as pre_time:
-            logits = self._prefill(prompt_ids)
+        with torch.inference_mode():
+            with measure_time() as pre_time:
+                logits = self._prefill(prompt_ids)
         prefill_duration = pre_time()
         out = list(self.history.tolist())
         step_duration = 0
         for _ in range(max_new_tokens):
-            next_id = self._sample(logits[0])
-            if self.eos_token_id is not None and next_id == self.eos_token_id:
-                break
+            with torch.inference_mode():
+                next_id = self._sample(logits[0])
+                if self.eos_token_id is not None and next_id == self.eos_token_id:
+                    break
             yield next_id
-            with measure_time() as step_time:
-                logits = self._step(next_id)
-            step_duration += step_time()
-            out.append(int(next_id))
+            with torch.inference_mode():
+                with measure_time() as step_time:
+                    logits = self._step(next_id)
+                step_duration += step_time()
+                out.append(int(next_id))
 
         return out, prefill_duration, step_duration
 
