@@ -10,7 +10,8 @@ def _load_data_shard(file: Path):
     assert header[1] == 1, "unsupported version"
     num_tokens = int(header[2]) # number of tokens (claimed)
     with file.open("rb", buffering=0) as f:
-        tokens = torch.empty(num_tokens, dtype=torch.uint16, pin_memory=True).to('cpu') #to('cpu') required on Mac with Metal # avoid pin_memory copy by @YouJiacheng
+        use_pin = bool(torch.cuda.is_available())
+        tokens = torch.empty(num_tokens, dtype=torch.uint16, pin_memory=use_pin)
         f.seek(256 * 4)
         nbytes = f.readinto(tokens.numpy()) # avoid bytes->array copy by @YouJiacheng
         assert nbytes == 2 * num_tokens, "number of tokens read does not match header"
@@ -34,6 +35,7 @@ class DistributedDataGenerator:
         self.rank = int(rank)
         self.local_batch_size = self.batch_size // self.world_size
         self.device = device
+        self._use_non_blocking = str(self.device).startswith("cuda") and torch.cuda.is_available()
 
         # Determine starting file index using a 1-based shard number with wrap-around safety
         if start_shard is not None:
@@ -68,8 +70,8 @@ class DistributedDataGenerator:
             self._pos = 0
         start = self._pos + self.rank * self.local_batch_size
         buf = self._tokens[start:][: self.local_batch_size + 1]
-        inputs = buf[:-1].to(device=self.device, dtype=torch.int32, non_blocking=True)
-        targets = buf[1:].to(device=self.device, dtype=torch.int64, non_blocking=True)
+        inputs = buf[:-1].to(device=self.device, dtype=torch.int32, non_blocking=self._use_non_blocking)
+        targets = buf[1:].to(device=self.device, dtype=torch.int64, non_blocking=self._use_non_blocking)
         self._pos += self.batch_size
         return inputs, targets
 

@@ -92,20 +92,13 @@ def prompts_from_token_shards(pattern: str, device: str, count: int, bucket_lens
 
     gen = DistributedDataGenerator(filename_pattern=pattern, batch_size=128, rank=0, world_size=1, device=device)
     out: List[Prompt] = []
-    i = 0
-    while i < count:
-        inputs, targets = next(gen)
+    for i in range(count):
+        inputs, _ = next(gen)
         ids = inputs.to("cpu", dtype=torch.int64)
-        ids = ids.tolist()
-        for r in ids:
-            if i >= count:
-                break
-            # Build prompt by picking a random length bucket
-            L = bucket_lens[min(len(bucket_lens) - 1, i % len(bucket_lens))]
-            toks = r[:L]
-            pid = f"shard_{i:06d}"
-            out.append(Prompt(id=pid, text=None, tokens=[int(x) for x in toks]))
-            i += 1
+        # pick a random length bucket
+        L = bucket_lens[min(len(bucket_lens) - 1, i % len(bucket_lens))]
+        pid = f"shard_{i:06d}"
+        out.append(Prompt(id=pid, text=None, tokens=inputs[:L].tolist()))
     return out
 
 

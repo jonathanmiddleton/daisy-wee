@@ -1,12 +1,9 @@
-from __future__ import annotations
-
 import json
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import torch
-import torch.nn.functional as F
 
 from tools.checkpoint import model_from_checkpoint
 from tools.helpers import measure_time
@@ -54,6 +51,13 @@ class PrecisionRunner:
         ensure_dir(self.root)
         record_env(self.root)
         self.unsupported: List[Dict[str, Any]] = []
+
+    def _should_skip(self, case: Case) -> str | None:
+        if case.device == "cpu" and case.dtype_policy == "fp16":
+            return "cpu_fp16_autocast_unsupported"
+        if case.device == "mps" and case.dtype_policy == "fp32":
+            return "mps_fp32_autocast_unsupported"
+        return None
 
     def _autocast_ctx(self, device: str, dtype_policy: str):
         devtype = "cuda" if device.startswith("cuda") else ("mps" if device.startswith("mps") else "cpu")
@@ -135,7 +139,7 @@ class PrecisionRunner:
                 prefix = ids[: t + 1]
                 with self._autocast_ctx(case.device, case.dtype_policy):
                     z_hat = self._prefill_logits(model, prefix)[0]
-                z_ref = ref_logits[p.id][t]
+                z_ref = ref_logits[p.id][t].to(device=case.device)[0]
                 # Basic metrics
                 diff = (z_hat - z_ref).float()
                 l2 = torch.linalg.vector_norm(diff, ord=2).item()
@@ -151,7 +155,7 @@ class PrecisionRunner:
                 overlaps = topk_overlap(z_hat, z_ref, topk)
                 margin = ref_margin(z_ref)
                 y = int(targets[t].item())
-                d_nll = delta_nll(logp_ref[0], logp_var[0], y)
+                d_nll = delta_nll(logp_ref, logp_var, y)
                 row = {
                     "prompt_id": p.id,
                     "pos": t,
@@ -197,7 +201,7 @@ class PrecisionRunner:
             except StopIteration as e:
                 (full_out, prefill_dur, step_dur) = e.value
                 # full_out contains history prompt + generated
-                out_ids = full_out[len(p.tokens):]
+                out_ids = full_out[len(toks):]
             gens_rows.append({"prompt_id": p.id, "case_id": case.case_id, "output_ids": out_ids})
             # Divergence vs reference
             ref_out = ref_outputs[p.id]
@@ -260,7 +264,7 @@ class PrecisionRunner:
                     out_ids.append(int(t))
             except StopIteration as e:
                 (full_out, _, _) = e.value
-                out_ids = full_out[len(p.tokens):]
+                out_ids = full_out[len(toks):]
             ref_outs[p.id] = out_ids
         return model, logits_map, ref_outs, hparams
 
@@ -311,6 +315,10 @@ class PrecisionRunner:
                     # Skip the reference cell duplication
                     if case.case_id == ref_case.case_id:
                         continue
+                    reason = self._should_skip(case)
+                    if reason:
+                        self.unsupported.append({"case_id": case.case_id, "reason": reason})
+                        continue
                     # Try load model on device
                     try:
                         model, _ = self._load_model(checkpoint, case.device)
@@ -353,7 +361,7 @@ class PrecisionRunner:
 
     def _write_summaries(self, token_rows: List[Dict[str, Any]], div_rows: List[Dict[str, Any]]) -> None:
         # Aggregate per case basic stats and 95% CIs for key metrics
-        cases = sorted(set(r["case_id"] for r in token_rows))
+        cases = sorted(set(r["case_id"] for r in token_rows) | set(r["case_id"] for r in div_rows))
         summary: Dict[str, Any] = {}
         for cid in cases:
             rows = [r for r in token_rows if r["case_id"] == cid]
@@ -404,6 +412,24 @@ class PrecisionRunner:
                     rate = (succ/total) if total else float('nan')
                     cond[name] = {"rate": rate, "n": total, "successes": succ}
                 metrics["flip_given_margin"] = cond
+            drows = [r for r in div_rows if r["case_id"] == cid]
+            if drows:
+                fd = [float(r["first_div_idx"]) for r in drows]
+                em = [float(r["em_at_T"]) for r in drows]
+                ed = [float(r["edit_distance"]) for r in drows]
+                rn = [float(r["ref_nll"]) for r in drows if ("ref_nll" in r and r["ref_nll"] == r["ref_nll"])]
+                if fd:
+                    ci = bootstrap_ci(fd)
+                    metrics.setdefault("first_div_idx", {})["mean"] = ci.mean
+                    metrics["first_div_idx"].update({"median": ci.median, "ci95": [ci.low, ci.high]})
+                if em:
+                    metrics["em_at_T"] = {"mean": sum(em) / max(1, len(em))}
+                if ed:
+                    ci = bootstrap_ci(ed)
+                    metrics["edit_distance"] = {"mean": ci.mean, "median": ci.median, "ci95": [ci.low, ci.high]}
+                if rn:
+                    ci = bootstrap_ci(rn)
+                    metrics["ref_nll"] = {"mean": ci.mean, "median": ci.median, "ci95": [ci.low, ci.high]}
             summary[cid] = metrics
         ensure_dir(os.path.join(self.root, "summaries"))
         with open(os.path.join(self.root, "summaries", "case_summaries.json"), "w", encoding="utf-8") as f:

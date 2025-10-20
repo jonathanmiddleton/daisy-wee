@@ -1,11 +1,17 @@
 run_id: "gpt-numerics-v1"
-reference: {{ device: cpu, dtype: fp32, compile: false }}
+reference:
+  device: cpu
+  dtype: fp32
+  ompile: false
 devices: [cpu, mps]
 compile_modes: [false, true]
 dtype_policies: [fp32, bf16, fp16, autocast_bf16]
 decoding:
-  mode_open_loop: {{ enabled: true }}
-  mode_closed_loop: {{ enabled: true, max_new_tokens: 256 }}
+  mode_open_loop:
+    enabled: true
+  mode_closed_loop:
+    enabled: true
+    max_new_tokens: 4 #256
 sampling:
   temperature: 0.0
   top_p: 1.0
@@ -20,11 +26,12 @@ dataset:
 # or:
 #  path: "prompts.jsonl"
 #  min_prompts: 200
-  max_prompts: 500
-  length_buckets: [64, 512, 2048]
+  max_prompts: 4 #500
+  min_prompts: 4 #50
+  length_buckets: [4] #[64, 512, 2048]
 metrics:
   topk: [1, 5, 10]
   margin_bins: [0.1, 0.5, 1.0]
 outputs:
-  root: "./artifacts_root"
+  root: "./artifacts_root/long"
   write_parquet: true
