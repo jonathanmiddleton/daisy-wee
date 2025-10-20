@@ -6,9 +6,9 @@ wandb_run_name: '150m'
 torch.coordinate_descent_tuning: true
 # Pretraining configuration
 train_shards: "data/fineweb-edu/edu_fineweb_train_*.bin"
-target_tokens: 1000000000
-cooldown_frac: 0.95
-learning_rate_schedule: linear_warmup_cosine_decay
+target_tokens: 4000000000
+cooldown_frac: 0.2
+learning_rate_schedule: constant_with_linear_decay
 training_sequence_length: 65536        #  N * 1024; must be divisible by window_block_size
 train_attention_window_len: 1792        # largest sliding attention window used during training; must be divisible by window_block_size
 # Optimizers configuration
@@ -20,9 +20,9 @@ optimizers:
     fused: true
     params:
       - group: head_params
-        lr: 0.003125
+        lr: 0.004
       - group: embed_params
-        lr: 0.3
+        lr: 0.2
       - group: scalar_params
         lr: 0.015
 
@@ -31,7 +31,7 @@ optimizers:
     weight_decay: 0.0
     params:
       - group: hidden_matrix_params
-        lr: 0.03
+        lr: 0.02
 full_windows: false
 # Gradient accumulation
 grad_acc_steps: 1
