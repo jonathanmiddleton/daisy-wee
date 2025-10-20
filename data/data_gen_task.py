@@ -11,6 +11,7 @@ class _Shard:
         self.offsets = np.load(self.dir / "offsets.npy", mmap_mode="r")
         assert self.tokens.shape[0] == self.labels.shape[0] == int(self.offsets[-1])
         assert self.meta["version"] >= 2
+        self.pad_id = int(self.meta["eos_id"])
 
     def __len__(self): return len(self.offsets) - 1
 
@@ -18,19 +19,20 @@ class _Shard:
         s, e = int(self.offsets[i]), int(self.offsets[i+1])
         return self.tokens[s:e], self.labels[s:e]
 
-def _pad(batch):
+def _pad(batch, pad_id: int):
+    # Batch is a list of (tokens_np, labels_np) pairs, each 1-D
     L = [len(x[0]) for x in batch]
     T = max(L)
     B = len(batch)
-    x = torch.full((B, T), 0, dtype=torch.int32)
-    y = torch.full((B, T), -100, dtype=torch.int64)
-    m = torch.zeros((B, T), dtype=torch.bool)
+    # Hugging Face models expect torch.long for input_ids
+    x = torch.full((B, T), pad_id, dtype=torch.long)
+    y = torch.full((B, T), -100, dtype=torch.long)
     for i, (inp, lab) in enumerate(batch):
         t = len(inp)
-        x[i, :t] = torch.from_numpy(inp.astype(np.int32, copy=False))
+        # Cast to long without copies when possible
+        x[i, :t] = torch.from_numpy(inp.astype(np.int64, copy=False))
         y[i, :t] = torch.from_numpy(lab.astype(np.int64, copy=False))
-        m[i, :t] = True
-    return x, y, m
+    return x, y
 
 class TaskDataGenerator:
     def __init__(self, root: str, split: str, batch_size: int, world_size: int = 1, rank: int = 0, seed: int = 1337, device: str = "cpu", start_shard: int | None = None, drop_remainder: bool = False, infinite: bool = True):
@@ -51,14 +53,14 @@ class TaskDataGenerator:
         self._shard = None
         self._order = None
         self._pos = 0
-        # assert meta["eos_id"] == model.config.eos_token_id
-        # assert meta["tokenizer_len"] == model.get_input_embeddings().weight.shape[0]
+        self._pad_id = None
 
     def _load_next(self):
         d = next(self._file_iter)
         self._shard = _Shard(d)
         n = len(self._shard)
-        self._rng = np.random.default_rng(self.seed ^ hash(d.name) & 0xFFFFFFFF)
+        self._pad_id = self._shard.pad_id
+        self._rng = np.random.default_rng(self.seed ^ (hash(d.name) & 0xFFFFFFFF))
         self._order = self._rng.permutation(n).tolist()
         self._pos = 0
 
@@ -79,7 +81,6 @@ class TaskDataGenerator:
             b.append(self._shard.get(idx))
             need -= 1
         if len(b) < self.local_bsz and self.drop_remainder: raise StopIteration
-        x, y, m = _pad(b)
+        x, y = _pad(b, self._pad_id)
         non_blocking = self.device.type == "cuda" and torch.cuda.is_available()
-        # TODO mask before returning train/targets
-        return x.to(self.device, non_blocking=non_blocking), y.to(self.device, non_blocking=non_blocking), m.to(self.device, non_blocking=non_blocking)
+        return x.to(self.device, non_blocking=non_blocking), y.to(self.device, non_blocking=non_blocking)
