@@ -403,6 +403,8 @@ while progress.tokens_processed < progress.target_tokens:
     lr_scale = get_lr_scale(args.learning_rate_schedule, s, args.cooldown_frac)
 
     for opt in optimizers:
+        if isinstance(opt, Muon):
+            continue
         for group in opt.param_groups:
             group["lr"] = group["initial_lr"] * lr_scale
     # Momentum warmup for Muon optimizers driven by progress s
