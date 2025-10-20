@@ -81,4 +81,5 @@ class TaskDataGenerator:
         if len(b) < self.local_bsz and self.drop_remainder: raise StopIteration
         x, y, m = _pad(b)
         non_blocking = self.device.type == "cuda" and torch.cuda.is_available()
+        # TODO mask before returning train/targets
         return x.to(self.device, non_blocking=non_blocking), y.to(self.device, non_blocking=non_blocking), m.to(self.device, non_blocking=non_blocking)
