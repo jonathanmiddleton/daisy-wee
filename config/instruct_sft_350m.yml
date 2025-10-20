@@ -22,17 +22,17 @@ optimizers:
     fused: true
     params:
       - group: head_params
-        lr: .0003125
+        lr: .00006928
       - group: embed_params
-        lr: 0.03
+        lr: .003464
       - group: scalar_params
-        lr: .0015
+        lr: .0002598
   - type: Muon
-    momentum: 0.95
-    weight_decay: 0.01
+    momentum: .95
+    weight_decay: 0.0
     params:
       - group: hidden_matrix_params
-        lr: .0025
+        lr: .0004
 full_windows: true
 # Gradient accumulation
 grad_acc_steps: 1 # assumes world_size=8
