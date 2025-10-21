@@ -1,6 +1,7 @@
 import argparse
 import math
 import time
+import os
 import statistics as stats
 from pathlib import Path
 from typing import Optional
@@ -175,7 +176,7 @@ def main():
     p.add_argument("--new-tokens", type=int, default=256, help="Number of tokens to generate via step")
     p.add_argument("--prefill-reps", type=int, default=5, help="Number of prefill repetitions")
     p.add_argument("--step-reps", type=int, default=5, help="Number of step repetitions")
-    p.add_argument("--device", type=str, default=("cuda" if torch.cuda.is_available() else "cpu"), help="Device, e.g. cpu, cuda, cuda:0")
+    p.add_argument("--device", type=str, default=("cuda" if torch.cuda.is_available() else ("mps" if torch.mps.is_available() else "cpu")), help="Device, e.g. cpu, mps, cuda, cuda:0")
     p.add_argument("--window", type=int, default=None, help="Attention window override (defaults from checkpoint/spec)")
     p.add_argument("--no-compile", action="store_true", help="Disable torch.compile even if available")
     p.add_argument("--seed", type=int, default=1234, help="Random seed for synthetic prompt")
@@ -220,39 +221,127 @@ def main():
         seed=int(args.seed),
     )
 
-    # Render table
-    # Columns: Source, Device, Window, Prompt, New, Prefill TPS (mean±CI), Step TPS (mean±CI)
-    hdr = [
-        ("source", 24),
-        ("device", 8),
-        ("win", 6),
-        ("prompt", 8),
-        ("new", 6),
-        ("prefill tps", 18),
-        ("step tps", 18),
-    ]
-    line = " ".join(name.ljust(w) for name, w in hdr)
-    print(line)
-    print("-" * len(line))
+    # Render table in llama-bench style
+    # Columns: | model | size | params | backend | threads | test | t/s |
 
-    def fmt_pair(mean: float, ci: float) -> str:
-        if math.isnan(mean):
-            return "n/a"
-        return f"{mean:,.1f} b {ci:,.1f}"
+    def human_params(n: int) -> str:
+        if n >= 1_000_000_000:
+            return f"{n/1e9:.2f} B"
+        if n >= 1_000_000:
+            return f"{n/1e6:.2f} M"
+        if n >= 1_000:
+            return f"{n/1e3:.2f} K"
+        return str(n)
 
-    row = [
-        str(src_name)[:24].ljust(24),
-        str(device)[:8].ljust(8),
-        str(window).rjust(6),
-        str(int(args.prompt_length)).rjust(8),
-        str(int(args.new_tokens)).rjust(6),
-        f"{results['prefill_mean_tps']:.1f} +/- {results['prefill_ci_tps']:.1f}".rjust(18),
-        f"{results['step_mean_tps']:.1f} +/- {results['step_ci_tps']:.1f}".rjust(18),
+    def human_gib(nbytes: int) -> str:
+        return f"{nbytes / (1024**3):.2f} GiB"
+
+    def _detect_cpu_blas() -> str:
+        try:
+            cfg = torch.__config__.show()
+        except Exception:
+            return "BLAS"
+        lower = cfg.lower()
+        # Prefer explicit BLAS info lines when present
+        for line in cfg.splitlines():
+            ll = line.lower()
+            if ("blas_info" in ll) or ("blas=" in ll) or ("lapack_info" in ll):
+                if ("accelerate" in ll) or ("veclib" in ll):
+                    return "Accelerate"
+                if ("openblas" in ll) or ("open" in ll):
+                    return "OpenBLAS"
+                if "mkl" in ll:
+                    return "MKL"
+                if "atlas" in ll:
+                    return "ATLAS"
+        # Fallback: search the whole config text
+        if ("accelerate" in lower) or ("veclib" in lower):
+            return "Accelerate"
+        if "openblas" in lower:
+            return "OpenBLAS"
+        if "mkl" in lower:
+            return "MKL"
+        if "atlas" in lower:
+            return "ATLAS"
+        return "BLAS"
+
+    def detect_backend(devtype: str) -> str:
+        cpu_blas = _detect_cpu_blas()
+        if devtype == "cuda":
+            return f"CUDA,{cpu_blas}"
+        if devtype == "mps":
+            return f"Metal,{cpu_blas}"
+        return cpu_blas
+
+    devtype = _devtype(device)
+    try:
+        param_count = sum(p.numel() for p in model.parameters())
+    except Exception:
+        param_count = int(getattr(model, 'num_parameters', 0)) or 0
+
+    if args.checkpoint and os.path.exists(args.checkpoint):
+        try:
+            size_bytes = os.path.getsize(args.checkpoint)
+        except Exception:
+            size_bytes = sum(p.nelement() * p.element_size() for p in model.parameters())
+    else:
+        size_bytes = sum(p.nelement() * p.element_size() for p in model.parameters())
+
+    backend = detect_backend(devtype)
+    threads = torch.get_num_threads()
+
+    # Table layout
+    cols = [
+        ("model", 30, 'l'),
+        ("size", 11, 'r'),
+        ("params", 11, 'r'),
+        ("backend", 18, 'l'),
+        ("threads", 8, 'r'),
+        ("test", 12, 'r'),
+        ("t/s", 21, 'r'),
     ]
-    print(" ".join(row))
+
+    def pad(val: str, width: int, align: str) -> str:
+        if len(val) > width:
+            val = val[:width]
+        if align == 'r':
+            return val.rjust(width)
+        return val.ljust(width)
+
+    header = "| " + " | ".join(pad(name, w, a) for name, w, a in cols) + " |"
+    sep = "| " + " | ".join(("-"*(w-1) + ":") if a == 'r' else ("-"*w) for _, w, a in cols) + " |"
+    print(header)
+    print(sep)
+
+    # Rows: prefill and token generation
+    pp_name = f"pp{int(args.prompt_length)}"
+    tg_name = f"tg{int(args.new_tokens)}"
+    prefill_str = f"{results['prefill_mean_tps']:.2f} ± {results['prefill_ci_tps']:.2f}"
+    step_str = f"{results['step_mean_tps']:.2f} ± {results['step_ci_tps']:.2f}"
+
+    static_cells = [
+        pad(str(src_name), cols[0][1], cols[0][2]),
+        pad(human_gib(int(size_bytes)), cols[1][1], cols[1][2]),
+        pad(human_params(int(param_count)), cols[2][1], cols[2][2]),
+        pad(backend, cols[3][1], cols[3][2]),
+        pad(str(threads if threads > 0 else '-'), cols[4][1], cols[4][2]),
+    ]
+
+    row_pp = "| " + " | ".join(static_cells + [
+        pad(pp_name, cols[5][1], cols[5][2]),
+        pad(prefill_str, cols[6][1], cols[6][2]),
+    ]) + " |"
+
+    row_tg = "| " + " | ".join(static_cells + [
+        pad(tg_name, cols[5][1], cols[5][2]),
+        pad(step_str, cols[6][1], cols[6][2]),
+    ]) + " |"
+
+    print(row_pp)
+    print(row_tg)
 
     print()
-    print("Notes: mean b 95% CI across repetitions. Synthetic random prompt tokens used.")
+    print("Notes: t/s is mean ± 95% CI across repetitions. Synthetic random prompt tokens used.")
 
 
 if __name__ == "__main__":
