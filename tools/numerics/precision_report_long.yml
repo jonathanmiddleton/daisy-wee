@@ -17,10 +17,6 @@ sampling:
   top_p: 1.0
 controls:
   deterministic: true
-  force_fp32_accum_attention: true
-  force_fp32_accum_norms: true
-  kv_cache_dtype: "fp16"            # or "bf16" / "fp32"; held constant
-  rope_cache_dtype: "fp32"
 dataset:
   shard_pattern: "data/fineweb/fineweb_train_000001.bin" # or: path: "prompts.jsonl"
   max_prompts: 500

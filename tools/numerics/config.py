@@ -24,10 +24,10 @@ class SamplingCfg:
 @dataclass
 class ControlsCfg:
     deterministic: bool = True
-    force_fp32_accum_attention: bool = True
-    force_fp32_accum_norms: bool = True
-    kv_cache_dtype: str = "fp16"
-    rope_cache_dtype: str = "fp32"
+    # force_fp32_accum_attention: bool = True
+    # force_fp32_accum_norms: bool = True
+    # kv_cache_dtype: str = "fp16"
+    # rope_cache_dtype: str = "fp32"
 
 
 @dataclass
