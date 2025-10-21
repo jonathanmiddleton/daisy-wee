@@ -5,10 +5,10 @@ import pytest
 
 os.environ["DISABLE_O_ZERO_INIT"] = "1"  # ensure attention output proj isn't zeroed
 
-from models.gpt2.gpt_core import GPT2Core
+from models.daisy.daisy_core import DaisyCore
 from inference.generate import Generator
 
-@pytest.mark.skip(reason="Disabled - requires changing GPT2Core.forward to return logits for testing")
+@pytest.mark.skip(reason="Disabled - requires changing DaisyCore.forward to return logits for testing")
 @pytest.mark.parametrize("T,window", [(128, 256), (256, 512)])
 def test_step_equals_forward_when_window_covers_all(T, window):
     torch.manual_seed(0)
@@ -19,7 +19,7 @@ def test_step_equals_forward_when_window_covers_all(T, window):
     model_dim   = 256
     max_seq_len = 2048
 
-    model = GPT2Core(vocab_size, num_layers, num_heads, model_dim, max_seq_len, model_dim/num_heads).eval()
+    model = DaisyCore(vocab_size, num_layers, num_heads, model_dim, max_seq_len, model_dim / num_heads).eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 

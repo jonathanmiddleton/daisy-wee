@@ -9,12 +9,12 @@ from model_specs import load_model_spec, ModelSpec
 
 def get_model_class(model_class: str) -> Type[nn.Module]:
     """Import and return a model class given its fully-qualified class name.
-    Example: 'models.gpt2.gpt_core.GPT2Core'. No defaults or fallbacks.
+    Example: 'models.daisy.daisy_core.DaisyCore'. No defaults or fallbacks.
     """
     if not model_class or not isinstance(model_class, str):
         raise ValueError("model_class must be a non-empty fully-qualified class name string")
     if "." not in model_class:
-        raise ValueError("model_class must be a fully-qualified class name like 'models.gpt2.gpt_core.GPT2Core'")
+        raise ValueError("model_class must be a fully-qualified class name like 'models.daisy.daisy_core.DaisyCore'")
     module_path, cls_name = model_class.rsplit(".", 1)
     mod = import_module(module_path)
     cls = getattr(mod, cls_name, None)

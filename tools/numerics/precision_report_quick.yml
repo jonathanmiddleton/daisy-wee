@@ -9,7 +9,7 @@
 # compare devices within a fixed dtype/mode to isolate backend effects.
 
 
-run_id: "gpt-numerics-v1"
+run_id: "daisy-numerics-v1"
 reference:
   device: cpu
   dtype: fp32

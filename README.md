@@ -43,7 +43,7 @@ python data/cached_fineweb100B.py
 
 ### 3) Train (recommended wrapper)
 ```bash
-./run.sh config/pretrain_350m.yml -n 8 target_tokens=3000000000
+./run.sh config/pretrain_450m.yml -n 8 target_tokens=3000000000
 ```
 Notes:
 - `-n` → processes per node (passed to `torchrun --nproc_per_node`).
@@ -68,10 +68,10 @@ Common patterns:
 ./run.sh config/pretrain_1.6B.yml -n 8 -p checkpoints/state_step_100000.pt
 
 # Single‑GPU debug
-./run.sh config/pretrain_350m.yml -n 1 val_loss_every_tokens=200000000
+./run.sh config/pretrain_450m.yml -n 1 val_loss_every_tokens=200000000
 
 # Force full attention windows for the entire run
-./run.sh config/pretrain_350m.yml -n 8 --full_windows
+./run.sh config/pretrain_450m.yml -n 8 --full_windows
 ```
 Behavior:
 - `-p/--init_checkpoint` loads weights + essential arch hparams; **schedules/optimizer/steps do not resume**.
@@ -80,13 +80,13 @@ Behavior:
 
 ### Direct `train.py`
 ```bash
-python -u train.py config/pretrain_350m.yml
+python -u train.py config/pretrain_450m.yml
 python train.py --help
 ```
 
 ### Weights & Biases (optional)
 ```bash
-./run.sh config/pretrain_350m.yml -n 8 wandb_log=true wandb_project=myproj wandb_run_name=exp1
+./run.sh config/pretrain_450m.yml -n 8 wandb_log=true wandb_project=myproj wandb_run_name=exp1
 ```
 Logs: `train/loss`, tokens, time; `val/loss`, `val/ppl`.
 
@@ -114,7 +114,7 @@ Key fields (training):
 
 Example model spec (350M):
 ```yaml
-model_class: models.gpt2.gpt_core.GPT2Core
+model_class: models.daisy.daisy_core.DaisyCore
 eos_token_id: 50256
 vocab_size: 50257
 num_layers: 24
@@ -164,7 +164,7 @@ Saved: model weights, merged `hparams`, `step`, `best_val`, `tokens_per_step`, a
 ```
 config/           # training YAMLs
 model_specs/      # architecture specs
-models/gpt2/      # attention, block, mlp, core
+models/daisy/      # attention, block, mlp, core
 training/         # training loop, hparams, optimizers, progress
 tools/            # checkpoint, inspect, LR sweeps, reports
 data/             # dataset scripts (FineWeb, SFT)
@@ -196,7 +196,7 @@ Mixture‑of‑Experts FFN (top‑k routing), router regularization, expert‑pa
 ## Acknowledgements
 
 Originally launched as a fork of **modded‑nanogpt** (Keller Jordan & contributors) and inspired by **nanoGPT** (Andrej Karpathy). This project currently reproduces
-substantial portions of optimized model code from **modded‑nanogpt** for training efficiency.
+substantial portions of optimized model training path code from **modded‑nanogpt** for training efficiency.
 
 
 ## License

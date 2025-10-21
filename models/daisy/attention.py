@@ -4,7 +4,7 @@ import torch
 from torch import nn, Tensor
 from torch.nn.attention.flex_attention import BlockMask, flex_attention
 from torch.nn import functional as F
-from models.gpt2.functional import norm, init_linear
+from models.daisy.functional import norm, init_linear
 
 def _apply_rope(x_BTHD , cos, sin):
     x1, x2 = x_BTHD.to(dtype=torch.float32).chunk(2, dim=-1)

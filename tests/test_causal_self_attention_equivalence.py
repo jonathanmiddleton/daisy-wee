@@ -2,7 +2,7 @@
 import pytest
 import torch
 from torch.nn.attention.flex_attention import create_block_mask
-from models.gpt2.attention import CausalSelfAttention
+from models.daisy.attention import CausalSelfAttention
 
 def _make_block_mask(T: int, H: int, W: int, device: torch.device):
     dev_str = "cuda" if device.type == "cuda" else "cpu"

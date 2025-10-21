@@ -1,8 +1,8 @@
 import torch
 
-from models.gpt2 import GPT2Core
-from models.gpt2.attention import CausalSelfAttention
-from models.gpt2.functional import norm
+from models.daisy import DaisyCore
+from models.daisy.attention import CausalSelfAttention
+from models.daisy.functional import norm
 import torch.nn.functional as F
 
 
@@ -79,7 +79,7 @@ def per_head_metrics(A: torch.Tensor, device: str | torch.device):
         masses.append(m)
     return ranks, masses, max(ranks) if ranks else None
 
-def average_per_head_over_sequences(model: GPT2Core, I: list[torch.Tensor], layer_id: int, device: str | torch.device) -> dict:
+def average_per_head_over_sequences(model: DaisyCore, I: list[torch.Tensor], layer_id: int, device: str | torch.device) -> dict:
     attn = model.blocks[layer_id].attn
     H = int(attn.num_heads)
     sum_r = torch.zeros(H, dtype=torch.float64, device=device)

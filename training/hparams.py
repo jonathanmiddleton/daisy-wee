@@ -38,13 +38,13 @@ class Hyperparameters:
     optimizers: list[dict]
     # Force full attention windows (useful when resuming after smaller windows)
     full_windows: bool
-    # Model context size (from ModelSpec); used to instantiate GPT2Core
+    # Model context size (from ModelSpec); used to instantiate DaisyCore
     max_seq_len: int
     # Gradient accumulation
     grad_acc_steps: int
     # Model selection
     model_spec: str    # name of model spec under model_specs/, or a path to a spec file
-    model_class: str  # fully-qualified class name, e.g., 'models.gpt2.gpt_core.GPT2Core'
+    model_class: str  # fully-qualified class name, e.g., 'models.daisy.daisy_core.DaisyCore'
     # Torch compile/tuning flags
     torch_coordinate_descent_tuning: bool = False
     # Weights & Biases minimal logging config

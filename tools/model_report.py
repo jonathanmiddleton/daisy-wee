@@ -168,13 +168,13 @@ def build_report(model: nn.Module, hparams: Optional[Dict[str, Any] | Hyperparam
     report["param_bytes"] = int(bytes_)
     report["param_megabytes"] = float(bytes_ / (1024 ** 2)) if bytes_ else None
 
-    # GPT2Core-specific info if available
-    from models.gpt2.gpt_core import GPT2Core  # local import
-    if isinstance(model, GPT2Core):
+    # DaisyCore-specific info if available
+    from models.daisy.daisy_core import DaisyCore  # local import
+    if isinstance(model, DaisyCore):
         L = len(model.blocks)
         report.setdefault("model", {})
         report["model"].update({
-            "type": "GPT2Core",
+            "type": "DaisyCore",
             "num_layers": L,
             "has_attn_every_layer": all(getattr(b, "attn", None) is not None for b in model.blocks),
             "attn_off_layers": [i for i, b in enumerate(model.blocks) if getattr(b, "attn", None) is None],
@@ -234,7 +234,7 @@ def format_report_text(report: Dict[str, Any]) -> str:
         lines.append(f"  {k}: {v['count_h']} ({v['count']})")
 
     # Scalars section
-    lines.append("\n=== Learned scalars (GPT2Core) ===")
+    lines.append("\n=== Learned scalars (DaisyCore) ===")
     sc = report.get("scalars", {}) or {}
     if not sc.get("present"):
         lines.append("No 'scalars' parameter found in model.")

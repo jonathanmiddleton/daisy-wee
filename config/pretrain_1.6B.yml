@@ -1,7 +1,7 @@
 # Logging
 wandb_log: true
 wandb_project: 'daisy-wee'
-wandb_run_name: '350m'
+wandb_run_name: '450m'
 # Torch config
 torch.coordinate_descent_tuning: true
 # Training
@@ -47,5 +47,5 @@ checkpoint_warmup_tokens: 209715200               # token warmup before checkpoi
 checkpoint_per_n_tokens: 52428800           # checkpoint interval by tokens
 save_checkpoint: true
 # Model Definition
-model_spec: gpt2_1p6b
+model_spec: daisy_1p6b
 

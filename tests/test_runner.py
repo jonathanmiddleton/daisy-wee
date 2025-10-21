@@ -132,7 +132,7 @@ def test_main_invokes_subprocess_with_env_and_overrides(fake_popen, tmp_logfile,
 
 def test_main_can_forward_overrides_for_all_config_keys(fake_popen, tmp_logfile):
     # Load a real config YAML and create an override token for every top-level key
-    cfg_path = Path(__file__).resolve().parents[1] / "config" / "pretrain_350m.yml"
+    cfg_path = Path(__file__).resolve().parents[1] / "config" / "pretrain_450m.yml"
     data = yaml.safe_load(cfg_path.read_text())
 
     override_tokens = []

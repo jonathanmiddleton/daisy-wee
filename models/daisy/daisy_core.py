@@ -3,8 +3,8 @@ import os
 import torch
 from torch import nn, Tensor
 import torch.nn.functional as F
-from models.gpt2.block import Block
-from models.gpt2.functional import norm
+from models.daisy.block import Block
+from models.daisy.functional import norm
 from torch.nn.attention.flex_attention import BlockMask
 
 def next_multiple_of_n(v: float | int, *, n: int):
@@ -23,7 +23,7 @@ def _get_skip_map(L: int):
                 if 0 <= j < i}
     return _skip_map
 
-class GPT2Core(nn.Module):
+class DaisyCore(nn.Module):
     def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim, window_block_size: int = 128, eos_token_id: int | None = None):
         super().__init__()
         if eos_token_id is None:

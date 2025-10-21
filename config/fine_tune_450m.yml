@@ -1,7 +1,7 @@
 # Logging
 wandb_log: true
 wandb_project: 'daisy-wee'
-wandb_run_name: '350m-fine-tune'
+wandb_run_name: '450m-fine-tune'
 # Torch config
 torch.coordinate_descent_tuning: false
 # Pretraining checkpoint path
@@ -48,4 +48,4 @@ checkpoint_warmup_tokens:   0     # token warmup before checkpoints
 checkpoint_per_n_tokens:     0         # checkpoint interval by tokens (0 = every update after warmup)
 save_checkpoint: true
 # Model Definition
-model_spec: gpt2_350m
+model_spec: daisy_450m

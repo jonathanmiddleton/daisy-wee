@@ -168,7 +168,7 @@ def run_benchmark(
 
 
 def main():
-    p = argparse.ArgumentParser(description="Benchmark GPT2Core prefill_batch and step performance.")
+    p = argparse.ArgumentParser(description="Benchmark DaisyCore prefill_batch and step performance.")
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("--checkpoint", type=str, help="Path to checkpoint .pt file")
     src.add_argument("--model-spec", type=str, help="Model spec name or YAML path")

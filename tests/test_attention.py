@@ -1,6 +1,6 @@
 import torch
 import pytest
-from models.gpt2.attention import CausalSelfAttention
+from models.daisy.attention import CausalSelfAttention
 
 
 def make_attn(dim=16, heads=2, head_dim=8, max_seq_len=64):
@@ -19,7 +19,7 @@ def batched_sdpa_reference(attn: CausalSelfAttention, x: torch.Tensor, lambdas: 
     H, Hd = attn.num_heads, attn.head_dim
     qkv = torch.nn.functional.linear(x, attn.qkvo_w[:3].flatten(end_dim=1))
     q, k, v = qkv.view(B, T, 3 * H, Hd).chunk(3, dim=-2)
-    from models.gpt2.functional import norm
+    from models.daisy.functional import norm
     q, k = norm(q), norm(k)
     q, k = attn.rotary(q), attn.rotary(k)
     v = norm(v)
@@ -44,7 +44,7 @@ def per_token_windowed_reference(attn: CausalSelfAttention, x: torch.Tensor, lam
     H, Hd = attn.num_heads, attn.head_dim
     qkv = torch.nn.functional.linear(x, attn.qkvo_w[:3].flatten(end_dim=1))
     q, k, v = qkv.view(B, T, 3 * H, Hd).chunk(3, dim=-2)
-    from models.gpt2.functional import norm
+    from models.daisy.functional import norm
     q, k = norm(q), norm(k)
     # Use rotary on full sequences for equivalence to step
     q, k = attn.rotary(q), attn.rotary(k)

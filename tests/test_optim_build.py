@@ -2,12 +2,12 @@ import torch
 import pytest
 
 from training.optim import build_optimizers_from_cfg, derive_named_param_groups
-from models.gpt2.gpt_core import GPT2Core
+from models.daisy.daisy_core import DaisyCore
 
 
-def make_small_gpt2_core():
-    # very small model for fast tests; num_layers must be even per GPT2Core assertions
-    model = GPT2Core(
+def make_small_daisy_core():
+    # very small model for fast tests; num_layers must be even per DaisyCore assertions
+    model = DaisyCore(
         vocab_size=256,
         num_layers=2,
         num_heads=2,
@@ -34,7 +34,7 @@ def build_cfg_per_group():
 @pytest.mark.cpu
 @torch.no_grad()
 def test_build_optimizers_groups_assignment_correct():
-    model = make_small_gpt2_core()
+    model = make_small_daisy_core()
 
     cfg = build_cfg_per_group()
     optimizers = build_optimizers_from_cfg(cfg_list=cfg, model=model, rank=0, world_size=1)
@@ -69,7 +69,7 @@ def test_build_optimizers_groups_assignment_correct():
 @pytest.mark.cpu
 @torch.no_grad()
 def test_no_parameter_in_multiple_optimizer_groups():
-    model = make_small_gpt2_core()
+    model = make_small_daisy_core()
 
     cfg = build_cfg_per_group()
     optimizers = build_optimizers_from_cfg(cfg_list=cfg, model=model, rank=0, world_size=1)
@@ -92,7 +92,7 @@ def test_no_parameter_in_multiple_optimizer_groups():
 @pytest.mark.cpu
 @torch.no_grad()
 def test_group_does_not_span_multiple_optimizers():
-    model = make_small_gpt2_core()
+    model = make_small_daisy_core()
 
     cfg = build_cfg_per_group()
     optimizers = build_optimizers_from_cfg(cfg_list=cfg, model=model, rank=0, world_size=1)
@@ -115,7 +115,7 @@ def test_group_does_not_span_multiple_optimizers():
 @pytest.mark.cpu
 @torch.no_grad()
 def test_frozen_groups_params_are_frozen_and_not_in_optimizers():
-    model = make_small_gpt2_core()
+    model = make_small_daisy_core()
 
     cfg = build_cfg_per_group()
     frozen = ["embed_params", "head_params"]

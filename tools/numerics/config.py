@@ -61,7 +61,7 @@ class ReferenceCfg:
 
 @dataclass
 class RunConfig:
-    run_id: str = "gpt-numerics-v1"
+    run_id: str = "daisy-numerics-v1"
     reference: ReferenceCfg = field(default_factory=ReferenceCfg)
     devices: List[str] = field(default_factory=lambda: ["cpu", "mps"])
     compile_modes: List[bool] = field(default_factory=lambda: [False, True])
@@ -88,7 +88,7 @@ class RunConfig:
             return cls()
 
         return RunConfig(
-            run_id=d.get("run_id", "gpt-numerics-v1"),
+            run_id=d.get("run_id", "daisy-numerics-v1"),
             reference=ReferenceCfg(**(d.get("reference") or {})),
             devices=list(d.get("devices") or ["cpu", "mps"]),
             compile_modes=list(d.get("compile_modes") or [False, True]),
