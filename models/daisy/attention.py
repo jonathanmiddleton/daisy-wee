@@ -135,8 +135,8 @@ class CausalSelfAttention(nn.Module):
 
         # SDPA expects (..., L, E) where L is the sequence length; put heads before time
         q_ = q.transpose(1, 2)      # (B, H, 1, D)
-        k_ = k_all.transpose(1, 2)  # (B, H, S, D)
-        v_ = v_all.transpose(1, 2)  # (B, H, S, D)
+        k_ = k_all.transpose(1, 2).to(target_dtype)  # (B, H, S, D)
+        v_ = v_all.transpose(1, 2).to(target_dtype)  # (B, H, S, D)
         y = F.scaled_dot_product_attention(q_, k_, v_, scale=self.attn_scale, is_causal=False)
         y = y.transpose(1, 2).reshape(B, 1, self.num_heads * self.head_dim)
         y = F.linear(y, self.qkvo_w[3])
