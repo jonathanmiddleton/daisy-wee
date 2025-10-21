@@ -1,3 +1,14 @@
+# Usage:
+# All cases are compared to reference baseline.
+# Use L2 boxes to spot raw logit drift;
+# use JS boxes to evaluate distributional change.
+# Use flip‑given‑margin curves to assess decision stability at different confidence levels.
+# Prefer curves that hug the bottom, especially for larger margins.
+# Compare eager vs comp within the same device/dtype to isolate compiler effects;
+# compare dtype within the same device/mode to isolate precision effects;
+# compare devices within a fixed dtype/mode to isolate backend effects.
+
+
 run_id: "gpt-numerics-v1"
 reference:
   device: cpu
