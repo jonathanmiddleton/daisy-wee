@@ -13,6 +13,7 @@ from models import model_from_spec
 from model_specs.model_spec import load_model_spec
 from tools.checkpoint import model_from_checkpoint
 from inference.kv_cache import KVCache
+from inference.generate import Generator
 
 dtype = torch.bfloat16
 
@@ -148,22 +149,50 @@ def run_benchmark(
             t1 = time.perf_counter()
         step_times.append(t1 - t0)
 
+    # Generator-based timings using Generator.generate()
+    gen_prefill_times: list[float] = []
+    gen_step_times: list[float] = []
+    gen = Generator(model, window=window, device=device, dtype=dtype, temperature=0.0, seed=seed)
+    for _ in range(step_reps):
+        gen.reset()
+        it = gen.generate(prompt_ids, max_new_tokens=new_tokens)
+        while True:
+            try:
+                next(it)
+            except StopIteration as e:
+                _out, gen_prefill_dur, gen_step_dur = e.value
+                gen_prefill_times.append(float(gen_prefill_dur))
+                gen_step_times.append(float(gen_step_dur))
+                break
+
     # Metrics
     prefill_tps = [prompt_len / t for t in prefill_times]
     step_tps = [new_tokens / t for t in step_times]
+    gen_prefill_tps = [prompt_len / t for t in gen_prefill_times]
+    gen_step_tps = [new_tokens / t for t in gen_step_times]
 
     prefill_mean, prefill_ci = mean_ci(prefill_tps)
     step_mean, step_ci = mean_ci(step_tps)
+    gen_prefill_mean, gen_prefill_ci = mean_ci(gen_prefill_tps)
+    gen_step_mean, gen_step_ci = mean_ci(gen_step_tps)
 
     return {
         "prefill_times": prefill_times,
         "step_times": step_times,
+        "gen_prefill_times": gen_prefill_times,
+        "gen_step_times": gen_step_times,
         "prefill_tps": prefill_tps,
         "step_tps": step_tps,
+        "gen_prefill_tps": gen_prefill_tps,
+        "gen_step_tps": gen_step_tps,
         "prefill_mean_tps": prefill_mean,
         "prefill_ci_tps": prefill_ci,
         "step_mean_tps": step_mean,
         "step_ci_tps": step_ci,
+        "gen_prefill_mean_tps": gen_prefill_mean,
+        "gen_prefill_ci_tps": gen_prefill_ci,
+        "gen_step_mean_tps": gen_step_mean,
+        "gen_step_ci_tps": gen_step_ci,
     }
 
 
@@ -317,6 +346,8 @@ def main():
     tg_reps = f"{int(args.reps_steps)}"
     prefill_str = f"{results['prefill_mean_tps']:.2f} ± {results['prefill_ci_tps']:.2f}"
     step_str = f"{results['step_mean_tps']:.2f} ± {results['step_ci_tps']:.2f}"
+    gen_prefill_str = f"{results['gen_prefill_mean_tps']:.2f} ± {results['gen_prefill_ci_tps']:.2f}"
+    gen_step_str = f"{results['gen_step_mean_tps']:.2f} ± {results['gen_step_ci_tps']:.2f}"
 
     static_cells = [
         pad(str(src_name), cols[0][1], cols[0][2]),
@@ -338,8 +369,26 @@ def main():
         pad(step_str, cols[7][1], cols[7][2]),
     ]) + " |"
 
+    # Generator-based rows
+    ppG_name = f"ppG{int(args.prompt_length)}"
+    tgG_name = f"tgG{int(args.new_tokens)}"
+
+    row_ppG = "| " + " | ".join(static_cells + [
+        pad(ppG_name, cols[5][1], cols[5][2]),
+        pad(pp_reps, cols[6][1], cols[6][2]),
+        pad(gen_prefill_str, cols[7][1], cols[7][2]),
+    ]) + " |"
+
+    row_tgG = "| " + " | ".join(static_cells + [
+        pad(tgG_name, cols[5][1], cols[5][2]),
+        pad(tg_reps, cols[6][1], cols[6][2]),
+        pad(gen_step_str, cols[7][1], cols[7][2]),
+    ]) + " |"
+
     print(row_pp)
     print(row_tg)
+    print(row_ppG)
+    print(row_tgG)
 
     print()
     print("Notes: t/s is mean ± 95% CI across repetitions. Synthetic random prompt tokens used.")
