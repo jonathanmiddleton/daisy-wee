@@ -83,7 +83,7 @@ class PrecisionRunner:
             return model, False, str(e)
 
     def _load_model(self, checkpoint: str, device: str) -> tuple[torch.nn.Module, Dict[str, Any]]:
-        m, h = model_from_checkpoint(checkpoint, device=device) if (checkpoint,device) not in self.cached_models else self.cached_models[checkpoint]
+        m, h = model_from_checkpoint(checkpoint, device=device) if (checkpoint,device) not in self.cached_models else self.cached_models[(checkpoint,device)]
         self.cached_models[(checkpoint,device)] = (m, h)
         m.eval()
         return m, h

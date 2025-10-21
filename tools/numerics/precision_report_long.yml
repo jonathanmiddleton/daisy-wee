@@ -11,7 +11,7 @@ decoding:
     enabled: true
   mode_closed_loop:
     enabled: true
-    max_new_tokens: 256
+    max_new_tokens: 128
 sampling:
   temperature: 0.0
   top_p: 1.0
@@ -25,7 +25,7 @@ dataset:
   shard_pattern: "data/fineweb/fineweb_train_000001.bin" # or: path: "prompts.jsonl"
   max_prompts: 500
   min_prompts: 50
-  length_buckets: [64, 512, 2048]
+  length_buckets: [8, 64]
 metrics:
   topk: [1, 5, 10]
   margin_bins: [0.1, 0.5, 1.0]

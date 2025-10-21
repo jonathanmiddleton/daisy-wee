@@ -128,7 +128,7 @@ class GPT2Core(nn.Module):
             loss += F.cross_entropy(15 * logits * torch.rsqrt(logits.square() + 225), target_seq.chunk(4)[i]) / 4
         return loss
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def step(self, token_id: Tensor, k_ctxs, v_ctxs, pos: int, window: int):
         assert token_id.ndim == 0
         B = 1
@@ -169,7 +169,7 @@ class GPT2Core(nn.Module):
         logits = F.linear(x.flatten(end_dim=1).bfloat16(), self.lm_head_w.bfloat16()).float()
         return logits, k_new_list, v_new_list
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def prefill_batch(self, input_ids: Tensor, window: int | None = None, debug: bool = False):
         assert input_ids.ndim == 2
         B, T = input_ids.shape
