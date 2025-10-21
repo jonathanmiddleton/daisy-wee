@@ -5,6 +5,53 @@ import torch.nn.functional as F
 from inference.kv_cache import KVCache
 from tools.helpers import measure_time
 
+def _topk_filter(x, k):
+    if k is None or k <= 0 or k >= x.size(-1):
+        return x
+    v, i = torch.topk(x, k)
+    y = torch.full_like(x, float("-inf"))
+    y.scatter_(dim=-1, index=i, src=v)
+    return y
+
+def _topp_filter(x, p):
+    if p is None or p <= 0.0 or p >= 1.0:
+        return x
+    probs = F.softmax(x, dim=-1)
+    s, i = torch.sort(probs, descending=True)
+    c = torch.cumsum(s, dim=-1)
+    m = c <= p
+    m[..., 0] = True
+    keep = i[m]
+    y = torch.full_like(x, float("-inf"))
+    y.scatter_(dim=-1, index=keep, src=x[keep])
+    return y
+
+def _gumbel(shape, device, dtype, generator=None):
+    u = torch.rand(shape, device=device, dtype=dtype, generator=generator)
+    return -torch.log(-torch.log(u.clamp_min_(1e-6)))
+
+def sample_device(logits, temperature=1.0, top_k=None, top_p=None, generator=None):
+    x = logits if temperature == 1.0 else logits / max(temperature, 1e-6)
+    x = _topk_filter(x, top_k)
+    x = _topp_filter(x, top_p)
+    g = _gumbel(x.shape, x.device, x.dtype, generator)
+    return torch.argmax(x + g, dim=-1)
+
+def repetition_penalty_device(logits, prev_ids, rep_p, rep_w=128, rep_h=140.0, cap=3.0):
+    if rep_p == 1.0 or prev_ids is None or prev_ids.numel() == 0:
+        return logits
+    prev = prev_ids[-rep_w:]
+    d = torch.arange(prev.numel(), 0, -1, device=logits.device, dtype=logits.dtype)
+    w = (0.5 ** (d / rep_h))
+    h = torch.zeros_like(logits)
+    h.scatter_add_(0, prev, w)
+    h = h.clamp_max_(cap)
+    pos = logits > 0
+    x = torch.empty_like(logits)
+    x[pos] = logits[pos] / rep_p.pow(h[pos])
+    x[~pos] = logits[~pos] * rep_p.pow(h[~pos])
+    return x
+
 
 def _apply_repetition_penalty(logits, prev_ids, rep_p, rep_w=128, rep_h=140.0, cap=3.0):
     if rep_p == 1.0 or prev_ids is None or prev_ids.numel() == 0:
@@ -19,6 +66,7 @@ def _apply_repetition_penalty(logits, prev_ids, rep_p, rep_w=128, rep_h=140.0, c
 
 class Generator:
     def __init__(self, model, window, device=None, dtype=torch.bfloat16, temperature=1.0, top_k=None, top_p=None, repetition_penalty=1.0, eos_token_id=None, seed=None):
+        assert eos_token_id is not None
         self.model = model.eval()
         self.device = next(model.parameters()).device if device is None else device
         assert self.device is not None
@@ -34,7 +82,7 @@ class Generator:
         self.top_k = top_k
         self.top_p = top_p
         self.repetition_penalty = repetition_penalty
-        self.eos_token_id = eos_token_id
+        self.eos_token_id = torch.tensor(eos_token_id, device=self.device)
         self.history = torch.empty(0, dtype=torch.long, device=self.device)
         self.window = window
         self.vocab_size = self.model.embed.num_embeddings
@@ -71,6 +119,21 @@ class Generator:
         self.history = torch.cat([self.history, prompt_ids], dim=0)
         return logits
 
+    def _step_device(self, token: torch.Tensor):
+        k_ctxs, v_ctxs = [], []
+        for i in range(len(self.model.blocks)):
+            kc, vc = self.cache.view(i)
+            k_ctxs.append(kc); v_ctxs.append(vc)
+        with self.amp_ctx:
+            logits, k_new, v_new = self.model.step(token, k_ctxs, v_ctxs, self.cache.t, self.window)
+        logits = logits[..., :self.vocab_size]
+        for i in range(len(self.model.blocks)):
+            if k_new[i] is not None:
+                self.cache.write(i, k_new[i], v_new[i])
+        self.cache.advance()
+        self.history = torch.cat([self.history, token.view(1)], dim=0)
+        return logits
+
     def _step(self, token_id):
         k_ctxs, v_ctxs = [], []
         for i in range(len(self.model.blocks)):
@@ -87,7 +150,8 @@ class Generator:
         self.history = torch.cat([self.history, token.view(1)], dim=0)
         return logits
 
-    def generate(self, prompt_ids: torch.Tensor, max_new_tokens, seed=None) -> Generator[int, None, tuple[list[int], float, float]]:
+
+    def generate(self, prompt_ids: torch.Tensor, max_new_tokens, seed=None) -> Generator[torch.Tensor, None, tuple[list[int], float, float]]:
         if seed is not None:
             self.set_seed(seed)
         assert prompt_ids.ndim == 1
@@ -102,16 +166,24 @@ class Generator:
         out = list(self.history.tolist())
         step_duration = 0
         for _ in range(max_new_tokens):
+            # with torch.inference_mode():
+            #     next_id = self._sample(logits[0])
+            #     if self.eos_token_id is not None and next_id == self.eos_token_id:
+            #         break
+            # yield next_id
+            # with torch.inference_mode():
+            #     with measure_time() as step_time:
+            #         logits = self._step(next_id)
+            #     step_duration += step_time()
+            #     out.append(int(next_id))
             with torch.inference_mode():
-                next_id = self._sample(logits[0])
-                if self.eos_token_id is not None and next_id == self.eos_token_id:
-                    break
-            yield next_id
-            with torch.inference_mode():
+                logits = repetition_penalty_device(logits[-1], self.history, self.repetition_penalty)
+                tok = sample_device(logits, self.temperature, self.top_k, self.top_p, self.rng)
+                self.history = torch.cat([self.history, tok.view(1)], dim=0)
                 with measure_time() as step_time:
-                    logits = self._step(next_id)
+                    logits = self._step_device(tok)
                 step_duration += step_time()
-                out.append(int(next_id))
+                out.append(int(tok))
 
         return out, prefill_duration, step_duration
 
