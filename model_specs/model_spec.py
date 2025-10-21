@@ -72,11 +72,8 @@ def load_model_spec(name_or_path: str) -> dict[str, Any]:
     Returns a dict (to be merged into training config where relevant).
     """
     # Resolve path
-    p = Path(name_or_path)
-    if not p.exists():
-        p = Path("") / (name_or_path if name_or_path.endswith(".yml") else f"{name_or_path}.yml")
-    if not p.exists():
-        raise FileNotFoundError(f"Model spec not found: {name_or_path!r} (resolved: {p})")
+    from . import resolve_model_spec_path
+    p = resolve_model_spec_path(name_or_path)
 
     with open(p, "r") as f:
         spec = yaml.safe_load(f) or {}

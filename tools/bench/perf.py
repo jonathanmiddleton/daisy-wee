@@ -79,7 +79,7 @@ decode = lambda l: enc.decode(l)
 prompt_prefix = "### Instruction:\n Complete the following story which begins:\n"
 prompt_suffix = "\n\n### Response:\n"
 
-with open("../data/the_time_machine.txt") as f:
+with open("data/the_time_machine.txt") as f:
     TEXT = f.read()
 
 import contextlib

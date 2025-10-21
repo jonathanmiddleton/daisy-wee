@@ -43,8 +43,8 @@ device = cli.device
 model, hparams = model_from_checkpoint(cli.checkpoint, device=device)
 model.eval()
 
-if device != 'cpu':
-    model = torch.compile(model, dynamic=True)
+# if device != 'cpu':
+#     model = torch.compile(model, dynamic=True)
 enc = tiktoken.get_encoding("gpt2")
 encode = lambda s: enc.encode(s, allowed_special={"<|endoftext|>"})
 decode = lambda l: enc.decode(l)
