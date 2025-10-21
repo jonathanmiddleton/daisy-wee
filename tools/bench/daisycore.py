@@ -14,6 +14,7 @@ from model_specs.model_spec import load_model_spec
 from tools.checkpoint import model_from_checkpoint
 from inference.kv_cache import KVCache
 
+dtype = torch.bfloat16
 
 def _devtype(device: str) -> str:
     if str(device).startswith("cuda"):
@@ -66,7 +67,6 @@ def build_cache(model: nn.Module, window: int, device: str, dtype: torch.dtype) 
     cache = KVCache(L=L, B=1, H=h, W=window, D=d, device=device, dtype=dtype)
     return cache
 
-
 def run_benchmark(
     model: nn.Module,
     window: int,
@@ -75,7 +75,7 @@ def run_benchmark(
     new_tokens: int,
     prefill_reps: int,
     step_reps: int,
-    amp_dtype: Optional[torch.dtype] = torch.bfloat16,
+    amp_dtype: Optional[torch.dtype] = dtype,
     compile_model: bool = True,
     seed: int = 1234,
 ):
@@ -92,10 +92,10 @@ def run_benchmark(
         model = torch.compile(model, dynamic=True)  # type: ignore[assignment]
 
     # Warmup: one prefill + a few steps
-    cache = build_cache(model, window, device, dtype=torch.bfloat16)
+    cache = build_cache(model, window, device, dtype=dtype)
     with amp_ctx:
         _logits, kv = model.prefill_batch(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
-    cache.bulk_write_packed(kv.bfloat16(), pos=prompt_len, window=window)
+    cache.bulk_write_packed(kv.to(dtype), pos=prompt_len, window=window)
     logits = _logits
     for _ in range(min(8, new_tokens)):
         # views
@@ -119,7 +119,7 @@ def run_benchmark(
             t0 = time.perf_counter()
             with amp_ctx:
                 _logits, kv = model.prefill_batch(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
-            cache.bulk_write_packed(kv.bfloat16(), pos=prompt_len, window=window)
+            cache.bulk_write_packed(kv.to(dtype), pos=prompt_len, window=window)
             t1 = time.perf_counter()
         prefill_times.append(t1 - t0)
 
@@ -129,7 +129,7 @@ def run_benchmark(
         cache.reset()
         with amp_ctx:
             _logits, kv = model.prefill_batch(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
-        cache.bulk_write_packed(kv.bfloat16(), pos=prompt_len, window=window)
+        cache.bulk_write_packed(kv.to(dtype), pos=prompt_len, window=window)
         logits = _logits
         with cuda_sync(device):
             t0 = time.perf_counter()
@@ -172,11 +172,11 @@ def main():
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("--checkpoint", type=str, help="Path to checkpoint .pt file")
     src.add_argument("--model-spec", type=str, help="Model spec name or YAML path")
-    p.add_argument("--prompt-length", type=int, default=1024, help="Prompt length (tokens)")
-    p.add_argument("--new-tokens", type=int, default=256, help="Number of tokens to generate via step")
-    p.add_argument("--prefill-reps", type=int, default=5, help="Number of prefill repetitions")
-    p.add_argument("--step-reps", type=int, default=5, help="Number of step repetitions")
-    p.add_argument("--device", type=str, default=("cuda" if torch.cuda.is_available() else ("mps" if torch.mps.is_available() else "cpu")), help="Device, e.g. cpu, mps, cuda, cuda:0")
+    p.add_argument("-pg", "--prompt-length", type=int, default=1024, help="Prompt length (tokens)")
+    p.add_argument("-tg", "--new-tokens", type=int, default=256, help="Number of tokens to generate")
+    p.add_argument("-rp", "--reps-prefill", type=int, default=10, help="Number of prefill repetitions")
+    p.add_argument("-rs", "--reps-steps", type=int, default=10, help="Number of token generation repetitions")
+    p.add_argument("-d", "--device", type=str, default=("cuda" if torch.cuda.is_available() else ("mps" if torch.mps.is_available() else "cpu")), help="Device, e.g. cpu, mps, cuda, cuda:0")
     p.add_argument("--window", type=int, default=None, help="Attention window override (defaults from checkpoint/spec)")
     p.add_argument("--no-compile", action="store_true", help="Disable torch.compile even if available")
     p.add_argument("--seed", type=int, default=1234, help="Random seed for synthetic prompt")
@@ -203,10 +203,9 @@ def main():
         window = int(args.window)
 
     model.eval()
-    # Use bfloat16 embeddings to match runtime elsewhere
     for m in model.modules():
         if isinstance(m, nn.Embedding):
-            m.bfloat16()
+            m.to(dtype)
 
     results = run_benchmark(
         model=model,
@@ -214,15 +213,12 @@ def main():
         device=device,
         prompt_len=int(args.prompt_length),
         new_tokens=int(args.new_tokens),
-        prefill_reps=int(args.prefill_reps),
-        step_reps=int(args.step_reps),
-        amp_dtype=torch.bfloat16 if _devtype(device) != 'cpu' else None,
+        prefill_reps=int(args.reps_prefill),
+        step_reps=int(args.reps_steps),
+        amp_dtype=dtype,
         compile_model=not args.no_compile,
         seed=int(args.seed),
     )
-
-    # Render table in llama-bench style
-    # Columns: | model | size | params | backend | threads | test | t/s |
 
     def human_params(n: int) -> str:
         if n >= 1_000_000_000:
@@ -298,6 +294,7 @@ def main():
         ("backend", 18, 'l'),
         ("threads", 8, 'r'),
         ("test", 12, 'r'),
+        ("reps", 5, 'r'),
         ("t/s", 21, 'r'),
     ]
 
@@ -316,6 +313,8 @@ def main():
     # Rows: prefill and token generation
     pp_name = f"pp{int(args.prompt_length)}"
     tg_name = f"tg{int(args.new_tokens)}"
+    pp_reps = f"{int(args.reps_prefill)}"
+    tg_reps = f"{int(args.reps_steps)}"
     prefill_str = f"{results['prefill_mean_tps']:.2f} ± {results['prefill_ci_tps']:.2f}"
     step_str = f"{results['step_mean_tps']:.2f} ± {results['step_ci_tps']:.2f}"
 
@@ -329,12 +328,14 @@ def main():
 
     row_pp = "| " + " | ".join(static_cells + [
         pad(pp_name, cols[5][1], cols[5][2]),
-        pad(prefill_str, cols[6][1], cols[6][2]),
+        pad(pp_reps, cols[6][1], cols[6][2]),
+        pad(prefill_str, cols[7][1], cols[7][2]),
     ]) + " |"
 
     row_tg = "| " + " | ".join(static_cells + [
         pad(tg_name, cols[5][1], cols[5][2]),
-        pad(step_str, cols[6][1], cols[6][2]),
+        pad(tg_reps, cols[6][1], cols[6][2]),
+        pad(step_str, cols[7][1], cols[7][2]),
     ]) + " |"
 
     print(row_pp)
