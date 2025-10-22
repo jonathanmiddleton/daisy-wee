@@ -150,18 +150,19 @@ if cli.chat:
         effective_user = remaining if len(updates) > 0 else user
         prompt_text = transcript + template.format(prompt=effective_user)
         start_ids = encode(prompt_text)
-        X = tensor(start_ids, dtype=torch.long, device=device)
-        gen_iter = gen.generate(X, max_new_tokens=cli.max_tokens)
-        print(f"Assistant: ", end="", flush=True)
-        sys.stdout.flush()
-
-        try:
-            while True:
-                t = next(gen_iter)
-                print_token(t)
-        except StopIteration as e:
-            out_ids, pre_time, step_time = e.value
-        new_ids = out_ids[len(start_ids):]
+        with torch.inference_mode():
+            X = tensor(start_ids, dtype=torch.long, device=device)
+            gen_iter = gen.generate(X, max_new_tokens=cli.max_tokens)
+            print(f"Assistant: ", end="", flush=True)
+            sys.stdout.flush()
+            try:
+                while True:
+                    t = next(gen_iter)
+                    print_token(int(t))
+            except StopIteration as e:
+                (out_ids, pre_time, step_time) = e.value
+            out_ids = out_ids.tolist()
+            new_ids = out_ids[len(start_ids):]
         pre_tps = len(start_ids) / pre_time
         step_tps = len(new_ids) / step_time
         reply = decode(new_ids).strip()
@@ -173,8 +174,8 @@ else:
     prompt = template.format(prompt=cli.prompt)
     start_ids = encode(prompt)
     with torch.inference_mode():
-        x = tensor(start_ids, dtype=torch.long, device=device)
-        gen_iter = gen.generate(x, max_new_tokens=cli.max_tokens)
+        X = tensor(start_ids, dtype=torch.long, device=device)
+        gen_iter = gen.generate(X, max_new_tokens=cli.max_tokens)
         try:
             while True:
                 t = next(gen_iter)

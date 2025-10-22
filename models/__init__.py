@@ -6,6 +6,15 @@ from dataclasses import is_dataclass, asdict as dc_asdict, fields as dc_fields
 from torch import nn
 from model_specs import load_model_spec, ModelSpec
 
+def _coerce_module_path(path: str):
+    if path == "models.gpt2.gpt_core":
+        return "models.daisy.daisy_core"
+    return path
+
+def _coerce_model_name(model_name: str):
+    if model_name == "GPT2Core":
+        return "DaisyCore"
+    return model_name
 
 def get_model_class(model_class: str) -> Type[nn.Module]:
     """Import and return a model class given its fully-qualified class name.
@@ -16,8 +25,8 @@ def get_model_class(model_class: str) -> Type[nn.Module]:
     if "." not in model_class:
         raise ValueError("model_class must be a fully-qualified class name like 'models.daisy.daisy_core.DaisyCore'")
     module_path, cls_name = model_class.rsplit(".", 1)
-    mod = import_module(module_path)
-    cls = getattr(mod, cls_name, None)
+    mod = import_module(_coerce_module_path(module_path))
+    cls = getattr(mod, _coerce_model_name(cls_name), None)
     if cls is None:
         raise ImportError(f"Class '{cls_name}' not found in module '{module_path}' for model_class '{model_class}'")
     return cls
