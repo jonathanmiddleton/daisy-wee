@@ -125,7 +125,7 @@ for cfg in combinations:
     top_k = int(cfg['top_k']) if cfg['top_k'] is not None else None
     top_p = float(cfg['top_p']) if cfg['top_p'] is not None else None
     repetition_penalty = float(cfg['repetition_penalty'])
-    seed = int(cfg['seed']) if cfg['seed'] is not None else None
+    seed = int(cfg['seed']) if cfg['seed'] is not None else 1337
     max_tokens = int(cfg['max_tokens'])
 
     if last_device != device or model is None:
@@ -151,12 +151,12 @@ for cfg in combinations:
     gen = Generator(
         model=model,
         window=int(hparams['train_attention_window_len']),
+        seed=seed,
         eos_token_id=hparams['eos_token_id'],
         temperature=temperature,
         top_k=top_k,
         top_p=top_p,
         repetition_penalty=repetition_penalty,
-        seed=seed,
         device=device,
     )
 

@@ -169,7 +169,7 @@ def run_benchmark(
     # Generator-based timings using Generator.generate()
     gen_prefill_times: list[float] = []
     gen_step_times: list[float] = []
-    gen = Generator(model, window=window, device=device, dtype=dtype, temperature=0.0, seed=seed)
+    gen = Generator(model, window=window, seed=1337, device=device, dtype=dtype, temperature=0.0)
     with torch.inference_mode():
         for _ in range(step_reps):
             gen.reset()

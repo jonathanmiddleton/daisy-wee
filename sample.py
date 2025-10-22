@@ -63,12 +63,12 @@ template = "### Instruction:\n{prompt}\n\n### Response:\n" if use_instruct else 
 gen = Generator(
     model=model,
     window=int(hparams['train_attention_window_len']),
+    seed=cli.seed,
     eos_token_id=hparams['eos_token_id'],
     temperature=cli.temperature,
     top_k=cli.top_k,
     top_p=cli.top_p,
     repetition_penalty=cli.repetition_penalty,
-    seed=cli.seed,
     device=device,
 )
 

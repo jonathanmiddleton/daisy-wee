@@ -111,7 +111,7 @@ def dummy_env(device_override: str | None = None):
     model = DummyModel(vocab_size=vocab_size, num_layers=num_layers, num_heads=H, head_dim=D).eval()
     device = torch.device(device_override or ("cuda" if torch.cuda.is_available() else "cpu"))
     model.to(device)
-    gen = Generator(model, window=8, device=device, dtype=torch.bfloat16, temperature=0.0)
+    gen = Generator(model, window=8, seed=1337, device=device, dtype=torch.bfloat16, temperature=0.0)
     return model, gen, device, vocab_size
 
 
@@ -196,7 +196,7 @@ def test_sample_behaviors():
             Block = type("Block", (), {"attn": Attn()})
             self.blocks = [Block()]
             self.embed = type("E", (), {"num_embeddings": V})()
-    gen = Generator(model=Minimal(vocab), window=4, device=device, dtype=torch.bfloat16)
+    gen = Generator(model=Minimal(vocab), window=4, seed=1337, device=device, dtype=torch.bfloat16)
     gen.history = torch.tensor([1, 2, 3, 2, 1], dtype=torch.long)
 
     # Temperature 0 picks argmax

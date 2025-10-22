@@ -34,7 +34,7 @@ def test_step_equals_forward_when_window_covers_all(T, window):
         logits_f_last = logits_f[T-1, :vocab_size]
 
         # incremental path
-        gen = Generator(model, window=window, device=device, dtype=torch.bfloat16,
+        gen = Generator(model, window=window, seed=1337, device=device, dtype=torch.bfloat16,
                         temperature=0.0, top_k=None, top_p=None, repetition_penalty=1.0)
         logits_s = gen._prefill(idx[0])  # last-step logits
 
