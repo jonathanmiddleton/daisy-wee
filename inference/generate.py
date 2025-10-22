@@ -1,5 +1,4 @@
-from typing import Generator, Callable
-
+from typing import Generator
 import torch
 import torch.nn.functional as F
 from inference.kv_cache import KVCache
@@ -66,6 +65,8 @@ def _apply_repetition_penalty(logits, prev_ids, rep_p, rep_w=128, rep_h=140.0, c
 
 class Generator:
     def __init__(self, model, window, device=None, dtype=torch.bfloat16, temperature=1.0, top_k=None, top_p=None, repetition_penalty=1.0, eos_token_id=None, seed=None):
+        if eos_token_id is None:
+            eos_token_id = getattr(model, "eos_token_id", None)
         assert eos_token_id is not None
         self.model = model.eval()
         self.device = next(model.parameters()).device if device is None else device
@@ -150,8 +151,8 @@ class Generator:
         self.history = torch.cat([self.history, token.view(1)], dim=0)
         return logits
 
-
-    def generate(self, prompt_ids: torch.Tensor, max_new_tokens, seed=None) -> Generator[torch.Tensor, None, tuple[list[int], float, float]]:
+    def generate(self, prompt_ids: torch.Tensor, max_new_tokens, seed=None) -> Generator[torch.Tensor, None, tuple[torch.Tensor, float, float]]:
+        assert torch.is_inference_mode_enabled(), "Inference mode must be enabled."
         if seed is not None:
             self.set_seed(seed)
         assert prompt_ids.ndim == 1
@@ -159,32 +160,18 @@ class Generator:
         assert prompt_ids.size(0) <= self.window, "prompt length must be <= attention window"
         assert prompt_ids.size(0)
         prompt_ids = prompt_ids[self.history.size(0):]
-        with torch.inference_mode():
-            with measure_time() as pre_time:
-                logits = self._prefill(prompt_ids)
+        with measure_time() as pre_time:
+            logits = self._prefill(prompt_ids)
         prefill_duration = pre_time()
-        out = list(self.history.tolist())
         step_duration = 0
         for _ in range(max_new_tokens):
-            # with torch.inference_mode():
-            #     next_id = self._sample(logits[0])
-            #     if self.eos_token_id is not None and next_id == self.eos_token_id:
-            #         break
-            # yield next_id
-            # with torch.inference_mode():
-            #     with measure_time() as step_time:
-            #         logits = self._step(next_id)
-            #     step_duration += step_time()
-            #     out.append(int(next_id))
-            with torch.inference_mode():
-                logits = repetition_penalty_device(logits[-1], self.history, self.repetition_penalty)
-                tok = sample_device(logits, self.temperature, self.top_k, self.top_p, self.rng)
-                self.history = torch.cat([self.history, tok.view(1)], dim=0)
-                with measure_time() as step_time:
-                    logits = self._step_device(tok)
-                step_duration += step_time()
-                out.append(int(tok))
-
+            logits = repetition_penalty_device(logits[-1], self.history, self.repetition_penalty)
+            tok = sample_device(logits, self.temperature, self.top_k, self.top_p, self.rng)
+            with measure_time() as step_time:
+                logits = self._step_device(tok)
+            step_duration += step_time()
+            yield tok.view(1)
+        out = self.history.detach().clone()
         return out, prefill_duration, step_duration
 
     def _sample(self, logits_1xb):

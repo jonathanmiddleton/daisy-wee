@@ -23,6 +23,7 @@ class DummyBlock(nn.Module):
 class DummyModel(nn.Module):
     def __init__(self, vocab_size: int, num_layers: int = 2, num_heads: int = 1, head_dim: int | None = None):
         super().__init__()
+        self.eos_token_id = 50256
         H = int(num_heads)
         D = vocab_size if head_dim is None else int(head_dim)
         # Identity-like embedding to produce one-hot vectors for simplicity when D == vocab_size
@@ -189,6 +190,7 @@ def test_sample_behaviors():
     class Minimal(nn.Module):
         def __init__(self, V):
             super().__init__()
+            self.eos_token_id = 50256
             # Provide one dummy block with attention metadata so KVCache can initialize
             Attn = type("Attn", (), {"num_heads": 1, "head_dim": 1})
             Block = type("Block", (), {"attn": Attn()})
@@ -236,8 +238,9 @@ def test_generate_end_to_end(dummy_env):
     prompt = torch.tensor([4, 1, 4], dtype=torch.long, device=device)
     # Greedy sampling: next token == last prompt token (4), then repeats
     tokens = []
-    for t in gen.generate(prompt, max_new_tokens=3):
-        tokens.append(t)
+    with torch.inference_mode():
+        for t in gen.generate(prompt, max_new_tokens=3):
+            tokens.append(int(t))
     # tokens yielded only contain generated ids
     assert tokens == [4, 4, 4]
     # Final return from generator
@@ -245,10 +248,12 @@ def test_generate_end_to_end(dummy_env):
     g = gen.generate(prompt, max_new_tokens=2)
     gen_tokens = []
     try:
-        while True:
-            gen_tokens.append(next(g))
+        with torch.inference_mode():
+            while True:
+                gen_tokens.append(int(next(g)))
     except StopIteration as e:
         out, pre_dur, step_dur = e.value
+    out = out.tolist()
     # Ensure the yielded tokens were as expected
     assert gen_tokens == [4, 4]
     assert out[:len(prompt)] == prompt.tolist()

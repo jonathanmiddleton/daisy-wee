@@ -265,6 +265,7 @@ class PrecisionRunner:
                     out_ids.append(int(t))
             except StopIteration as e:
                 (full_out, prefill_dur, step_dur) = e.value
+                full_out = full_out.tolist()
                 # full_out contains history prompt + generated
                 out_ids = full_out[len(toks):]
             gens_rows.append({"prompt_id": p.id, "case_id": case.case_id, "output_ids": out_ids})
@@ -327,6 +328,7 @@ class PrecisionRunner:
                     out_ids.append(int(t))
             except StopIteration as e:
                 (full_out, _, _) = e.value
+                full_out = full_out.tolist()
                 out_ids = full_out[len(toks):]
             ref_outs[p.id] = out_ids
         return model, logits_map, ref_outs, hparams

@@ -26,7 +26,6 @@ parser.add_argument("--top_p", type=str, default="0.95", help="Top-p sampling (a
 parser.add_argument("-rp", "--repetition_penalty", type=str, default="1.25", help="Repetition penalty (allow comma-separated)")
 parser.add_argument("-s", "--seed", type=str, default="1337", help="Random seed for deterministic sampling (allow comma-separated)")
 parser.add_argument("--max_tokens", type=str, default="256", help="Number of new tokens to generate (allow comma-separated)")
-
 parser.add_argument(
     "-d",
     "--device",
@@ -162,15 +161,17 @@ for cfg in combinations:
     )
 
     # Warmup to trigger compilation / kernels
-    warmup_iter = gen.generate(X, max_new_tokens=16)
+    generate = torch.compile(gen.generate)
+    warmup_iter = generate(X, max_new_tokens=16)
     try:
-        while True:
-            next(warmup_iter)
+        with torch.inference_mode():
+            while True:
+                next(warmup_iter)
     except StopIteration:
         pass
 
     gen.reset()
-    it = gen.generate(X, max_new_tokens=max_tokens)
+    it = generate(X, max_new_tokens=max_tokens)
     with cuda_sync(device):
         t0 = time.time()
         try:

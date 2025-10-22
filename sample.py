@@ -43,8 +43,8 @@ device = cli.device
 model, hparams = model_from_checkpoint(cli.checkpoint, device=device)
 model.eval()
 
-# if device != 'cpu':
-#     model = torch.compile(model, dynamic=True)
+if device != 'cpu':
+    model = torch.compile(model, dynamic=False)
 enc = tiktoken.get_encoding("gpt2")
 encode = lambda s: enc.encode(s, allowed_special={"<|endoftext|>"})
 decode = lambda l: enc.decode(l)
@@ -172,15 +172,17 @@ else:
     # Single-shot sample
     prompt = template.format(prompt=cli.prompt)
     start_ids = encode(prompt)
-    x = tensor(start_ids, dtype=torch.long, device=device)
-    gen_iter = gen.generate(x, max_new_tokens=cli.max_tokens)
-    try:
-        while True:
-            t = next(gen_iter)
-            print_token(t)
-    except StopIteration as e:
-        (out_ids, pre_time, step_time) = e.value
-    new_ids = out_ids[len(start_ids):]
+    with torch.inference_mode():
+        x = tensor(start_ids, dtype=torch.long, device=device)
+        gen_iter = gen.generate(x, max_new_tokens=cli.max_tokens)
+        try:
+            while True:
+                t = next(gen_iter)
+                print_token(int(t))
+        except StopIteration as e:
+            (out_ids, pre_time, step_time) = e.value
+        out_ids = out_ids.tolist()
+        new_ids = out_ids[len(start_ids):]
     pre_tps = len(start_ids) / pre_time
     step_tps = len(new_ids) / step_time
     print(f"\n({step_tps:.1f} step tokens/s, {pre_tps:.1f} prefill tokens/s)\n\n")

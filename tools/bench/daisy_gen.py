@@ -5,6 +5,7 @@ import os
 import statistics as stats
 from pathlib import Path
 from typing import Optional
+import contextlib
 
 import torch
 from torch import nn
@@ -16,6 +17,22 @@ from inference.kv_cache import KVCache
 from inference.generate import Generator
 
 dtype = torch.bfloat16
+
+@contextlib.contextmanager
+def dev_sync(device: str):
+    is_cuda = torch.cuda.is_available() and str(device).startswith("cuda")
+    is_mps = hasattr(torch, "mps") and torch.mps.is_available() and str(device).startswith("mps")
+    if is_cuda:
+        torch.cuda.synchronize()
+    elif is_mps:
+        torch.mps.synchronize()
+    try:
+        yield
+    finally:
+        if is_cuda:
+            torch.cuda.synchronize()
+        elif is_mps:
+            torch.mps.synchronize()
 
 def _devtype(device: str) -> str:
     if str(device).startswith("cuda"):
@@ -90,7 +107,7 @@ def run_benchmark(
     amp_ctx = torch.autocast(device_type=devtype, dtype=amp_dtype) if amp_dtype is not None else _NullCtx()
 
     if compile_model and device != 'cpu':
-        model = torch.compile(model, dynamic=True)  # type: ignore[assignment]
+        model = torch.compile(model, dynamic=False)  # type: ignore[assignment]
 
     # Warmup: one prefill + a few steps
     cache = build_cache(model, window, device, dtype=dtype)
@@ -116,7 +133,7 @@ def run_benchmark(
     prefill_times = []
     for _ in range(prefill_reps):
         cache.reset()
-        with cuda_sync(device):
+        with dev_sync(device):
             t0 = time.perf_counter()
             with amp_ctx:
                 _logits, kv = model.prefill_batch(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
@@ -132,7 +149,7 @@ def run_benchmark(
             _logits, kv = model.prefill_batch(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
         cache.bulk_write_packed(kv.to(dtype), pos=prompt_len, window=window)
         logits = _logits
-        with cuda_sync(device):
+        with dev_sync(device):
             t0 = time.perf_counter()
             for _ in range(new_tokens):
                 k_ctxs, v_ctxs = [], []
@@ -153,17 +170,18 @@ def run_benchmark(
     gen_prefill_times: list[float] = []
     gen_step_times: list[float] = []
     gen = Generator(model, window=window, device=device, dtype=dtype, temperature=0.0, seed=seed)
-    for _ in range(step_reps):
-        gen.reset()
-        it = gen.generate(prompt_ids, max_new_tokens=new_tokens)
-        while True:
-            try:
-                next(it)
-            except StopIteration as e:
-                _out, gen_prefill_dur, gen_step_dur = e.value
-                gen_prefill_times.append(float(gen_prefill_dur))
-                gen_step_times.append(float(gen_step_dur))
-                break
+    with torch.inference_mode():
+        for _ in range(step_reps):
+            gen.reset()
+            it = gen.generate(prompt_ids, max_new_tokens=new_tokens)
+            while True:
+                try:
+                    next(it)
+                except StopIteration as e:
+                    _out, gen_prefill_dur, gen_step_dur = e.value
+                    gen_prefill_times.append(float(gen_prefill_dur))
+                    gen_step_times.append(float(gen_step_dur))
+                    break
 
     # Metrics
     prefill_tps = [prompt_len / t for t in prefill_times]
