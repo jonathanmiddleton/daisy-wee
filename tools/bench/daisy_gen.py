@@ -138,7 +138,7 @@ def run_benchmark(
             with amp_ctx:
                 _logits, kv = model.prefill_batch(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
             cache.bulk_write_packed(kv.to(dtype), pos=prompt_len, window=window)
-            t1 = time.perf_counter()
+        t1 = time.perf_counter()
         prefill_times.append(t1 - t0)
 
     # Step timing (each rep includes fresh cache from prefill to isolate step speed)
@@ -163,7 +163,7 @@ def run_benchmark(
                     if k_new[i] is not None:
                         cache.write(i, k_new[i], v_new[i])
                 cache.advance()
-            t1 = time.perf_counter()
+        t1 = time.perf_counter()
         step_times.append(t1 - t0)
 
     # Generator-based timings using Generator.generate()
