@@ -30,8 +30,8 @@ controls:
   deterministic: true
 dataset:
   shard_pattern: "data/fineweb/fineweb_train_000001.bin"  # or: path: "prompts.jsonl"
-  max_prompts: 8
-  length_buckets: [ 128 ] #64
+  max_prompts: 4
+  length_buckets: [ 4 ] #64
 metrics:
   topk: [1, 5, 10]
   margin_bins: [0.1, 0.5, 1.0]

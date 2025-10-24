@@ -5,6 +5,7 @@ import os
 import statistics as stats
 from pathlib import Path
 from typing import Optional
+import contextlib
 
 import torch
 from torch import nn
@@ -15,7 +16,21 @@ from tools.checkpoint import model_from_checkpoint
 from inference.kv_cache import KVCache
 from inference.generate import Generator
 
-dtype = torch.bfloat16
+@contextlib.contextmanager
+def dev_sync(device: str):
+    is_cuda = torch.cuda.is_available() and str(device).startswith("cuda")
+    is_mps = hasattr(torch, "mps") and torch.mps.is_available() and str(device).startswith("mps")
+    if is_cuda:
+        torch.cuda.synchronize()
+    elif is_mps:
+        torch.mps.synchronize()
+    try:
+        yield
+    finally:
+        if is_cuda:
+            torch.cuda.synchronize()
+        elif is_mps:
+            torch.mps.synchronize()
 
 def _devtype(device: str) -> str:
     if str(device).startswith("cuda"):
@@ -68,6 +83,7 @@ def build_cache(model: nn.Module, window: int, device: str, dtype: torch.dtype) 
     cache = KVCache(L=L, B=1, H=h, W=window, D=d, device=device, dtype=dtype)
     return cache
 
+@torch.inference_mode()
 def run_benchmark(
     model: nn.Module,
     window: int,
@@ -76,7 +92,7 @@ def run_benchmark(
     new_tokens: int,
     prefill_reps: int,
     step_reps: int,
-    amp_dtype: Optional[torch.dtype] = dtype,
+    dtype: torch.dtype,
     compile_model: bool = True,
     seed: int = 1234,
 ):
@@ -87,15 +103,13 @@ def run_benchmark(
     prompt_ids = torch.randint(0, vocab_size, (prompt_len,), dtype=torch.long, device=device)
 
     devtype = _devtype(device)
-    amp_ctx = torch.autocast(device_type=devtype, dtype=amp_dtype) if amp_dtype is not None else _NullCtx()
 
     if compile_model and device != 'cpu':
-        model = torch.compile(model, dynamic=True)  # type: ignore[assignment]
+        model = torch.compile(model, dynamic=False)  # type: ignore[assignment]
 
     # Warmup: one prefill + a few steps
     cache = build_cache(model, window, device, dtype=dtype)
-    with amp_ctx:
-        _logits, kv = model.prefill_batch(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
+    _logits, kv = model.prefill_batch(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
     cache.bulk_write_packed(kv.to(dtype), pos=prompt_len, window=window)
     logits = _logits
     for _ in range(min(8, new_tokens)):
@@ -104,9 +118,8 @@ def run_benchmark(
         for i in range(len(model.blocks)):  # type: ignore[attr-defined]
             kc, vc = cache.view(i)
             k_ctxs.append(kc); v_ctxs.append(vc)
-        with amp_ctx:
-            token = torch.argmax(logits[0, :vocab_size]).to(dtype=torch.long)
-            logits, k_new, v_new = model.step(token, k_ctxs, v_ctxs, cache.t, window)  # type: ignore[attr-defined]
+        token = torch.argmax(logits[0, :vocab_size]).to(dtype=torch.long)
+        logits, k_new, v_new = model.step(token, k_ctxs, v_ctxs, cache.t, window)  # type: ignore[attr-defined]
         for i in range(len(model.blocks)):  # type: ignore[attr-defined]
             if k_new[i] is not None:
                 cache.write(i, k_new[i], v_new[i])
@@ -116,43 +129,40 @@ def run_benchmark(
     prefill_times = []
     for _ in range(prefill_reps):
         cache.reset()
-        with cuda_sync(device):
+        with dev_sync(device):
             t0 = time.perf_counter()
-            with amp_ctx:
-                _logits, kv = model.prefill_batch(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
+            _logits, kv = model.prefill_batch(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
             cache.bulk_write_packed(kv.to(dtype), pos=prompt_len, window=window)
-            t1 = time.perf_counter()
+        t1 = time.perf_counter()
         prefill_times.append(t1 - t0)
 
     # Step timing (each rep includes fresh cache from prefill to isolate step speed)
     step_times = []
     for _ in range(step_reps):
         cache.reset()
-        with amp_ctx:
-            _logits, kv = model.prefill_batch(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
+        _logits, kv = model.prefill_batch(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
         cache.bulk_write_packed(kv.to(dtype), pos=prompt_len, window=window)
         logits = _logits
-        with cuda_sync(device):
+        with dev_sync(device):
             t0 = time.perf_counter()
             for _ in range(new_tokens):
                 k_ctxs, v_ctxs = [], []
                 for i in range(len(model.blocks)):  # type: ignore[attr-defined]
                     kc, vc = cache.view(i)
                     k_ctxs.append(kc); v_ctxs.append(vc)
-                with amp_ctx:
-                    token = torch.argmax(logits[0, :vocab_size]).to(dtype=torch.long)
-                    logits, k_new, v_new = model.step(token, k_ctxs, v_ctxs, cache.t, window)  # type: ignore[attr-defined]
+                token = torch.argmax(logits[0, :vocab_size]).to(dtype=torch.long)
+                logits, k_new, v_new = model.step(token, k_ctxs, v_ctxs, cache.t, window)  # type: ignore[attr-defined]
                 for i in range(len(model.blocks)):  # type: ignore[attr-defined]
                     if k_new[i] is not None:
                         cache.write(i, k_new[i], v_new[i])
                 cache.advance()
-            t1 = time.perf_counter()
+        t1 = time.perf_counter()
         step_times.append(t1 - t0)
 
     # Generator-based timings using Generator.generate()
     gen_prefill_times: list[float] = []
     gen_step_times: list[float] = []
-    gen = Generator(model, window=window, device=device, dtype=dtype, temperature=0.0, seed=seed)
+    gen = Generator(model, window=window, seed=1337, device=device, dtype=dtype, temperature=0.0)
     for _ in range(step_reps):
         gen.reset()
         it = gen.generate(prompt_ids, max_new_tokens=new_tokens)
@@ -201,6 +211,7 @@ def main():
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("--checkpoint", type=str, help="Path to checkpoint .pt file")
     src.add_argument("--model-spec", type=str, help="Model spec name or YAML path")
+    p.add_argument("-dtp", "--dtype", type=str, default="float16", help="Data type [float16, bfloat16, float32]")
     p.add_argument("-pg", "--prompt-length", type=int, default=1024, help="Prompt length (tokens)")
     p.add_argument("-tg", "--new-tokens", type=int, default=256, help="Number of tokens to generate")
     p.add_argument("-rp", "--reps-prefill", type=int, default=10, help="Number of prefill repetitions")
@@ -214,13 +225,15 @@ def main():
 
     device = args.device
 
+    dtype = torch.float16 if args.dtype == "float16" else (torch.bfloat16 if args.dtype == "bfloat16" else torch.float32)
+
     # Load model
     model: nn.Module
     window: int
     src_name: str
     if args.checkpoint:
         model, hparams = model_from_checkpoint(args.checkpoint, device=device)
-        window = int(hparams.get('train_attention_window_len') or hparams.get('attention_window_len') or hparams.get('max_seq_len'))
+        window = int(hparams.get('attention_window_len') or hparams.get('train_attention_window_len'))
         src_name = Path(args.checkpoint).name
     else:
         spec = load_model_spec(args.model_spec)
@@ -232,9 +245,6 @@ def main():
         window = int(args.window)
 
     model.eval()
-    for m in model.modules():
-        if isinstance(m, nn.Embedding):
-            m.to(dtype)
 
     results = run_benchmark(
         model=model,
@@ -244,7 +254,7 @@ def main():
         new_tokens=int(args.new_tokens),
         prefill_reps=int(args.reps_prefill),
         step_reps=int(args.reps_steps),
-        amp_dtype=dtype,
+        dtype=dtype,
         compile_model=not args.no_compile,
         seed=int(args.seed),
     )

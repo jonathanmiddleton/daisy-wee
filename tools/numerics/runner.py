@@ -247,7 +247,7 @@ class PrecisionRunner:
         gens_rows: List[Dict[str, Any]] = []
         div_rows: List[Dict[str, Any]] = []
         window = int(hparams.get("train_attention_window_len", hparams.get("max_seq_len", 2048)))
-        gen = Generator(model=model, window=window, device=case.device, dtype=torch.bfloat16, temperature=0.0, top_k=None, top_p=1.0, eos_token_id=int(hparams["eos_token_id"]))
+        gen = Generator(model=model, window=window, seed=1337, device=case.device, dtype=torch.bfloat16, temperature=0.0, top_k=None, top_p=1.0, eos_token_id=int(hparams["eos_token_id"]))
         # Honor dtype policy by overriding the generator's autocast context
         gen.amp_ctx = self._autocast_ctx(case.device, case.dtype_policy)
         max_new = int(self.cfg.decoding.mode_closed_loop.get("max_new_tokens", 256))
@@ -265,6 +265,7 @@ class PrecisionRunner:
                     out_ids.append(int(t))
             except StopIteration as e:
                 (full_out, prefill_dur, step_dur) = e.value
+                full_out = full_out.tolist()
                 # full_out contains history prompt + generated
                 out_ids = full_out[len(toks):]
             gens_rows.append({"prompt_id": p.id, "case_id": case.case_id, "output_ids": out_ids})
@@ -310,7 +311,7 @@ class PrecisionRunner:
             logits_map[p.id] = [z.detach().cpu() for z in logits_list]
         # Closed-loop greedy reference outputs
         window = int(hparams.get("train_attention_window_len", hparams.get("max_seq_len", 2048)))
-        gen = Generator(model=model, window=window, device=ref_case.device, dtype=torch.bfloat16, temperature=0.0, top_k=None, top_p=1.0, eos_token_id=int(hparams["eos_token_id"]))
+        gen = Generator(model=model, window=window, seed=1337, device=ref_case.device, dtype=torch.bfloat16, temperature=0.0, top_k=None, top_p=1.0, eos_token_id=int(hparams["eos_token_id"]))
         ref_outs: Dict[str, List[int]] = {}
         max_new = int(self.cfg.decoding.mode_closed_loop.get("max_new_tokens", 256))
         for p in prompts:
@@ -327,6 +328,7 @@ class PrecisionRunner:
                     out_ids.append(int(t))
             except StopIteration as e:
                 (full_out, _, _) = e.value
+                full_out = full_out.tolist()
                 out_ids = full_out[len(toks):]
             ref_outs[p.id] = out_ids
         return model, logits_map, ref_outs, hparams

@@ -26,7 +26,6 @@ parser.add_argument("--top_p", type=str, default="0.95", help="Top-p sampling (a
 parser.add_argument("-rp", "--repetition_penalty", type=str, default="1.25", help="Repetition penalty (allow comma-separated)")
 parser.add_argument("-s", "--seed", type=str, default="1337", help="Random seed for deterministic sampling (allow comma-separated)")
 parser.add_argument("--max_tokens", type=str, default="256", help="Number of new tokens to generate (allow comma-separated)")
-
 parser.add_argument(
     "-d",
     "--device",
@@ -126,7 +125,7 @@ for cfg in combinations:
     top_k = int(cfg['top_k']) if cfg['top_k'] is not None else None
     top_p = float(cfg['top_p']) if cfg['top_p'] is not None else None
     repetition_penalty = float(cfg['repetition_penalty'])
-    seed = int(cfg['seed']) if cfg['seed'] is not None else None
+    seed = int(cfg['seed']) if cfg['seed'] is not None else 1337
     max_tokens = int(cfg['max_tokens'])
 
     if last_device != device or model is None:
@@ -152,25 +151,27 @@ for cfg in combinations:
     gen = Generator(
         model=model,
         window=int(hparams['train_attention_window_len']),
+        seed=seed,
         eos_token_id=hparams['eos_token_id'],
         temperature=temperature,
         top_k=top_k,
         top_p=top_p,
         repetition_penalty=repetition_penalty,
-        seed=seed,
         device=device,
     )
 
     # Warmup to trigger compilation / kernels
-    warmup_iter = gen.generate(X, max_new_tokens=16)
+    generate = torch.compile(gen.generate)
+    warmup_iter = generate(X, max_new_tokens=16)
     try:
-        while True:
-            next(warmup_iter)
+        with torch.inference_mode():
+            while True:
+                next(warmup_iter)
     except StopIteration:
         pass
 
     gen.reset()
-    it = gen.generate(X, max_new_tokens=max_tokens)
+    it = generate(X, max_new_tokens=max_tokens)
     with cuda_sync(device):
         t0 = time.time()
         try:

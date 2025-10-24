@@ -164,7 +164,7 @@ def run_on_device(device: str, checkpoint: str, prompt_text: str, max_new_tokens
     # Build generator
     window = int(hparams['train_attention_window_len'])
     eos_token_id = int(hparams['eos_token_id'])
-    gen = Generator(model=model, window=window, device=device, eos_token_id=eos_token_id,
+    gen = Generator(model=model, window=window, seed=1337, device=device, eos_token_id=eos_token_id,
                     temperature=temperature, top_k=top_k, top_p=top_p, repetition_penalty=repetition_penalty)
 
     start_ids = _encode_gpt2(prompt_text)

@@ -169,6 +169,7 @@ class CausalSelfAttention(nn.Module):
         k_ = k.transpose(1, 2)
         v_ = v.transpose(1, 2)
         if attn_mask is not None:
+            attn_mask = attn_mask.to(target_dtype)
             y = torch.nn.functional.scaled_dot_product_attention(q_, k_, v_, attn_mask=attn_mask, is_causal=False,
                                                                  scale=self.attn_scale)
         else:

@@ -9,6 +9,8 @@ class KVCache:
         self.L = L
         self.t = 0
         self._staged = [False] * L
+        self.device = device
+        self.dtype = dtype
 
     def reset(self):
         self.t = 0
