@@ -12,7 +12,6 @@ def _topk_filter(x, k):
     y.scatter_(dim=-1, index=i, src=v)
     return y
 
-
 def _topp_filter(x, p):
     if p is None or p <= 0.0 or p >= 1.0:
         return x
@@ -24,17 +23,20 @@ def _topp_filter(x, p):
     m = torch.zeros_like(ms, dtype=torch.bool).scatter(-1, i, ms)
     return x.masked_fill(~m, float("-inf"))
 
-
 def _gumbel(shape, device, dtype):
     u = torch.rand(shape, device=device, dtype=dtype)
     return -torch.log(-torch.log(u.clamp_min_(1e-6)))
 
 def _sample_device(logits, temperature=1.0, top_k=None, top_p=None):
+    if temperature == 0.0:
+        return torch.argmax(logits, dim=-1)
     x = logits / max(temperature, 1e-6)
     x = _topk_filter(x, top_k)
     x = _topp_filter(x, top_p)
+    # Gumbel-Softmax trick
     g = _gumbel(x.shape, x.device, x.dtype)
-    return torch.argmax(x + g, dim=-1)
+    y = torch.argmax(x + g, dim=-1)
+    return y
 
 def _repetition_penalty_device(logits, prev_ids, rep_p: torch.Tensor, _one: torch.Tensor, rep_w=128, rep_h=140.0, cap=3.0):
     if torch.equal(rep_p, _one) or prev_ids is None or prev_ids.numel() == 0:
