@@ -161,6 +161,8 @@ class Generator:
         for _ in range(max_new_tokens):
             logits = self.apply_repetition_penalty(logits[-1], self.history, self.rep_p_t, self._one)
             tok = self.sample(logits, self.temperature, self.top_k, self.top_p)
+            if tok == self.eos_token_id:
+                break
             logits = self._step(tok)
             yield tok.view(1)
         self._sync(); t2 = time.perf_counter()
