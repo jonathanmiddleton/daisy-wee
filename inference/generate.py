@@ -1,3 +1,4 @@
+import time
 from typing import Generator
 import torch
 import torch.nn.functional as F
@@ -147,16 +148,16 @@ class Generator:
         assert prompt_ids.size(0)
         assert max_new_tokens > 0
         prompt_ids = prompt_ids[self.history_len:]
-        with measure_time() as pre_time:
-            logits = self._prefill(prompt_ids)
-        prefill_duration = pre_time()
-        step_duration = 0
+        t0 = time.perf_counter()
+        logits = self._prefill(prompt_ids)
+        t1 = time.perf_counter()
         for _ in range(max_new_tokens):
             logits = self.apply_repetition_penalty(logits[-1], self.history, self.rep_p_t, self._one)
             tok = self.sample(logits, self.temperature, self.top_k, self.top_p)
-            with measure_time() as step_time:
-                logits = self._step(tok)
-            step_duration += step_time()
+            logits = self._step(tok)
             yield tok.view(1)
+        t2 = time.perf_counter()
+        prefill_duration = t1 - t0
+        step_duration = t2 - t1
         out = self.history[:self.history_len].detach().clone()
         return out, prefill_duration, step_duration
