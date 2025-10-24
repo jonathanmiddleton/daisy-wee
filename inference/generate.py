@@ -155,7 +155,8 @@ class Generator:
         assert prompt_ids.size(0) <= self.window, "prompt length must be <= attention window"
         assert prompt_ids.size(0)
         assert max_new_tokens > 0
-        prompt_ids = prompt_ids[self.history_len:]
+        self.reset()
+        # prompt_ids = prompt_ids[self.history_len:]
         self._sync(); t0 = time.perf_counter()
         logits = self._prefill(prompt_ids)
         self._sync(); t1 = time.perf_counter()

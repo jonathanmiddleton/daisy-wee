@@ -44,7 +44,7 @@ model, hparams = model_from_checkpoint(cli.checkpoint, device=device)
 model.eval()
 
 if device != 'cpu':
-    model = torch.compile(model, dynamic=True)
+    model = torch.compile(model, dynamic=False)
 enc = tiktoken.get_encoding("gpt2")
 encode = lambda s: enc.encode(s, allowed_special={"<|endoftext|>"})
 decode = lambda l: enc.decode(l)
@@ -63,12 +63,12 @@ template = "### Instruction:\n{prompt}\n\n### Response:\n" if use_instruct else 
 gen = Generator(
     model=model,
     window=int(hparams['train_attention_window_len']),
+    seed=cli.seed,
     eos_token_id=hparams['eos_token_id'],
     temperature=cli.temperature,
     top_k=cli.top_k,
     top_p=cli.top_p,
     repetition_penalty=cli.repetition_penalty,
-    seed=cli.seed,
     device=device,
 )
 
@@ -150,18 +150,19 @@ if cli.chat:
         effective_user = remaining if len(updates) > 0 else user
         prompt_text = transcript + template.format(prompt=effective_user)
         start_ids = encode(prompt_text)
-        X = tensor(start_ids, dtype=torch.long, device=device)
-        gen_iter = gen.generate(X, max_new_tokens=cli.max_tokens)
-        print(f"Assistant: ", end="", flush=True)
-        sys.stdout.flush()
-
-        try:
-            while True:
-                t = next(gen_iter)
-                print_token(t)
-        except StopIteration as e:
-            out_ids, pre_time, step_time = e.value
-        new_ids = out_ids[len(start_ids):]
+        with torch.inference_mode():
+            X = tensor(start_ids, dtype=torch.long, device=device)
+            gen_iter = gen.generate(X, max_new_tokens=cli.max_tokens)
+            print(f"Assistant: ", end="", flush=True)
+            sys.stdout.flush()
+            try:
+                while True:
+                    t = next(gen_iter)
+                    print_token(int(t))
+            except StopIteration as e:
+                (out_ids, pre_time, step_time) = e.value
+            out_ids = out_ids.tolist()
+            new_ids = out_ids[len(start_ids):]
         pre_tps = len(start_ids) / pre_time
         step_tps = len(new_ids) / step_time
         reply = decode(new_ids).strip()
@@ -172,15 +173,17 @@ else:
     # Single-shot sample
     prompt = template.format(prompt=cli.prompt)
     start_ids = encode(prompt)
-    x = tensor(start_ids, dtype=torch.long, device=device)
-    gen_iter = gen.generate(x, max_new_tokens=cli.max_tokens)
-    try:
-        while True:
-            t = next(gen_iter)
-            print_token(t)
-    except StopIteration as e:
-        (out_ids, pre_time, step_time) = e.value
-    new_ids = out_ids[len(start_ids):]
+    with torch.inference_mode():
+        X = tensor(start_ids, dtype=torch.long, device=device)
+        gen_iter = gen.generate(X, max_new_tokens=cli.max_tokens)
+        try:
+            while True:
+                t = next(gen_iter)
+                print_token(int(t))
+        except StopIteration as e:
+            (out_ids, pre_time, step_time) = e.value
+        out_ids = out_ids.tolist()
+        new_ids = out_ids[len(start_ids):]
     pre_tps = len(start_ids) / pre_time
     step_tps = len(new_ids) / step_time
     print(f"\n({step_tps:.1f} step tokens/s, {pre_tps:.1f} prefill tokens/s)\n\n")
