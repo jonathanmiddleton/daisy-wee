@@ -84,6 +84,12 @@ class Generator:
         self.sample = torch.compile(_sample_device, dynamic=False) if devtype != 'cpu' and compile_on else _sample_device
         self.apply_repetition_penalty = torch.compile(_repetition_penalty_device, dynamic=False) if devtype != 'cpu' and compile_on else _repetition_penalty_device
 
+    def _sync(self):
+        d = str(self.device)
+        if d.startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.synchronize()
+        elif d.startswith("mps") and hasattr(torch, "mps") and torch.mps.is_available():
+            torch.mps.synchronize()
 
     @torch.inference_mode()
     def set_temperature(self, temperature: float):
@@ -149,15 +155,15 @@ class Generator:
         assert prompt_ids.size(0)
         assert max_new_tokens > 0
         prompt_ids = prompt_ids[self.history_len:]
-        t0 = time.perf_counter()
+        self._sync(); t0 = time.perf_counter()
         logits = self._prefill(prompt_ids)
-        t1 = time.perf_counter()
+        self._sync(); t1 = time.perf_counter()
         for _ in range(max_new_tokens):
             logits = self.apply_repetition_penalty(logits[-1], self.history, self.rep_p_t, self._one)
             tok = self.sample(logits, self.temperature, self.top_k, self.top_p)
             logits = self._step(tok)
             yield tok.view(1)
-        t2 = time.perf_counter()
+        self._sync(); t2 = time.perf_counter()
         prefill_duration = t1 - t0
         step_duration = t2 - t1
         out = self.history[:self.history_len].detach().clone()
