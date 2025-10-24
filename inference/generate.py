@@ -80,9 +80,10 @@ class Generator:
         self.vocab_size = self.model.embed.num_embeddings
         self._one = torch.tensor(1, device=self.device, dtype=dtype)
         self.set_seed(seed, devtype)
-        compile_on = True
-        self.sample = torch.compile(_sample_device, dynamic=False) if devtype != 'cpu' and compile_on else _sample_device
-        self.apply_repetition_penalty = torch.compile(_repetition_penalty_device, dynamic=False) if devtype != 'cpu' and compile_on else _repetition_penalty_device
+        self.sample = torch.compile(_sample_device, dynamic=False) if devtype != 'cpu' else _sample_device
+        self.apply_repetition_penalty = torch.compile(_repetition_penalty_device, dynamic=False) if devtype != 'cpu' else _repetition_penalty_device
+        # self.sample = _sample_device
+        # self.apply_repetition_penalty = _repetition_penalty_device
 
     def _sync(self):
         d = str(self.device)
@@ -138,8 +139,8 @@ class Generator:
         k_new, v_new = [x.to(self.dtype) for x in k_new], [x.to(self.dtype) for x in v_new]
         logits = logits[..., :self.vocab_size]
         for i in range(len(self.model.blocks)):
-            if k_new[i] is not None:
-                self.cache.write(i, k_new[i], v_new[i])
+            assert(k_new[i] is not None); assert(v_new[i] is not None)
+            self.cache.write(i, k_new[i], v_new[i])
         self.cache.advance()
         self.history[self.history_len] = token
         self.history_len += 1
