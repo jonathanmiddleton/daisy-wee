@@ -3,7 +3,6 @@ from typing import Generator
 import torch
 import torch.nn.functional as F
 from inference.kv_cache import KVCache
-from tools.helpers import measure_time
 
 def _topk_filter(x, k):
     if k is None or k <= 0 or k >= x.size(-1):
@@ -54,15 +53,15 @@ def _repetition_penalty_device(logits, prev_ids, rep_p: torch.Tensor, _one: torc
 
 
 class Generator:
-    def __init__(self, model, window, seed, device=None, dtype=torch.bfloat16, max_seq_len: int = 65536, temperature=1.0, top_k=None, top_p=None, repetition_penalty=1.0, eos_token_id=None):
+    def __init__(self, model, window, seed, device=None, dtype=torch.float16, max_seq_len: int = 65536, temperature=1.0, top_k=None, top_p=None, repetition_penalty=1.0, eos_token_id=None):
         if eos_token_id is None:
             eos_token_id = getattr(model, "eos_token_id", None)
         assert eos_token_id is not None
         self.model = model.eval()
         self.device = next(model.parameters()).device if device is None else device
+        self.dtype = dtype
         assert self.device is not None
         devtype = "cuda" if str(device).startswith("cuda") else ("mps" if str(device).startswith("mps") else "cpu")
-        self.amp_ctx = torch.autocast(device_type=devtype, dtype=torch.bfloat16)
         h = None; d = None
         for b in self.model.blocks:
             a = getattr(b, "attn", None)
@@ -113,10 +112,10 @@ class Generator:
         self.history_len = 0
 
     def _prefill(self, prompt_ids: torch.Tensor):
-        with self.amp_ctx:
-            logits, kv = self.model.prefill_batch(prompt_ids[None,:], window=self.window)
+        logits, kv = self.model.prefill_batch(prompt_ids[None,:], window=self.window)
+        logits, kv = logits.to(self.dtype), kv.to(self.dtype)
         logits = logits[..., :self.vocab_size]
-        self.cache.bulk_write_packed(kv.bfloat16(), len(prompt_ids), window=self.window)
+        self.cache.bulk_write_packed(kv, len(prompt_ids), window=self.window)
         end = self.history_len + prompt_ids.numel()
         self.history[self.history_len:end] = prompt_ids
         self.history_len = end
@@ -126,9 +125,11 @@ class Generator:
         k_ctxs, v_ctxs = [], []
         for i in range(len(self.model.blocks)):
             kc, vc = self.cache.view(i)
+            assert(kc.dtype == self.dtype); assert(vc.dtype == self.dtype)
             k_ctxs.append(kc); v_ctxs.append(vc)
-        with self.amp_ctx:
-            logits, k_new, v_new = self.model.step(token, k_ctxs, v_ctxs, self.cache.t, self.window)
+        logits, k_new, v_new = self.model.step(token, k_ctxs, v_ctxs, self.cache.t, self.window)
+        logits = logits.to(self.dtype)
+        k_new, v_new = [x.to(self.dtype) for x in k_new], [x.to(self.dtype) for x in v_new]
         logits = logits[..., :self.vocab_size]
         for i in range(len(self.model.blocks)):
             if k_new[i] is not None:
