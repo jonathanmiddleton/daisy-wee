@@ -85,6 +85,7 @@ def build_cache(model: nn.Module, window: int, device: str, dtype: torch.dtype) 
     cache = KVCache(L=L, B=1, H=h, W=window, D=d, device=device, dtype=dtype)
     return cache
 
+@torch.inference_mode()
 def run_benchmark(
     model: nn.Module,
     window: int,
@@ -170,18 +171,17 @@ def run_benchmark(
     gen_prefill_times: list[float] = []
     gen_step_times: list[float] = []
     gen = Generator(model, window=window, seed=1337, device=device, dtype=dtype, temperature=0.0)
-    with torch.inference_mode():
-        for _ in range(step_reps):
-            gen.reset()
-            it = gen.generate(prompt_ids, max_new_tokens=new_tokens)
-            while True:
-                try:
-                    next(it)
-                except StopIteration as e:
-                    _out, gen_prefill_dur, gen_step_dur = e.value
-                    gen_prefill_times.append(float(gen_prefill_dur))
-                    gen_step_times.append(float(gen_step_dur))
-                    break
+    for _ in range(step_reps):
+        gen.reset()
+        it = gen.generate(prompt_ids, max_new_tokens=new_tokens)
+        while True:
+            try:
+                next(it)
+            except StopIteration as e:
+                _out, gen_prefill_dur, gen_step_dur = e.value
+                gen_prefill_times.append(float(gen_prefill_dur))
+                gen_step_times.append(float(gen_step_dur))
+                break
 
     # Metrics
     prefill_tps = [prompt_len / t for t in prefill_times]
@@ -238,7 +238,7 @@ def main():
     src_name: str
     if args.checkpoint:
         model, hparams = model_from_checkpoint(args.checkpoint, device=device)
-        window = int(hparams.get('train_attention_window_len') or hparams.get('attention_window_len') or hparams.get('max_seq_len'))
+        window = int(hparams.get('attention_window_len') or hparams.get('train_attention_window_len'))
         src_name = Path(args.checkpoint).name
     else:
         spec = load_model_spec(args.model_spec)
