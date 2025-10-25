@@ -169,7 +169,17 @@ class DaisyCore(nn.Module):
         logits = F.linear(x.flatten(end_dim=1).bfloat16(), self.lm_head_w.bfloat16()).float()
         return logits, k_new_list, v_new_list
 
-    @torch.inference_mode()
+    # def prepare(self, device):
+    #     L = len(self.blocks)
+    #     skip_weights = self.scalars[:L]
+    #     lambdas = self.scalars[1 * L:3 * L].view(-1, 2)
+    #     sa_lambdas = self.scalars[3 * L:5 * L].view(-1, 2)
+    #     self.skip_weights_ = skip_weights.detach().clone().to(device).contiguous()
+    #     self.lambdas_ = lambdas.detach().clone().to(device).contiguous()
+    #     self.sa_lambdas_ = sa_lambdas.detach().clone().to(device).contiguous()
+    #     self.to(device)
+
+    # @torch.inference_mode()
     def prefill_batch(self, input_ids: Tensor, window: int | None = None, debug: bool = False):
         assert input_ids.ndim == 2
         B, T = input_ids.shape
@@ -185,6 +195,10 @@ class DaisyCore(nn.Module):
         skip_weights = self.scalars[:L]
         lambdas = self.scalars[1 * L:3 * L].view(-1, 2)
         sa_lambdas = self.scalars[3 * L:5 * L].view(-1, 2)
+        # skip_weights = self.skip_weights_
+        # lambdas = self.lambdas_
+        # sa_lambdas = self.sa_lambdas_
+
 
         q = torch.arange(T, device=input_ids.device)[:, None]  # (T, 1)
         k = torch.arange(T, device=input_ids.device)[None, :]  # (1, T)
