@@ -80,10 +80,15 @@ class Generator:
         self.vocab_size = self.model.embed.num_embeddings
         self._one = torch.tensor(1, device=self.device, dtype=dtype)
         self.set_seed(seed, devtype)
-        self.sample = torch.compile(_sample_device, dynamic=False) if devtype != 'cpu' else _sample_device
-        self.apply_repetition_penalty = torch.compile(_repetition_penalty_device, dynamic=False) if devtype != 'cpu' else _repetition_penalty_device
-        # self.model.prepare(self.device)
+
+        # compile functions
+        torch._inductor.config.max_autotune_gemm = False if devtype == 'mps' else True
+        self.sample = torch.compile(_sample_device) if devtype != 'cpu' else _sample_device
+        self.apply_repetition_penalty = torch.compile(_repetition_penalty_device) if devtype != 'cpu' else _repetition_penalty_device
         self.model_prefill = torch.compile(self.model.prefill_batch, dynamic=False) if devtype != 'cpu' else self.model.prefill_batch
+        with torch.inference_mode():
+            fake_input = torch.randint(0, self.vocab_size, (1, 4096), device=self.device)
+            self.model_prefill(fake_input, self.window)
 
     def _sync(self):
         d = str(self.device)
