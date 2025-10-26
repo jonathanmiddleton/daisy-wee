@@ -79,7 +79,9 @@ class Generator:
         self.window = window
         self.vocab_size = self.model.embed.num_embeddings
         self._one = torch.tensor(1, device=self.device, dtype=dtype)
-        self.set_seed(seed, devtype)
+        self.rng = None
+        # self.set_seed(seed, devtype)
+        self.set_seed(seed)
 
         # compile functions
         COMPILE = False
@@ -107,14 +109,19 @@ class Generator:
         self.rep_p_t = torch.tensor(repetition_penalty, device=self.rep_p_t.device, dtype=self.rep_p_t.dtype)
         return self
 
-    def set_seed(self, seed: int, devtype):
-        # TODO: I probably shouldn't do this
-        if "cuda" in devtype:
-            torch.cuda.manual_seed_all(seed)
-        elif devtype in ("mps", "cpu"):
-            torch.manual_seed(seed)
-        else:
-            raise ValueError(f"Unknown device type: {devtype}")
+    # def set_seed(self, seed: int, devtype):
+    #     # TODO: I probably shouldn't do this
+    #     if "cuda" in devtype:
+    #         torch.cuda.manual_seed_all(seed)
+    #     elif devtype in ("mps", "cpu"):
+    #         torch.manual_seed(seed)
+    #     else:
+    #         raise ValueError(f"Unknown device type: {devtype}")
+    def set_seed(self, seed: int):
+        g = torch.Generator(device=self.device)
+        g.manual_seed(int(seed))
+        self.rng = g
+        return self
 
     def reset(self):
         self.cache.reset()
@@ -163,8 +170,9 @@ class Generator:
         logits = self._prefill(prompt_ids)
         self._sync(); t1 = time.perf_counter()
         for _ in range(max_new_tokens):
-            logits = self.apply_repetition_penalty(logits[-1], self.history, self.rep_p_t, self._one)
-            tok = self.sample(logits, self.temperature, self.top_k, self.top_p)
+            # logits = self.apply_repetition_penalty(logits[-1], self.history, self.rep_p_t, self._one)
+            # tok = self.sample(logits, self.temperature, self.top_k, self.top_p)
+            tok = self._sample(logits)
             if tok == self.eos_token_id:
                 break
             logits = self._step(tok)
@@ -174,3 +182,29 @@ class Generator:
         step_duration = t2 - t1
         out = self.history[:self.history_len].detach().clone()
         return out, prefill_duration, step_duration
+
+    def _sample(self, logits_1xb):
+        x = logits_1xb.float().view(-1)
+        # x = _repetition_penalty_device(x, self.history, float(self.rep_p_t), self._one)
+        if self.temperature == 0.0:
+            return int(torch.argmax(x))
+        elif self.temperature != 1.0:
+            x = x / self.temperature
+        if self.top_k is not None and self.top_k > 0:
+            v, _ = torch.topk(x, self.top_k)
+            x = torch.where(x >= v[-1], x, torch.tensor(float("-inf"), device=x.device))
+        if self.top_p is not None and 0.0 < self.top_p < 1.0:
+            probs = F.softmax(x, dim=-1)
+            sorted_probs, sorted_idx = torch.sort(probs, descending=True)
+            cdf = torch.cumsum(sorted_probs, dim=-1)
+            mask = cdf <= self.top_p
+            mask[..., 0] = True
+            keep = sorted_idx[mask]
+            new_x = torch.full_like(x, float("-inf"))
+            new_x[keep] = x[keep]
+            x = new_x
+        probs = F.softmax(x, dim=-1)
+        if self.rng is not None:
+            return torch.multinomial(probs, 1, generator=self.rng).squeeze()
+        else:
+            return torch.multinomial(probs, 1).squeeze()
