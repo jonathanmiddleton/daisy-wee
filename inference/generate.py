@@ -79,7 +79,7 @@ class Generator:
         self.window = window
         self.vocab_size = self.model.embed.num_embeddings
         self._one = torch.tensor(1, device=self.device, dtype=dtype)
-        self.set_seed(seed, devtype)
+        self.set_seed(seed)
 
         # compile functions
         torch._inductor.config.max_autotune_gemm = False if devtype == 'mps' else True
@@ -106,6 +106,7 @@ class Generator:
         return self
 
     def set_seed(self, seed: int):
+        assert self.device is not None
         devtype = str(self.device)
         # TODO: I probably shouldn't do this
         if "cuda" in devtype:
