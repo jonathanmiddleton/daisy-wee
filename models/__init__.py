@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, Type
 from importlib import import_module
-from dataclasses import is_dataclass, asdict as dc_asdict, fields as dc_fields
+from dataclasses import is_dataclass, asdict as dc_asdict, fields as dc_fields, asdict
 from torch import nn
 from model_specs import load_model_spec, ModelSpec
 
@@ -80,6 +80,7 @@ def model_from_spec(spec_or_cfg: str | dict | ModelSpec | Any, device: str = 'cu
         head_dim=head_dim,
         window_block_size=window_block_size,
         eos_token_id=eos_token_id,
+        desc=asdict(spec)
     ).to(device)
     return model
 
