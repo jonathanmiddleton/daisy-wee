@@ -24,7 +24,7 @@ def _get_skip_map(L: int):
     return _skip_map
 
 class DaisyCore(nn.Module):
-    def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim, window_block_size: int = 128, eos_token_id: int | None = None):
+    def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim, window_block_size: int = 128, eos_token_id: int | None = None, desc: dict | None = None):
         super().__init__()
         if eos_token_id is None:
             raise ValueError("eos_token_id is required.")
@@ -46,6 +46,7 @@ class DaisyCore(nn.Module):
             *[torch.tensor([1.0, 0.0]) for _ in range(num_layers)],     # residual mixing
             *[torch.tensor([0.5, 0.5]) for _ in range(num_layers)],     # value embedding mixing
         ]))
+        self.desc = desc # non-functional, self-describing metadata
 
     def create_blockmasks(self, input_seq: Tensor, sliding_window_num_blocks: Tensor):
         BLOCK_SIZE = self.window_block_size
@@ -122,13 +123,13 @@ class DaisyCore(nn.Module):
             loss = F.cross_entropy(15 * logits * torch.rsqrt(logits.square() + 225), target_seq)
             return loss
 
+        # eval
         loss = 0
         for i in range(4):
             logits: Tensor = F.linear(x.flatten(end_dim=1).chunk(4)[i].bfloat16(), self.lm_head_w.bfloat16()).float()
             loss += F.cross_entropy(15 * logits * torch.rsqrt(logits.square() + 225), target_seq.chunk(4)[i]) / 4
         return loss
 
-    @torch.inference_mode()
     def step(self, token_id: Tensor, k_ctxs, v_ctxs, pos: int, window: int):
         assert token_id.ndim == 0
         B = 1
@@ -169,7 +170,6 @@ class DaisyCore(nn.Module):
         logits = F.linear(x.flatten(end_dim=1).bfloat16(), self.lm_head_w.bfloat16()).float()
         return logits, k_new_list, v_new_list
 
-    @torch.inference_mode()
     def prefill_batch(self, input_ids: Tensor, window: int | None = None, debug: bool = False):
         assert input_ids.ndim == 2
         B, T = input_ids.shape

@@ -80,10 +80,15 @@ class Generator:
         self.vocab_size = self.model.embed.num_embeddings
         self._one = torch.tensor(1, device=self.device, dtype=dtype)
         self.set_seed(seed, devtype)
-        self.sample = torch.compile(_sample_device, dynamic=False) if devtype != 'cpu' else _sample_device
-        self.apply_repetition_penalty = torch.compile(_repetition_penalty_device, dynamic=False) if devtype != 'cpu' else _repetition_penalty_device
-        # self.sample = _sample_device
-        # self.apply_repetition_penalty = _repetition_penalty_device
+
+        # compile functions
+        torch._inductor.config.max_autotune_gemm = False if devtype == 'mps' else True
+        self.sample = torch.compile(_sample_device) if devtype != 'cpu' else _sample_device
+        self.apply_repetition_penalty = torch.compile(_repetition_penalty_device) if devtype != 'cpu' else _repetition_penalty_device
+        self.model_prefill = torch.compile(self.model.prefill_batch, dynamic=False) if devtype != 'cpu' else self.model.prefill_batch
+        with torch.inference_mode():
+            fake_input = torch.randint(0, self.vocab_size, (1, 4096), device=self.device)
+            self.model_prefill(fake_input, self.window)
 
     def _sync(self):
         d = str(self.device)
@@ -92,17 +97,14 @@ class Generator:
         elif d.startswith("mps") and hasattr(torch, "mps") and torch.mps.is_available():
             torch.mps.synchronize()
 
-    @torch.inference_mode()
     def set_temperature(self, temperature: float):
         self.temperature = float(temperature)
         return self
 
-    @torch.inference_mode()
     def set_repetition_penalty(self, repetition_penalty: float):
         self.rep_p_t = torch.tensor(repetition_penalty, device=self.rep_p_t.device, dtype=self.rep_p_t.dtype)
         return self
 
-    @torch.inference_mode()
     def set_seed(self, seed: int, devtype):
         # TODO: I probably shouldn't do this
         if "cuda" in devtype:
@@ -112,14 +114,13 @@ class Generator:
         else:
             raise ValueError(f"Unknown device type: {devtype}")
 
-    @torch.inference_mode()
     def reset(self):
         self.cache.reset()
         self.history = torch.empty(self.max_seq_len, dtype=torch.long, device=self.device)
         self.history_len = 0
 
     def _prefill(self, prompt_ids: torch.Tensor):
-        logits, kv = self.model.prefill_batch(prompt_ids[None,:], window=self.window)
+        logits, kv = self.model_prefill(prompt_ids[None,:], window=self.window)
         logits, kv = logits.to(self.dtype), kv.to(self.dtype)
         logits = logits[..., :self.vocab_size]
         self.cache.bulk_write_packed(kv, len(prompt_ids), window=self.window)
@@ -146,8 +147,8 @@ class Generator:
         self.history_len += 1
         return logits
 
+    @torch.inference_mode()
     def generate(self, prompt_ids: torch.Tensor, max_new_tokens, seed=None) -> Generator[torch.Tensor, None, tuple[torch.Tensor, float, float]]:
-        assert torch.is_inference_mode_enabled(), "Inference mode must be enabled."
         if seed is not None:
             self.set_seed(seed)
         assert prompt_ids.ndim == 1
@@ -156,7 +157,6 @@ class Generator:
         assert prompt_ids.size(0)
         assert max_new_tokens > 0
         self.reset()
-        # prompt_ids = prompt_ids[self.history_len:]
         self._sync(); t0 = time.perf_counter()
         logits = self._prefill(prompt_ids)
         self._sync(); t1 = time.perf_counter()
