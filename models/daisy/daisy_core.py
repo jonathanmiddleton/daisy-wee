@@ -47,6 +47,7 @@ class DaisyCore(nn.Module):
             *[torch.tensor([0.5, 0.5]) for _ in range(num_layers)],     # value embedding mixing
         ]))
         self.desc = desc # non-functional, self-describing metadata
+        self._docs = None
 
     def create_blockmasks(self, input_seq: Tensor, sliding_window_num_blocks: Tensor):
         BLOCK_SIZE = self.window_block_size
@@ -91,6 +92,39 @@ class DaisyCore(nn.Module):
         # Long-short SWA block masks by @leloykun & @YouJiacheng, adapated from suggestion by @Grad62304977, following Gemma 2 paper
         return build_bm(sliding_window_num_blocks), build_bm(sliding_window_num_blocks // 2)
 
+    def _dense_window_mask_batch(self, input_ids: torch.Tensor, window_num_blocks: int):
+        B, T = input_ids.shape
+        bs = int(self.window_block_size)
+        w = int(window_num_blocks) * bs
+        device = input_ids.device
+
+        docs = (input_ids == self.eos_token_id).cumsum(1)
+        q = torch.arange(T, device=device)[:, None]
+        k = torch.arange(T, device=device)[None, :]
+
+        causal = q >= k
+        within = k >= (q - w + 1).clamp_min(0)
+        same_doc = docs[:, :, None] == docs[:, None, :]
+
+        allowed = same_doc & (causal & within)[None].expand(B, -1, -1)
+
+        m = torch.full((B, 1, T, T), float("-inf"), device=device, dtype=torch.float32)
+        m[:, 0].masked_fill_(allowed, 0.0)
+        return m
+
+    def _layer_additive_masks(self, input_ids: torch.Tensor, window_tokens: int):
+        assert window_tokens is not None
+        bs = int(self.window_block_size)
+        long_blocks = max(1, int(window_tokens) // bs)
+        short_blocks = max(1, long_blocks // 2)
+
+        long_m = self._dense_window_mask_batch(input_ids, long_blocks)
+        short_m = self._dense_window_mask_batch(input_ids, short_blocks)
+
+        L = len(self.blocks)
+        cycle = [long_m, short_m, short_m, short_m]
+        return (cycle * ((L + 3) // 4))[:L - 1] + [long_m]
+
     def forward(self, input_seq: Tensor, sliding_window_num_blocks: Tensor, target_seq: Tensor = None):
         assert input_seq.ndim == 1
         L = len(self.blocks)
@@ -134,8 +168,7 @@ class DaisyCore(nn.Module):
         assert token_id.ndim == 0
         B = 1
         x0 = norm(self.embed(token_id)[None, None, :])
-        h = None
-        d = None
+        h = d = None
         for b in self.blocks:
             if getattr(b, "attn", None) is not None:
                 h = b.attn.num_heads
@@ -153,22 +186,48 @@ class DaisyCore(nn.Module):
         lambdas = scalars[1 * L:3 * L].view(-1, 2)
         sa_lambdas = scalars[3 * L:5 * L].view(-1, 2)
         x = x0
-        k_new_list = []
-        v_new_list = []
-        skip_connections = []
+
+        doc_prev = (self._docs[-1] if self._docs.numel() > 0 else torch.tensor(0, device=token_id.device))
+        doc_q = (doc_prev + (token_id == self.eos_token_id).to(doc_prev.dtype)).to(self._docs.dtype)
+        self._docs = torch.cat([self._docs, doc_q.view(1)], dim=0)
+
+        k_new_list, v_new_list, skip_connections = [], [], []
+        bs = int(self.window_block_size)
+
         for i in range(L):
             if i in skip_map:
                 x = x + skip_weights[skip_map[i]] * skip_connections[skip_map[i]]
-            y, k_new, v_new = self.blocks[i].step(
-                x, ve[i], x0, k_ctxs[i], v_ctxs[i], pos, lambdas[i], sa_lambdas[i], window
-            )
-            x = y
+
+            use_long = (i % 4 == 0) or (i == L - 1)
+            w_tokens = window if use_long else max(window // 2, bs)
+
+            k_ctx_i = k_ctxs[i]
+            v_ctx_i = v_ctxs[i]
+            if getattr(self.blocks[i], "attn", None) is None:
+                y, k_new, v_new = x + self.blocks[i].mlp(norm(x)), None, None
+            else:
+                n = 0 if k_ctx_i is None else k_ctx_i.size(1)
+                r = n if w_tokens is None else min(n, max(w_tokens - 1, 0))
+                if r > 0:
+                    keys_docs = self._docs[n - r:n]
+                    same = (keys_docs == doc_q)
+                    row = torch.full((r + 1,), float("-inf"), device=token_id.device, dtype=torch.float32)
+                    row[:r][same] = 0.0
+                    row[r] = 0.0
+                    attn_mask = row.view(1, 1, 1, -1)
+                else:
+                    attn_mask = torch.zeros(1, 1, 1, 1, device=token_id.device, dtype=torch.float32)
+
+                y, k_new, v_new = self.blocks[i].step(
+                    x, ve[i], x0, k_ctx_i, v_ctx_i, pos, lambdas[i], sa_lambdas[i], w_tokens, attn_mask
+                )
+                x = y
+
             skip_connections.append(x)
             k_new_list.append(k_new)
             v_new_list.append(v_new)
-        x = norm(x)
-        logits = F.linear(x.flatten(end_dim=1).bfloat16(), self.lm_head_w.bfloat16()).float()
-        return logits, k_new_list, v_new_list
+
+        return x.view(1, -1).float(), k_new_list, v_new_list
 
     def prefill_batch(self, input_ids: Tensor, window: int | None = None, debug: bool = False):
         assert input_ids.ndim == 2
@@ -186,20 +245,13 @@ class DaisyCore(nn.Module):
         lambdas = self.scalars[1 * L:3 * L].view(-1, 2)
         sa_lambdas = self.scalars[3 * L:5 * L].view(-1, 2)
 
-        q = torch.arange(T, device=input_ids.device)[:, None]  # (T, 1)
-        k = torch.arange(T, device=input_ids.device)[None, :]  # (1, T)
-        d = q - k  # d[q, k] = q - k
-
-        m = torch.zeros(T, T, device=input_ids.device, dtype=torch.float32)
-        m[d < 0] = float("-inf")  # forbid future (k > q)
-        m[d >= window] = float("-inf")  # forbid too-far past
-        attn_mask = m[None, None, :, :]
+        layer_masks = self._layer_additive_masks(input_ids, window)
 
         k_list, v_list, skip_connections = [], [], []
         for i in range(L):
             if i in skip_map:
                 x = x + skip_weights[skip_map[i]] * skip_connections[skip_map[i]]
-            x, k, v = self.blocks[i].prefill(x, ve[i], x0, lambdas[i], sa_lambdas[i], attn_mask, debug=debug)
+            x, k, v = self.blocks[i].prefill(x, ve[i], x0, lambdas[i], sa_lambdas[i], layer_masks[i], debug=debug)
             skip_connections.append(x)
             k_list.append(k)
             v_list.append(v)
@@ -211,6 +263,9 @@ class DaisyCore(nn.Module):
         H, D = attn.num_heads, attn.head_dim
         device = x.device
         dtype = x.dtype
+
+        if input_ids.size(0) == 1:
+            self._docs = (input_ids == self.eos_token_id).cumsum(1)[0].detach()
 
         K = []
         V = []

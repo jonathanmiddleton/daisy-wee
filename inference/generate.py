@@ -2,7 +2,7 @@ import time
 from typing import Generator
 import torch
 import torch.nn.functional as F
-from inference.kv_cache import KVCache
+from daisy.kv_cache import KVCache
 
 def _topk_filter(x, k):
     if k is None or k <= 0 or k >= x.size(-1):
@@ -105,7 +105,8 @@ class Generator:
         self.rep_p_t = torch.tensor(repetition_penalty, device=self.rep_p_t.device, dtype=self.rep_p_t.dtype)
         return self
 
-    def set_seed(self, seed: int, devtype):
+    def set_seed(self, seed: int):
+        devtype = str(self.device)
         # TODO: I probably shouldn't do this
         if "cuda" in devtype:
             torch.cuda.manual_seed_all(seed)

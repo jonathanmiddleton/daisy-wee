@@ -4,7 +4,6 @@ import time
 import os
 import statistics as stats
 from pathlib import Path
-from typing import Optional
 import contextlib
 
 import torch
@@ -13,7 +12,7 @@ from torch import nn
 from models import model_from_spec
 from model_specs.model_spec import load_model_spec
 from tools.checkpoint import model_from_checkpoint
-from inference.kv_cache import KVCache
+from daisy.kv_cache import KVCache
 from inference.generate import Generator
 
 @contextlib.contextmanager

@@ -21,11 +21,11 @@ class Block(nn.Module):
         x = x + self.mlp(norm(x))
         return x
 
-    def step(self, x, ve, x0, k_ctx, v_ctx, pos, lambdas, sa_lambdas, window):
+    def step(self, x, ve, x0, k_ctxs, v_ctxs, pos, lambdas, sa_lambdas, window, attn_mask):
         x = lambdas[0] * x + lambdas[1] * x0
         if self.attn is not None:
-            y_att, k_new, v_new = self.attn.step(x, k_ctx, v_ctx, pos, ve, sa_lambdas, window=window)
-            x = x + y_att
+            y, k_new, v_new = self.attn.step(x, k_ctxs, v_ctxs, pos, ve, sa_lambdas, window, attn_mask)
+            x = x + y
         else:
             k_new = v_new = None
         x = x + self.mlp(norm(x))

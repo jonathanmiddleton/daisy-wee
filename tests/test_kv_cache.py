@@ -1,7 +1,7 @@
 import unittest
 import torch
 
-from inference.kv_cache import KVCache
+from daisy.kv_cache import KVCache
 
 
 class TestKVCache(unittest.TestCase):

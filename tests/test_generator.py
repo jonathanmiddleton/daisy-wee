@@ -1,5 +1,4 @@
 import os
-import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,7 +7,7 @@ import pytest
 os.environ["DISABLE_O_ZERO_INIT"] = "1"
 
 from inference.generate import Generator
-from inference.kv_cache import KVCache
+
 
 class DummyAttn:
     def __init__(self, num_heads, head_dim):
