@@ -3,16 +3,20 @@ import torch
 
 class KVCache:
     def __init__(self, L, B, H, W, D, device, dtype):
-        self.k = torch.zeros(L, B, H, W, D, device=device, dtype=dtype)
-        self.v = torch.zeros(L, B, H, W, D, device=device, dtype=dtype)
+        self.H = H
+        self.B = B
+        self.D = D
         self.W = W
         self.L = L
         self.t = 0
-        self._staged = [False] * L
         self.device = device
         self.dtype = dtype
+        # finish initializing
+        self.reset()
 
     def reset(self):
+        self.k = torch.zeros(self.L, self.B, self.H, self.W, self.D, device=self.device, dtype=self.dtype)
+        self.v = torch.zeros(self.L, self.B, self.H, self.W, self.D, device=self.device, dtype=self.dtype)
         self.t = 0
         self._staged = [False] * self.L
 
