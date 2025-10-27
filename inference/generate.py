@@ -74,23 +74,29 @@ class Generator:
         self.rep_p_t = torch.tensor(repetition_penalty, device=self.device, dtype=dtype)
         self.eos_token_id = torch.tensor(eos_token_id, device=self.device)
         self.max_seq_len = max_seq_len
-        self.history = torch.empty(self.max_seq_len, dtype=torch.long, device=self.device)
-        self.history_len = 0
         self.window = window
         self.vocab_size = self.model.embed.num_embeddings
-        self._one = torch.tensor(1, device=self.device, dtype=dtype)
-        self.set_seed(seed, devtype)
-
+        self._one = torch.tensor(1, device=self.device, dtype=dtype) # cached value for passing to compiled function
+        # set global seed across all devices
+        self.seed = seed
+        self.reset()
         # compile functions
-        COMPILE = False
-        torch._inductor.config.max_autotune_gemm = False if devtype == 'mps' else True
-        self.sample = torch.compile(_sample_device) if devtype != 'cpu' and COMPILE else _sample_device
-        self.apply_repetition_penalty = torch.compile(_repetition_penalty_device) if devtype != 'cpu' and COMPILE else _repetition_penalty_device
-        self.model_prefill = torch.compile(self.model.prefill_batch, dynamic=False) if devtype != 'cpu' and COMPILE else self.model.prefill_batch
-        if COMPILE:
-            with torch.inference_mode():
-                fake_input = torch.randint(0, self.vocab_size, (1, 4096), device=self.device)
-                self.model_prefill(fake_input, self.window)
+        COMPILE_SAMPLE = True # no observed benefit on MPS for compile
+        COMPILE_RP = True
+        COMPILE_PREFILL = True
+        torch._inductor.config.max_autotune_gemm = False
+        self.sample = torch.compile(_sample_device, options={"max_autotune_gemm": False}) if devtype != 'cpu' and COMPILE_SAMPLE else _sample_device
+        self.apply_repetition_penalty = torch.compile(_repetition_penalty_device, options={"max_autotune_gemm": False}) if devtype != 'cpu' and COMPILE_RP else _repetition_penalty_device
+        self.model_prefill = torch.compile(self.model.prefill_batch, dynamic=False, options={"max_autotune_gemm": False}) if devtype != 'cpu' and COMPILE_PREFILL else self.model.prefill_batch
+
+        # finish initialization
+        self.reset()
+        # perform brief warmup for stable metrics
+        self.warmup()
+
+    def warmup(self, steps=2):
+        for _ in range(steps):
+            self.generate(torch.randint(0, self.vocab_size, (self.window,)), 2)
 
     def _sync(self):
         d = str(self.device)
@@ -107,18 +113,11 @@ class Generator:
         self.rep_p_t = torch.tensor(repetition_penalty, device=self.rep_p_t.device, dtype=self.rep_p_t.dtype)
         return self
 
-    def set_seed(self, seed: int, devtype):
-        # TODO: I probably shouldn't do this
-        if "cuda" in devtype:
-            torch.cuda.manual_seed_all(seed)
-        elif devtype in ("mps", "cpu"):
-            torch.manual_seed(seed)
-        else:
-            raise ValueError(f"Unknown device type: {devtype}")
-
     def reset(self):
+        self.model.reset()
+        torch.manual_seed(self.seed)
         self.cache.reset()
-        self.history = torch.empty(self.max_seq_len, dtype=torch.long, device=self.device)
+        self.history = torch.zeros(self.max_seq_len, dtype=torch.long, device=self.device)
         self.history_len = 0
 
     def _prefill(self, prompt_ids: torch.Tensor):
@@ -150,9 +149,7 @@ class Generator:
         return logits
 
     @torch.inference_mode()
-    def generate(self, prompt_ids: torch.Tensor, max_new_tokens, seed=None) -> Generator[torch.Tensor, None, tuple[torch.Tensor, float, float]]:
-        if seed is not None:
-            self.set_seed(seed)
+    def generate(self, prompt_ids: torch.Tensor, max_new_tokens) -> Generator[torch.Tensor, None, tuple[torch.Tensor, float, float]]:
         assert prompt_ids.ndim == 1
         assert prompt_ids.size(0) > 0 # must have at least one token
         assert prompt_ids.size(0) <= self.window, "prompt length must be <= attention window"
@@ -162,13 +159,13 @@ class Generator:
         self._sync(); t0 = time.perf_counter()
         logits = self._prefill(prompt_ids)
         self._sync(); t1 = time.perf_counter()
-        for _ in range(max_new_tokens):
+        for i in range(max_new_tokens):
             logits = self.apply_repetition_penalty(logits[-1], self.history, self.rep_p_t, self._one)
             tok = self.sample(logits, self.temperature, self.top_k, self.top_p)
             if tok == self.eos_token_id:
                 break
-            logits = self._step(tok)
             yield tok.view(1)
+            logits = self._step(tok) if i < max_new_tokens - 1 else None # don't step on terminal case
         self._sync(); t2 = time.perf_counter()
         prefill_duration = t1 - t0
         step_duration = t2 - t1
