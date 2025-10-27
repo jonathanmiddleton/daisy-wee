@@ -48,6 +48,10 @@ class DaisyCore(nn.Module):
         ]))
         self.desc = desc # non-functional, self-describing metadata
 
+    def reset(self):
+        for b in self.blocks:
+            b.reset()
+
     def create_blockmasks(self, input_seq: Tensor, sliding_window_num_blocks: Tensor):
         BLOCK_SIZE = self.window_block_size
         assert (len(input_seq) % BLOCK_SIZE == 0)

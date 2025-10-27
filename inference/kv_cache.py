@@ -16,6 +16,7 @@ class KVCache:
         self.t = 0
         self._staged = [False] * self.L
 
+#TODO simplify this given that the window is a global property and so this should be a simple tensor op
     def view(self, layer):
         m = self.t + (1 if self._staged[layer] else 0)
         n = min(m, self.W)

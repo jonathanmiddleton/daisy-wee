@@ -81,6 +81,10 @@ class CausalSelfAttention(nn.Module):
         self.last_q = None
         self.last_k = None
 
+    def reset(self):
+        self.last_q = None
+        self.last_k = None
+
     def forward(self, x: Tensor, ve: Tensor | None, block_mask: BlockMask, lambdas: Tensor):
         B, T = x.size(0), x.size(1) # batch size, sequence length
         assert B == 1, "Must use batch size = 1 for FlexAttention"
