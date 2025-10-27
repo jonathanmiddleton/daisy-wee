@@ -10,24 +10,23 @@ from torch.nn.attention.flex_attention import BlockMask
 def next_multiple_of_n(v: float | int, *, n: int):
     return next(x for x in range(n, int(v) + 1 + n, n) if x >= v)
 
-_skip_map = None
-def _get_skip_map(L: int):
-    global _skip_map
-    if _skip_map is None:
-        K = max(1, L // 8)
-        c = L // 2
-        s = max(1, L // (2 * (K + 1)))
-        _skip_map = {i: j for t in range(1, K + 1)
-                for i in [c - K + (t - 1)]
-                for j in [i - t * s]
-                if 0 <= j < i}
-    return _skip_map
 
 class DaisyCore(nn.Module):
     def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim, window_block_size: int = 128, eos_token_id: int | None = None, desc: dict | None = None):
         super().__init__()
         if eos_token_id is None:
             raise ValueError("eos_token_id is required.")
+
+        def _get_skip_map(L: int):
+            K = max(1, L // 8)
+            c = L // 2
+            s = max(1, L // (2 * (K + 1)))
+            _skip_map = {i: j for t in range(1, K + 1)
+                         for i in [c - K + (t - 1)]
+                         for j in [i - t * s]
+                         if 0 <= j < i}
+            return _skip_map
+        self.skip_map = _get_skip_map(num_layers)
         self.eos_token_id = int(eos_token_id)
         self.embed = nn.Embedding(vocab_size, model_dim)
         self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(3)])
@@ -109,7 +108,7 @@ class DaisyCore(nn.Module):
 
         x = x0 = norm(self.embed(input_seq)[None])
 
-        skip_map = _get_skip_map(L)
+        skip_map = self.skip_map
         skip_weights = self.scalars[:L]
         lambdas = self.scalars[1 * L:3 * L].view(-1, 2)
         sa_lambdas = self.scalars[3 * L:5 * L].view(-1, 2)
@@ -151,7 +150,7 @@ class DaisyCore(nn.Module):
         L = len(self.blocks)
         ve = [ve0, ve1, ve2] + [None] * (L - 6) + [ve0, ve1, ve2]
 
-        skip_map = _get_skip_map(L)
+        skip_map = self.skip_map
         scalars = self.scalars
         skip_weights = scalars[:L]
         lambdas = scalars[1 * L:3 * L].view(-1, 2)
@@ -185,7 +184,7 @@ class DaisyCore(nn.Module):
         ve0, ve1, ve2 = [emb(input_ids) for emb in self.value_embeds]
         ve = [ve0, ve1, ve2] + [None] * (L - 6) + [ve0, ve1, ve2]
 
-        skip_map = _get_skip_map(L)
+        skip_map = self.skip_map
         skip_weights = self.scalars[:L]
         lambdas = self.scalars[1 * L:3 * L].view(-1, 2)
         sa_lambdas = self.scalars[3 * L:5 * L].view(-1, 2)
