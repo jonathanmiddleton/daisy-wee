@@ -84,9 +84,8 @@ class Generator:
         COMPILE_SAMPLE = True # no observed benefit on MPS for compile
         COMPILE_RP = True
         COMPILE_PREFILL = True
-        torch._inductor.config.max_autotune_gemm = False
-        self.sample = torch.compile(_sample_device, options={"max_autotune_gemm": False}) if devtype != 'cpu' and COMPILE_SAMPLE else _sample_device
-        self.apply_repetition_penalty = torch.compile(_repetition_penalty_device, options={"max_autotune_gemm": False}) if devtype != 'cpu' and COMPILE_RP else _repetition_penalty_device
+        self.sample = torch.compile(_sample_device) if devtype != 'cpu' and COMPILE_SAMPLE else _sample_device
+        self.apply_repetition_penalty = torch.compile(_repetition_penalty_device) if devtype != 'cpu' and COMPILE_RP else _repetition_penalty_device
         self.model_prefill = torch.compile(self.model.prefill_batch, dynamic=False, options={"max_autotune_gemm": False}) if devtype != 'cpu' and COMPILE_PREFILL else self.model.prefill_batch
 
         # finish initialization
@@ -94,9 +93,12 @@ class Generator:
         # perform brief warmup for stable metrics
         self.warmup()
 
-    def warmup(self, steps=2):
+    def warmup(self, steps=3):
         for _ in range(steps):
-            self.generate(torch.randint(0, self.vocab_size, (self.window,)), 2)
+            max_tokens = 2; prompt_len = self.window-max_tokens
+            gen = self.generate(torch.randint(0, self.vocab_size, (prompt_len,), device=self.device), max_tokens)
+            for i in range(max_tokens): next(gen)
+            self.reset()
 
     def _sync(self):
         d = str(self.device)
