@@ -173,17 +173,17 @@ else:
     # Single-shot sample
     prompt = template.format(prompt=cli.prompt)
     start_ids = encode(prompt)
-    # with torch.inference_mode():
-    X = tensor(start_ids, dtype=torch.long, device=device)
-    gen_iter = gen.generate(X, max_new_tokens=cli.max_tokens)
-    try:
-        while True:
-            t = next(gen_iter)
-            print_token(int(t))
-    except StopIteration as e:
-        (out_ids, pre_time, step_time) = e.value
-    out_ids = out_ids.tolist()
-    new_ids = out_ids[len(start_ids):]
+    with torch.inference_mode():
+        X = tensor(start_ids, dtype=torch.long, device=device)
+        gen_iter = gen.generate(X, max_new_tokens=cli.max_tokens)
+        try:
+            while True:
+                t = next(gen_iter)
+                print_token(int(t))
+        except StopIteration as e:
+            (out_ids, pre_time, step_time) = e.value
+        out_ids = out_ids.tolist()
+        new_ids = out_ids[len(start_ids):]
     pre_tps = len(start_ids) / pre_time
     step_tps = len(new_ids) / step_time
     print(f"\n({step_tps:.1f} step tokens/s, {pre_tps:.1f} prefill tokens/s)\n\n")

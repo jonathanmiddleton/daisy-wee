@@ -38,10 +38,10 @@ def _sample_device(logits, temperature=1.0, top_k=None, top_p=None):
     y = torch.argmax(x + g, dim=-1)
     return y
 
-def _repetition_penalty_device(logits, prev_ids, rep_p: torch.Tensor, _one: torch.Tensor, rep_w=128, rep_h=140.0, cap=3.0):
-    if torch.equal(rep_p, _one) or prev_ids is None or prev_ids.numel() == 0:
-        return logits
-    prev = prev_ids[-rep_w:]
+def _repetition_penalty_device(logits, prev: torch.Tensor, rep_p: torch.Tensor, _one: torch.Tensor, rep_h=140.0, cap=3.0):
+    # if torch.equal(rep_p, _one) or prev_ids is None or prev_ids.numel() == 0:
+    #     return logits
+    # prev = prev_ids[-rep_w:]
     d = torch.arange(prev.numel(), 0, -1, device=logits.device, dtype=logits.dtype)
     w = (0.5 ** (d / rep_h))
     h = torch.zeros_like(logits)
@@ -79,59 +79,36 @@ class Generator:
         self._one = torch.tensor(1, device=self.device, dtype=dtype) # cached value for passing to compiled function
         # set global seed across all devices
         self.seed = seed
-        self.reset()
+        self.history = torch.empty(0, dtype=torch.long, device=self.device)
         # compile functions
-        COMPILE_SAMPLE = True  # no observed benefit on MPS for compile
-        COMPILE_RP = True
-        COMPILE_PREFILL = False
-        self.sample = torch.compile(_sample_device) if devtype != 'cpu' and COMPILE_SAMPLE else _sample_device
-        self.apply_repetition_penalty = torch.compile(_repetition_penalty_device) if devtype != 'cpu' and COMPILE_RP else _repetition_penalty_device
-        # prefill may be absent on minimal models used by tests; handle gracefully
-        prefill_fn = getattr(self.model, "prefill_batch", None)
-        if prefill_fn is not None and devtype != 'cpu' and COMPILE_PREFILL:
-            self.model_prefill = torch.compile(prefill_fn, dynamic=True, options={"max_autotune_gemm": False})
-        else:
-            self.model_prefill = prefill_fn
+        with torch.no_grad():
+            COMPILE_SAMPLE = False and devtype != 'cpu'
+            COMPILE_RP = False and devtype != 'cpu'
+            COMPILE_PREFILL = True and devtype != 'cpu'
+            self.sample = torch.compile(_sample_device, dynamic=False) if COMPILE_SAMPLE else _sample_device
+            self.apply_repetition_penalty = torch.compile(_repetition_penalty_device, dynamic=False) if COMPILE_RP else _repetition_penalty_device
+            self.model_prefill = torch.compile(self.model.prefill_batch, dynamic=False, options={"max_autotune_gemm": False}) if COMPILE_PREFILL else self.model.prefill_batch
 
         # finish initialization
         self.reset()
-        # perform brief warmup for stable metrics when supported by the model
-        self._can_warmup = hasattr(self.model, "prefill_batch") and hasattr(self.model, "step")
-        if self._can_warmup:
-            self.warmup()
+        # warmup
+        self.warmup()
 
-    def warmup(self, steps=8):
-        # keep prompt length within attention window to avoid assertion errors in tests
-        for i in range(1, steps):
-            max_tokens = 2
-            prompt_len = min(self.window, max(1, 2 * i))
-            prompt = torch.randint(0, self.vocab_size, (prompt_len,), device=self.device)
-            gen = self.generate(prompt, max_tokens)
-            for _ in range(max_tokens):
-                try:
-                    next(gen)
-                except StopIteration:
-                    break
-            self.reset()
+    def maybe_compile_prefill(self, max_sequence_length: int):
+        # torch==2.9.0: torch/_meta_registrations.py
+        # calling a compiled function that calls into SDPA from within torch.no_grad() seems to trigger an issue
+        # creating static guards. As a workaround I compile for different cases implied by the guards and indirect accordingly
+        pass
 
-    def _sample(self, logits: torch.Tensor):
-        """Convenience wrapper used by tests: greedy sample after applying filters.
-        - If logits is 1D [V], returns a Python int index.
-        - If logits is 2D [B, V], returns a 1D tensor of indices on the same device.
-        This is deterministic and does not use Gumbel noise, matching test expectations.
-        """
-        if self.temperature == 0.0:
-            y = torch.argmax(logits, dim=-1)
-        else:
-            x = logits / max(float(self.temperature), 1e-6)
-            x = _topk_filter(x, self.top_k)
-            x = _topp_filter(x, self.top_p)
-            y = torch.argmax(x, dim=-1)
-        if isinstance(y, torch.Tensor) and y.ndim == 0:
-            return int(y.item())
-        if isinstance(y, torch.Tensor) and y.ndim == 1 and logits.ndim == 1:
-            return int(y.item())
-        return y
+    def warmup(self, steps=2):
+        print("Warming up...")
+        with torch.no_grad():
+            prompt_len = 666
+            prompt = torch.randint(0, self.vocab_size, (1,prompt_len), device=self.device)
+            min_sdpa = 9
+            max_for_fast_sdpa = 1023
+            torch._dynamo.mark_dynamic(prompt, 1, min=min_sdpa, max=max_for_fast_sdpa)
+            self.model_prefill(prompt, self.window)
 
     def _sync(self):
         d = str(self.device)
@@ -149,31 +126,34 @@ class Generator:
         return self
 
     def reset(self):
-        # Make model.reset() optional so tests using dummy models without reset() still work
-        if hasattr(self.model, "reset"):
-            self.model.reset()
+        self.model.reset()
         torch.manual_seed(self.seed)
         self.cache.reset()
         # dynamic-sized history to match tests' expectations
         self.history = torch.empty(0, dtype=torch.long, device=self.device)
-        self.history_len = 0
 
     def _prefill(self, prompt_ids: torch.Tensor):
-        logits, kv = self.model_prefill(prompt_ids[None, :], window=self.window)
-        logits, kv = logits.to(self.dtype), kv.to(self.dtype)
-        logits = logits[..., :self.vocab_size]
-        self.cache.bulk_write_packed(kv, len(prompt_ids), window=self.window)
-        # update history to exactly the prompt ids (dynamic length)
-        self.history = prompt_ids.to(dtype=torch.long, device=self.device).clone()
-        self.history_len = self.history.numel()
-        return logits
+        with torch.no_grad():
+            prompt_ids = prompt_ids[None,:]
+            # torch._dynamo.mark_dynamic(prompt_ids, 1, min=1, max=self.window - 1)
+            # TODO remove these hardcoded guards
+            min_sdpa = 9
+            max_for_fast_sdpa = 1023
+            torch._dynamo.mark_dynamic(prompt_ids, 1, min=min_sdpa, max=max_for_fast_sdpa)
+            logits, kv = self.model_prefill(prompt_ids, window=self.window)
+            logits, kv = logits.to(self.dtype), kv.to(self.dtype)
+            logits = logits[..., :self.vocab_size]
+            prompt_ids = prompt_ids.squeeze(0)
+            self.cache.bulk_write_packed(kv, len(prompt_ids), window=self.window)
+            self.history = torch.cat([self.history, prompt_ids.to(dtype=torch.long, device=self.device)], dim=0)
+            return logits
 
     def _step(self, token: torch.Tensor | int):
         # ensure token is a 0-dim long tensor on device
-        if not isinstance(token, torch.Tensor):
-            token = torch.tensor(token, dtype=torch.long, device=self.device)
-        else:
-            token = token.to(device=self.device, dtype=torch.long).reshape(());
+        # if not isinstance(token, torch.Tensor):
+        #     token = torch.tensor(token, dtype=torch.long, device=self.device)
+        # else:
+        #     token = token.to(device=self.device, dtype=torch.long).reshape(())
         k_ctxs, v_ctxs = [], []
         for i in range(len(self.model.blocks)):
             kc, vc = self.cache.view(i)
@@ -187,12 +167,10 @@ class Generator:
             assert(k_new[i] is not None); assert(v_new[i] is not None)
             self.cache.write(i, k_new[i], v_new[i])
         self.cache.advance()
-        # append token to dynamic history
         self.history = torch.cat([self.history, token.view(1)], dim=0)
-        self.history_len += 1
         return logits
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def generate(self, prompt_ids: torch.Tensor, max_new_tokens) -> Generator[torch.Tensor, None, tuple[torch.Tensor, float, float]]:
         assert prompt_ids.ndim == 1
         assert prompt_ids.size(0) > 0 # must have at least one token
@@ -204,7 +182,15 @@ class Generator:
         logits = self._prefill(prompt_ids)
         self._sync(); t1 = time.perf_counter()
         for i in range(max_new_tokens):
-            logits = self.apply_repetition_penalty(logits[-1], self.history, self.rep_p_t, self._one)
+            logits = logits[-1]
+            torch._dynamo.mark_dynamic(logits, 0, min=1, max=self.max_seq_len)
+            rep_pen_w = 128
+            prev_ids = self.history[-rep_pen_w:]
+            torch._dynamo.mark_dynamic(prev_ids, 0, min=2, max=self.max_seq_len)
+            # if self.history.numel() == 128:
+            #     torch._dynamo.mark_dynamic(self.history, 0, min=2, max=self.max_seq_len)
+            #     self.apply_repetition_penalty = torch.compile(_repetition_penalty_device, dynamic=False)
+            logits = self.apply_repetition_penalty(logits, prev_ids, self.rep_p_t, self._one)
             tok = self.sample(logits, self.temperature, self.top_k, self.top_p)
             if tok == self.eos_token_id:
                 break
@@ -215,10 +201,9 @@ class Generator:
                 # Final token: append to history to reflect all generated tokens in the return value
                 t = tok.to(device=self.device, dtype=torch.long).reshape(())
                 self.history = torch.cat([self.history, t.view(1)], dim=0)
-                self.history_len += 1
                 logits = None
         self._sync(); t2 = time.perf_counter()
         prefill_duration = t1 - t0
         step_duration = t2 - t1
-        out = self.history[:self.history_len].detach().clone()
+        out = self.history.detach().clone()
         return out, prefill_duration, step_duration
