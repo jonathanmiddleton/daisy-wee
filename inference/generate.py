@@ -1,5 +1,5 @@
 import time
-from typing import Generator
+from typing import Generator, Callable, Any
 import torch
 import torch.nn.functional as F
 from inference.kv_cache import KVCache
@@ -61,7 +61,7 @@ class Generator:
         self.device = next(model.parameters()).device if device is None else device
         self.dtype = dtype
         assert self.device is not None
-        devtype = "cuda" if str(self.device).startswith("cuda") else ("mps" if str(self.device).startswith("mps") else "cpu")
+        self.devtype = "cuda" if str(self.device).startswith("cuda") else ("mps" if str(self.device).startswith("mps") else "cpu")
         h = None; d = None
         for b in self.model.blocks:
             a = getattr(b, "attn", None)
@@ -81,34 +81,89 @@ class Generator:
         self.seed = seed
         self.history = torch.empty(0, dtype=torch.long, device=self.device)
         # compile functions
-        with torch.no_grad():
-            COMPILE_SAMPLE = False and devtype != 'cpu'
-            COMPILE_RP = False and devtype != 'cpu'
-            COMPILE_PREFILL = True and devtype != 'cpu'
+        with torch.inference_mode():
+            if self.devtype == 'mps':
+                torch._inductor.config.max_autotune_gemm = False
+                torch._inductor.config.max_autotune = False
+            COMPILE_SAMPLE = False and self.devtype != 'cpu' # garbage if enabled, torch 2.9.0
+            COMPILE_RP = True and self.devtype != 'cpu'
             self.sample = torch.compile(_sample_device, dynamic=False) if COMPILE_SAMPLE else _sample_device
             self.apply_repetition_penalty = torch.compile(_repetition_penalty_device, dynamic=False) if COMPILE_RP else _repetition_penalty_device
-            self.model_prefill = torch.compile(self.model.prefill_batch, dynamic=False, options={"max_autotune_gemm": False}) if COMPILE_PREFILL else self.model.prefill_batch
-
-        # finish initialization
+            self.model_prefill_small = None
+            self.model_prefill_medium = None
+            self.model_prefill_large = None
+            # finish initialization
         self.reset()
         # warmup
         self.warmup()
 
-    def maybe_compile_prefill(self, max_sequence_length: int):
-        # torch==2.9.0: torch/_meta_registrations.py
-        # calling a compiled function that calls into SDPA from within torch.no_grad() seems to trigger an issue
-        # creating static guards. As a workaround I compile for different cases implied by the guards and indirect accordingly
-        pass
+    def maybe_compile(self, func):
+        """
+        Compile if a device is available, with the appropriate context and options. Otherwise return the original function.
+        """
+        with torch.inference_mode():
+            COMPILE_PREFILL = True and self.devtype != 'cpu'
+            options = {"max_autotune_gemm": False} if self.devtype == 'mps' else None
+            return torch.compile(func, dynamic=False, options=options) if COMPILE_PREFILL else self.model.prefill_batch
+
+    def prefill_fn_for_input(self, x: torch.Tensor):
+        """
+        Lazily compile model_prefill for different sequence lengths. Mark the input tensor as dynamic as appropriate.
+        This is a workaround for MPS related defects in torch 2.8.0, 2.9.0, and 2.10.0-pre.
+        (1) dynamic=True fails on MPS.
+        (2) in torch/_meta_registrations.py:
+            calling a compiled function that calls into SDPA from within torch.no_grad/inference_mode context seems creates
+            a static guard on a SymInt based on internal SDPA indirection. As a workaround I compile for different
+            cases implied by the guards and indirect accordingly.
+        """
+        assert x.ndim == 2
+        sequence_length = x.size(1)
+        min_sdpa = 9
+        max_for_fast_sdpa = 1023
+        max_seq_len_sdpa = self.max_seq_len # maximum supported by SDPA?
+
+        rules: list[tuple[Callable[[int], bool], str]] = [
+            (lambda n: n <= min_sdpa, 'model_prefill_small'),
+            (lambda n: min_sdpa < n <= max_for_fast_sdpa, 'model_prefill_medium'),
+            (lambda n: max_for_fast_sdpa < n , 'model_prefill_large'),
+        ]
+        self.model_prefill_small = self.model.prefill_batch # we never compile below min_sdpa because the guard will always fail
+        fn = None
+        for pred, fn_name in rules:
+            if pred(sequence_length):
+                fn = getattr(self, fn_name)
+                if fn is None:
+                    # lazy maybe-compile
+                    compiled = self.maybe_compile(self.model.prefill_batch)
+                    setattr(self, fn_name, compiled)
+                    fn = compiled
+                    break
+        # if sequence_length > max_for_fast_sdpa:
+        #     torch._dynamo.mark_dynamic(x, 1, min=sequence_length, max=max_seq_len_sdpa)
+        # elif sequence_length > min_sdpa:
+        #     torch._dynamo.mark_dynamic(x, 1, min=sequence_length, max=max_for_fast_sdpa)
+        max = max_seq_len_sdpa if sequence_length > max_for_fast_sdpa else max_for_fast_sdpa
+        torch._dynamo.mark_dynamic(x, 1, min=sequence_length, max=max)
+
+        assert fn is not None
+        return fn
+
 
     def warmup(self, steps=2):
-        print("Warming up...")
-        with torch.no_grad():
-            prompt_len = 666
-            prompt = torch.randint(0, self.vocab_size, (1,prompt_len), device=self.device)
-            min_sdpa = 9
-            max_for_fast_sdpa = 1023
-            torch._dynamo.mark_dynamic(prompt, 1, min=min_sdpa, max=max_for_fast_sdpa)
-            self.model_prefill(prompt, self.window)
+        print("Warming up...", end="", flush=True)
+
+        with torch.inference_mode():
+            print("[1/2]...", end="", flush=True)
+            prompt_len_med = 666
+            prompt_med = torch.randint(0, self.vocab_size, (1,prompt_len_med), device=self.device)
+            fn_med = self.prefill_fn_for_input(prompt_med)
+            fn_med(prompt_med, self.window)
+            print("[2/2]...", end="", flush=True)
+            prompt_len_lg = 2048
+            prompt_lg = torch.randint(0, self.vocab_size, (1,prompt_len_lg), device=self.device)
+            fn_lg = self.prefill_fn_for_input(prompt_lg)
+            fn_lg(prompt_lg, self.window)
+        print("...done.", flush=True)
 
     def _sync(self):
         d = str(self.device)
@@ -133,20 +188,15 @@ class Generator:
         self.history = torch.empty(0, dtype=torch.long, device=self.device)
 
     def _prefill(self, prompt_ids: torch.Tensor):
-        with torch.no_grad():
-            prompt_ids = prompt_ids[None,:]
-            # torch._dynamo.mark_dynamic(prompt_ids, 1, min=1, max=self.window - 1)
-            # TODO remove these hardcoded guards
-            min_sdpa = 9
-            max_for_fast_sdpa = 1023
-            torch._dynamo.mark_dynamic(prompt_ids, 1, min=min_sdpa, max=max_for_fast_sdpa)
-            logits, kv = self.model_prefill(prompt_ids, window=self.window)
-            logits, kv = logits.to(self.dtype), kv.to(self.dtype)
-            logits = logits[..., :self.vocab_size]
-            prompt_ids = prompt_ids.squeeze(0)
-            self.cache.bulk_write_packed(kv, len(prompt_ids), window=self.window)
-            self.history = torch.cat([self.history, prompt_ids.to(dtype=torch.long, device=self.device)], dim=0)
-            return logits
+        prompt_ids = prompt_ids[None,:]
+        fn = self.prefill_fn_for_input(prompt_ids)
+        logits, kv = fn(prompt_ids, window=self.window)
+        logits, kv = logits.to(self.dtype), kv.to(self.dtype)
+        logits = logits[..., :self.vocab_size]
+        prompt_ids = prompt_ids.squeeze(0)
+        self.cache.bulk_write_packed(kv, len(prompt_ids), window=self.window)
+        self.history = torch.cat([self.history, prompt_ids.to(dtype=torch.long, device=self.device)], dim=0)
+        return logits
 
     def _step(self, token: torch.Tensor | int):
         # ensure token is a 0-dim long tensor on device
@@ -170,7 +220,7 @@ class Generator:
         self.history = torch.cat([self.history, token.view(1)], dim=0)
         return logits
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def generate(self, prompt_ids: torch.Tensor, max_new_tokens) -> Generator[torch.Tensor, None, tuple[torch.Tensor, float, float]]:
         assert prompt_ids.ndim == 1
         assert prompt_ids.size(0) > 0 # must have at least one token
@@ -182,14 +232,12 @@ class Generator:
         logits = self._prefill(prompt_ids)
         self._sync(); t1 = time.perf_counter()
         for i in range(max_new_tokens):
+            # prepare tensors for passing to potentially compiled functions, avoiding recompiles for shape changes
             logits = logits[-1]
             torch._dynamo.mark_dynamic(logits, 0, min=1, max=self.max_seq_len)
             rep_pen_w = 128
             prev_ids = self.history[-rep_pen_w:]
             torch._dynamo.mark_dynamic(prev_ids, 0, min=2, max=self.max_seq_len)
-            # if self.history.numel() == 128:
-            #     torch._dynamo.mark_dynamic(self.history, 0, min=2, max=self.max_seq_len)
-            #     self.apply_repetition_penalty = torch.compile(_repetition_penalty_device, dynamic=False)
             logits = self.apply_repetition_penalty(logits, prev_ids, self.rep_p_t, self._one)
             tok = self.sample(logits, self.temperature, self.top_k, self.top_p)
             if tok == self.eos_token_id:
