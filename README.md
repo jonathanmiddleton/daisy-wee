@@ -69,10 +69,79 @@ python sample.py checkpoints/20251018T0111-val1.750-step001300-run1-best.pt \
 
 For interactive chat:
 
-```bash
+```bash[env.example](../../Downloads/env.example)
 python sample.py checkpoints/instruct_model.pt --chat
 ```
 
+### (minimal) OpenAI Responses-style REST API
+
+```bash
+pip install -r app.requirements.txt
+# set CHECKPOINT_PATH and optional device/auth in env
+export CHECKPOINT_PATH=/abs/path/to/checkpoints/model.pt
+uvicorn app:app --host 0.0.0.0 --port 8000
+```
+
+```bash
+# Example env exports. Checkpoint path is required.
+CHECKPOINT_PATH=/abs/path/to/checkpoints/model.pt
+
+# Optional
+DEVICE=
+BASIC_AUTH_USER=user
+BASIC_AUTH_PASS=pass
+SEED=1337
+```
+
+#### Usage
+An example client is available in `examples/app_client.py`. 
+
+```bash
+curl -u user:pass \
+  -X POST http://localhost:8000/v1/responses \
+  -H 'content-type: application/json' \
+  -d '{
+    "model":"daisy-wee",
+    "input":[
+      {"role":"system","content":[{"type":"input_text","text":"You are concise."}]},
+      {"role":"user","content":[{"type":"input_text","text":"Name two prime numbers > 10."}]}
+    ],
+    "max_output_tokens":64
+  }'
+```
+
+#### Example Request
+```json
+{
+  "model": "daisy-wee",
+  "input": [
+    {"role":"system","content":[{"type":"input_text","text":"..."}]},
+    {"role":"user","content":[{"type":"input_text","text":"..."}]},
+    {"role":"assistant","content":[{"type":"input_text","text":"..."}]}
+  ],
+  "session_id": "optional",
+  "max_output_tokens": 256,
+  "temperature": 0.7,
+  "top_k": 50,
+  "top_p": 0.95,
+  "repetition_penalty": 1.15,
+  "stream": false
+}
+```
+#### Example Response
+```json
+{
+  "id": "resp_...",
+  "object": "response",
+  "created": 1730...,
+  "model": "daisy-wee",
+  "output": [{"type":"message","role":"assistant","content":[{"type":"output_text","text":"..."}]}],
+  "usage": {"prompt_tokens":N,"completion_tokens":M,"total_tokens":N+M},
+  "meta": {"prefill_ms":..., "gen_ms":...},
+  "session_id": "sess_..."
+}
+
+```
 ---
 
 ## Model Architecture

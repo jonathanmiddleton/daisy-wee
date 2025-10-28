@@ -1,8 +1,11 @@
 import time
+import logging
 from typing import Generator, Callable, Any
 import torch
 import torch.nn.functional as F
 from inference.kv_cache import KVCache
+
+logger = logging.getLogger(__name__)
 
 def _topk_filter(x, k):
     if k is None or k <= 0 or k >= x.size(-1):
@@ -164,20 +167,20 @@ class Generator:
         """
         Force precompile of functions with inputs that induce appropriate guards. Primarily a concern for MPS.
         """
-        print("Generator warming up...", end="", flush=True)
+        logger.info("Generator warming up...")
 
         with torch.inference_mode():
-            print("[1/2]...", end="", flush=True)
+            logger.info("[1/2]...")
             prompt_len_med = 10
             prompt_med = torch.randint(0, self.vocab_size, (1,prompt_len_med), device=self.device)
             fn_med = self._prefill_fn_for_input(prompt_med)
             fn_med(prompt_med, self.window)
-            print("[2/2]...", end="", flush=True)
+            logger.info("[2/2]...")
             prompt_len_lg = 1024
             prompt_lg = torch.randint(0, self.vocab_size, (1,prompt_len_lg), device=self.device)
             fn_lg = self._prefill_fn_for_input(prompt_lg)
             fn_lg(prompt_lg, self.window)
-        print("...done.", flush=True)
+        logger.info("...done.")
 
     def _sync(self):
         d = str(self.device)
