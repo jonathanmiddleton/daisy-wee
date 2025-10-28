@@ -53,7 +53,7 @@ def _repetition_penalty_device(logits, prev: torch.Tensor, rep_p: torch.Tensor, 
 
 
 class Generator:
-    def __init__(self, model, window, seed, device=None, dtype=torch.float16, max_seq_len: int = 65536, temperature=1.0, top_k=None, top_p=None, repetition_penalty=1.0, eos_token_id=None):
+    def __init__(self, model, window, seed, device=None, dtype=torch.float16, max_seq_len: int = 65536, temperature=1.0, top_k=None, top_p=None, repetition_penalty=1.0, eos_token_id=None, torch_compile=True):
         if eos_token_id is None:
             eos_token_id = getattr(model, "eos_token_id", None)
         assert eos_token_id is not None
@@ -77,37 +77,42 @@ class Generator:
         self.window = window
         self.vocab_size = self.model.embed.num_embeddings
         self._one = torch.tensor(1, device=self.device, dtype=dtype) # cached value for passing to compiled function
-        # set global seed across all devices
+        # set seed across all devices
         self.seed = seed
+        torch.manual_seed(self.seed)
         self.history = torch.empty(0, dtype=torch.long, device=self.device)
-        # compile functions
-        with torch.inference_mode():
-            if self.devtype == 'mps':
-                torch._inductor.config.max_autotune_gemm = False
-                torch._inductor.config.max_autotune = False
-            COMPILE_SAMPLE = False and self.devtype != 'cpu' # garbage if enabled, torch 2.9.0
-            COMPILE_RP = True and self.devtype != 'cpu'
-            self.sample = torch.compile(_sample_device, dynamic=False) if COMPILE_SAMPLE else _sample_device
-            self.apply_repetition_penalty = torch.compile(_repetition_penalty_device, dynamic=False) if COMPILE_RP else _repetition_penalty_device
-            self.model_prefill_small = None
-            self.model_prefill_medium = None
-            self.model_prefill_large = None
+        self.torch_compile = torch_compile
+        # maybe compile
+        COMPILE_SAMPLE = False
+        self.sample = torch.compile(_sample_device, dynamic=False) if COMPILE_SAMPLE else _sample_device
+        self.apply_repetition_penalty = self._maybe_compile(_repetition_penalty_device)
+        self.model_prefill_not_compiled = self.model.prefill
+        self.model_prefill_medium = None
+        self.model_prefill_large = None
             # finish initialization
-        self.reset()
-        # warmup
+        self.reset_history()
         self.warmup()
 
-    def maybe_compile(self, func):
+    def _maybe_compile(self, func):
         """
         Compile if a device is available, with the appropriate context and options. Otherwise return the original function.
         """
-        with torch.inference_mode():
-            COMPILE_PREFILL = True and self.devtype != 'cpu'
-            options = {"max_autotune_gemm": False} if self.devtype == 'mps' else None
-            return torch.compile(func, dynamic=False, options=options) if COMPILE_PREFILL else self.model.prefill_batch
+        if not self.torch_compile:
+            return func
 
-    def prefill_fn_for_input(self, x: torch.Tensor):
+        with torch.inference_mode():
+            if self.devtype == 'mps':
+                options = {"max_autotune_gemm": False}
+                return torch.compile(func, dynamic=False, options=options)
+            elif self.devtype == 'cuda':
+                return torch.compile(func, dynamic=False)
+            else:
+                return func
+
+    def _prefill_fn_for_input(self, x: torch.Tensor):
         """
+        This is an ugly hack to make compiling work on MPS.
+
         Lazily compile model_prefill for different sequence lengths. Mark the input tensor as dynamic as appropriate.
         This is a workaround for MPS related defects in torch 2.8.0, 2.9.0, and 2.10.0-pre.
         (1) dynamic=True fails on MPS.
@@ -117,51 +122,60 @@ class Generator:
             cases implied by the guards and indirect accordingly.
         """
         assert x.ndim == 2
-        sequence_length = x.size(1)
-        min_sdpa = 9
-        max_for_fast_sdpa = 1023
-        max_seq_len_sdpa = self.max_seq_len # maximum supported by SDPA?
+        assert x.size(1) > 0
+        min_sdpa = 9 # magic
+        max_for_fast_sdpa = 1023 # inferred from torch 2.9.0 MPS SDPA kernels
 
-        rules: list[tuple[Callable[[int], bool], str]] = [
-            (lambda n: n <= min_sdpa, 'model_prefill_small'),
-            (lambda n: min_sdpa < n <= max_for_fast_sdpa, 'model_prefill_medium'),
-            (lambda n: max_for_fast_sdpa < n , 'model_prefill_large'),
+        """
+            max_seq_len_sdpa:
+            Torch infers that sequence length is bounded by our window_size-1:
+            torch.fx.experimental.symbolic_shapes.ConstraintViolationError: Constraints violated ...
+            ...Not all values of L['input_ids'].size()[1] = L['input_ids'].size()[1] in the specified range 2048 <= L['input_ids'].size()[1] <= 65536 satisfy the generated guard 2048 <= L['input_ids'].size()[1] and L['input_ids'].size()[1] <= {window_size-1}
+        """
+        max_seq_len_sdpa = self.window-1
+
+        if x.size(1) > max_seq_len_sdpa:
+            # compile will fail
+            return self.model.prefill
+
+        rules: list[tuple[Callable[[int], bool], tuple[str, tuple[int,int]]]] = [
+            # (Predicate, (Function name, (min,max))
+            (lambda n: n <= min_sdpa, ('model_prefill_not_compiled', (1, min_sdpa)),),
+            (lambda n: min_sdpa < n <= max_for_fast_sdpa, ('model_prefill_medium', (min_sdpa+1, max_for_fast_sdpa))),
+            (lambda n: max_for_fast_sdpa < n, ('model_prefill_large', (max_for_fast_sdpa+1, max_seq_len_sdpa))),
         ]
-        self.model_prefill_small = self.model.prefill_batch # we never compile below min_sdpa because the guard will always fail
         fn = None
-        for pred, fn_name in rules:
-            if pred(sequence_length):
+        for pred, (fn_name,(min,max)) in rules:
+            if pred(x.size(1)):
                 fn = getattr(self, fn_name)
                 if fn is None:
                     # lazy maybe-compile
-                    compiled = self.maybe_compile(self.model.prefill_batch)
+                    compiled = self._maybe_compile(self.model.prefill)
                     setattr(self, fn_name, compiled)
                     fn = compiled
+                    torch._dynamo.mark_dynamic(x, 1, min=min, max=max)
                     break
-        # if sequence_length > max_for_fast_sdpa:
-        #     torch._dynamo.mark_dynamic(x, 1, min=sequence_length, max=max_seq_len_sdpa)
-        # elif sequence_length > min_sdpa:
-        #     torch._dynamo.mark_dynamic(x, 1, min=sequence_length, max=max_for_fast_sdpa)
-        max = max_seq_len_sdpa if sequence_length > max_for_fast_sdpa else max_for_fast_sdpa
-        torch._dynamo.mark_dynamic(x, 1, min=sequence_length, max=max)
 
         assert fn is not None
         return fn
 
 
-    def warmup(self, steps=2):
-        print("Warming up...", end="", flush=True)
+    def warmup(self):
+        """
+        Force precompile of functions with inputs that induce appropriate guards. Primarily a concern for MPS.
+        """
+        print("Generator warming up...", end="", flush=True)
 
         with torch.inference_mode():
             print("[1/2]...", end="", flush=True)
-            prompt_len_med = 666
+            prompt_len_med = 10
             prompt_med = torch.randint(0, self.vocab_size, (1,prompt_len_med), device=self.device)
-            fn_med = self.prefill_fn_for_input(prompt_med)
+            fn_med = self._prefill_fn_for_input(prompt_med)
             fn_med(prompt_med, self.window)
             print("[2/2]...", end="", flush=True)
-            prompt_len_lg = 2048
+            prompt_len_lg = 1024
             prompt_lg = torch.randint(0, self.vocab_size, (1,prompt_len_lg), device=self.device)
-            fn_lg = self.prefill_fn_for_input(prompt_lg)
+            fn_lg = self._prefill_fn_for_input(prompt_lg)
             fn_lg(prompt_lg, self.window)
         print("...done.", flush=True)
 
@@ -180,16 +194,15 @@ class Generator:
         self.rep_p_t = torch.tensor(repetition_penalty, device=self.rep_p_t.device, dtype=self.rep_p_t.dtype)
         return self
 
-    def reset(self):
-        self.model.reset()
-        torch.manual_seed(self.seed)
-        self.cache.reset()
+    def reset_history(self):
+        self.model.reset_history()
+        self.cache.reset_history()
         # dynamic-sized history to match tests' expectations
         self.history = torch.empty(0, dtype=torch.long, device=self.device)
 
     def _prefill(self, prompt_ids: torch.Tensor):
         prompt_ids = prompt_ids[None,:]
-        fn = self.prefill_fn_for_input(prompt_ids)
+        fn = self._prefill_fn_for_input(prompt_ids)
         logits, kv = fn(prompt_ids, window=self.window)
         logits, kv = logits.to(self.dtype), kv.to(self.dtype)
         logits = logits[..., :self.vocab_size]
@@ -227,7 +240,7 @@ class Generator:
         assert prompt_ids.size(0) <= self.window, "prompt length must be <= attention window"
         assert prompt_ids.size(0)
         assert max_new_tokens > 0
-        self.reset()
+        self.reset_history()
         self._sync(); t0 = time.perf_counter()
         logits = self._prefill(prompt_ids)
         self._sync(); t1 = time.perf_counter()
