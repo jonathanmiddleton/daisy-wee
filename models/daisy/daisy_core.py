@@ -173,7 +173,7 @@ class DaisyCore(nn.Module):
         logits = F.linear(x.flatten(end_dim=1).bfloat16(), self.lm_head_w.bfloat16()).float()
         return logits, k_new_list, v_new_list
 
-    def prefill_batch(self, input_ids: Tensor, window: int | None = None, debug: bool = False):
+    def prefill(self, input_ids: Tensor, window: int | None = None, debug: bool = False):
         assert input_ids.ndim == 2
         B, T = input_ids.shape
         L = len(self.blocks)

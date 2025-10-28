@@ -52,7 +52,7 @@ class DummyModel(nn.Module):
         pass
 
     @torch.no_grad()
-    def prefill_batch(self, input_ids: torch.Tensor, window: int | None = None, debug: bool = False):
+    def prefill(self, input_ids: torch.Tensor, window: int | None = None, debug: bool = False):
         assert input_ids.ndim == 2 and input_ids.size(0) == 1
         B, T = input_ids.shape
         L = len(self.blocks)
@@ -202,7 +202,7 @@ def test_sample_behaviors():
             self.embed = type("E", (), {"num_embeddings": V})()
         def reset(self):
             pass
-        def prefill_batch(self, input_ids: torch.Tensor, window: int | None = None, debug: bool = False):
+        def prefill(self, input_ids: torch.Tensor, window: int | None = None, debug: bool = False):
             # Minimal stub to satisfy Generator.warmup path in tests
             B, T = input_ids.shape
             H, D = 1, 1

@@ -109,7 +109,7 @@ def run_benchmark(
 
     # Warmup: one prefill + a few steps
     cache = build_cache(model, window, device, dtype=dtype)
-    _logits, kv = model.prefill_batch(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
+    _logits, kv = model.prefill(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
     cache.bulk_write_packed(kv.to(dtype), pos=prompt_len, window=window)
     logits = _logits
     for _ in range(min(8, new_tokens)):
@@ -131,7 +131,7 @@ def run_benchmark(
         cache.reset()
         with dev_sync(device):
             t0 = time.perf_counter()
-            _logits, kv = model.prefill_batch(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
+            _logits, kv = model.prefill(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
             cache.bulk_write_packed(kv.to(dtype), pos=prompt_len, window=window)
         t1 = time.perf_counter()
         prefill_times.append(t1 - t0)
@@ -140,7 +140,7 @@ def run_benchmark(
     step_times = []
     for _ in range(step_reps):
         cache.reset()
-        _logits, kv = model.prefill_batch(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
+        _logits, kv = model.prefill(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
         cache.bulk_write_packed(kv.to(dtype), pos=prompt_len, window=window)
         logits = _logits
         with dev_sync(device):
@@ -207,7 +207,7 @@ def run_benchmark(
 
 
 def main():
-    p = argparse.ArgumentParser(description="Benchmark DaisyCore prefill_batch and step performance.")
+    p = argparse.ArgumentParser(description="Benchmark DaisyCore prefill and step performance.")
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("--checkpoint", type=str, help="Path to checkpoint .pt file")
     src.add_argument("--model-spec", type=str, help="Model spec name or YAML path")

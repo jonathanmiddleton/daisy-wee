@@ -127,7 +127,7 @@ class PrecisionRunner:
     @torch.inference_mode()
     def _prefill_logits(self, model: torch.nn.Module, input_ids_1d: torch.Tensor) -> torch.Tensor:
         # Returns logits for last position (1, V)
-        logits, _ = model.prefill_batch(input_ids_1d[None, :], window=int(input_ids_1d.numel()))
+        logits, _ = model.prefill(input_ids_1d[None, :], window=int(input_ids_1d.numel()))
         return logits
 
     @torch.inference_mode()
@@ -152,17 +152,17 @@ class PrecisionRunner:
         # 1) Run a single prefill on the full sequence to build K/V for all layers/positions
         if amp_ctx is not None:
             with amp_ctx:
-                _, kv = model.prefill_batch(ids[None, :], window=win)
+                _, kv = model.prefill(ids[None, :], window=win)
         else:
-            _, kv = model.prefill_batch(ids[None, :], window=win)
+            _, kv = model.prefill(ids[None, :], window=win)
         # kv shape: (2, L, B=1, H, T, D)
         L = int(kv.size(1))
         # 2) First position (t=1, pos=0): do a tiny prefill once
         if amp_ctx is not None:
             with amp_ctx:
-                z1, _ = model.prefill_batch(ids[:1][None, :], window=1)
+                z1, _ = model.prefill(ids[:1][None, :], window=1)
         else:
-            z1, _ = model.prefill_batch(ids[:1][None, :], window=1)
+            z1, _ = model.prefill(ids[:1][None, :], window=1)
         out: List[torch.Tensor] = [z1]
         # 3) Positions t=2..T-1 via step() using sliced KV as context
         for t in range(2, T):
@@ -340,7 +340,7 @@ class PrecisionRunner:
         nll = 0.0
         for t, y in enumerate(cont_tokens):
             prefix = torch.cat([ids, torch.tensor(cont_tokens[:t], device=device, dtype=torch.long)])
-            logits, _ = model.prefill_batch(prefix[None, :], window=int(prefix.numel()))
+            logits, _ = model.prefill(prefix[None, :], window=int(prefix.numel()))
             logp = torch.log_softmax(logits[0], dim=-1)
             nll += float(-logp[int(y)].item())
         return nll
