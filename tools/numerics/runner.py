@@ -252,7 +252,7 @@ class PrecisionRunner:
         gen.amp_ctx = self._autocast_ctx(case.device, case.dtype_policy)
         max_new = int(self.cfg.decoding.mode_closed_loop.get("max_new_tokens", 256))
         for p in prompts:
-            gen.reset()
+            gen.reset_history()
             toks = p.tokens[:window]
             if len(toks) == 0:
                 continue
@@ -315,7 +315,7 @@ class PrecisionRunner:
         ref_outs: Dict[str, List[int]] = {}
         max_new = int(self.cfg.decoding.mode_closed_loop.get("max_new_tokens", 256))
         for p in prompts:
-            gen.reset()
+            gen.reset_history()
             toks = p.tokens[:window]
             if len(toks) == 0:
                 continue

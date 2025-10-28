@@ -96,6 +96,7 @@ def run_benchmark(
     compile_model: bool = True,
     seed: int = 1234,
 ):
+    print("Running benchmarks, please wait... ", flush=True)
     torch.manual_seed(seed)
     vocab_size = int(model.embed.num_embeddings)  # type: ignore[attr-defined]
 
@@ -128,7 +129,7 @@ def run_benchmark(
     # Prefill timing
     prefill_times = []
     for _ in range(prefill_reps):
-        cache.reset()
+        cache.reset_history()
         with dev_sync(device):
             t0 = time.perf_counter()
             _logits, kv = model.prefill(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
@@ -139,7 +140,7 @@ def run_benchmark(
     # Step timing (each rep includes fresh cache from prefill to isolate step speed)
     step_times = []
     for _ in range(step_reps):
-        cache.reset()
+        cache.reset_history()
         _logits, kv = model.prefill(prompt_ids[None, :], window=window)  # type: ignore[attr-defined]
         cache.bulk_write_packed(kv.to(dtype), pos=prompt_len, window=window)
         logits = _logits
@@ -164,7 +165,7 @@ def run_benchmark(
     gen_step_times: list[float] = []
     gen = Generator(model, window=window, seed=1337, device=device, dtype=dtype, temperature=0.0)
     for _ in range(step_reps):
-        gen.reset()
+        gen.reset_history()
         it = gen.generate(prompt_ids, max_new_tokens=new_tokens)
         while True:
             try:
@@ -380,8 +381,8 @@ def main():
     ]) + " |"
 
     # Generator-based rows
-    ppG_name = f"ppG{int(args.prompt_length)}"
-    tgG_name = f"tgG{int(args.new_tokens)}"
+    ppG_name = f"ppG={int(args.prompt_length)}"
+    tgG_name = f"tgG={int(args.new_tokens)}"
 
     row_ppG = "| " + " | ".join(static_cells + [
         pad(ppG_name, cols[5][1], cols[5][2]),
@@ -402,6 +403,7 @@ def main():
 
     print()
     print("Notes: t/s is mean ± 95% CI across repetitions. Synthetic random prompt tokens used.")
+    print("pp=prompt processing, tg=token generation, ppG=prompt processing via Generator, tgG=token generation via Generator")
 
 
 if __name__ == "__main__":

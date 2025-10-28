@@ -13,9 +13,9 @@ class Block(nn.Module):
         self.attn: CausalSelfAttention  = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim) if layer_idx in attn_layers else None
         self.mlp = MLP(dim)
 
-    def reset(self):
+    def reset_history(self):
         if self.attn is not None:
-            self.attn.reset()
+            self.attn.reset_history()
 
     def forward(self, x: Tensor, ve: Tensor | None, x0: Tensor, block_mask: BlockMask, lambdas: Tensor, sa_lambdas: Tensor):
         x = lambdas[0] * x + lambdas[1] * x0

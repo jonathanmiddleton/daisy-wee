@@ -82,7 +82,7 @@ def nll_and_ppl_for_reference(gen: Generator, prompt_ids: torch.Tensor, ref_ids:
     using the incremental Generator API.
     """
     assert prompt_ids.ndim == 1
-    gen.reset()
+    gen.reset_history()
     # Prefill with the prompt to get logits for first next token
     with measure_time():
         logits = gen._prefill(prompt_ids)

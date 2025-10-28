@@ -47,9 +47,9 @@ class DaisyCore(nn.Module):
         ]))
         self.desc = desc # non-functional, self-describing metadata
 
-    def reset(self):
+    def reset_history(self):
         for b in self.blocks:
-            b.reset()
+            b.reset_history()
 
     def create_blockmasks(self, input_seq: Tensor, sliding_window_num_blocks: Tensor):
         BLOCK_SIZE = self.window_block_size

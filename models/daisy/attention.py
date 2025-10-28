@@ -81,7 +81,7 @@ class CausalSelfAttention(nn.Module):
         self.last_q = None
         self.last_k = None
 
-    def reset(self):
+    def reset_history(self):
         self.last_q = None
         self.last_k = None
 

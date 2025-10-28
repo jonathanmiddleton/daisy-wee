@@ -11,10 +11,12 @@ class KVCache:
         self.t = 0
         self.device = device
         self.dtype = dtype
-        # finish initializing
-        self.reset()
+        self.k = torch.zeros(self.L, self.B, self.H, self.W, self.D, device=self.device, dtype=self.dtype)
+        self.v = torch.zeros(self.L, self.B, self.H, self.W, self.D, device=self.device, dtype=self.dtype)
+        self.t = 0
+        self._staged = [False] * self.L
 
-    def reset(self):
+    def reset_history(self):
         self.k = torch.zeros(self.L, self.B, self.H, self.W, self.D, device=self.device, dtype=self.dtype)
         self.v = torch.zeros(self.L, self.B, self.H, self.W, self.D, device=self.device, dtype=self.dtype)
         self.t = 0

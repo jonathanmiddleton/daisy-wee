@@ -134,7 +134,7 @@ if cli.chat:
             gen.set_repetition_penalty(updates['repetition_penalty'])
         if 'new' in updates:
             transcript = ""
-            gen.reset()
+            gen.reset_history()
             print("\033[2J\033[H", end="", flush=True)  # CSI 2J = clear, CSI H = home
             continue
         # If the user only passed settings, acknowledge and reprompt
@@ -167,10 +167,11 @@ if cli.chat:
         step_tps = len(new_ids) / step_time
         reply = decode(new_ids).strip()
         transcript = prompt_text + reply + "\n\n" #anything added to transcript becomes the prefix of the next prompt
-        print(f"\n({step_tps:.1f} step tokens/s, {pre_tps:.1f} prefill tokens/s)\n\n")
+        print(f"\n([Step] {step_tps:.1f} tokens/s, [Prefill] {pre_tps:.1f} tokens/s)\n\n")
     sys.exit(0)
 else:
     # Single-shot sample
+    print(f"Prompt: {cli.prompt}\n")
     prompt = template.format(prompt=cli.prompt)
     start_ids = encode(prompt)
     with torch.inference_mode():
@@ -186,4 +187,4 @@ else:
         new_ids = out_ids[len(start_ids):]
     pre_tps = len(start_ids) / pre_time
     step_tps = len(new_ids) / step_time
-    print(f"\n({step_tps:.1f} step tokens/s, {pre_tps:.1f} prefill tokens/s)\n\n")
+    print(f"\n([Step] {step_tps:.1f} tokens/s, [Prefill] {pre_tps:.1f} tokens/s)\n\n")

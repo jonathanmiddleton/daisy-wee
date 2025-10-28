@@ -95,7 +95,7 @@ class TestKVCache(unittest.TestCase):
             cache.advance()
 
         # Reset should clear time and make view empty again
-        cache.reset()
+        cache.reset_history()
         self.assertEqual(cache.t, 0)
         k, v = cache.view(layer=0)
         self.assertEqual(k.shape, (B, 0, H, D))

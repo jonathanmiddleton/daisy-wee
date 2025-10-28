@@ -11,7 +11,7 @@ class MLP(nn.Module):
         hdim = 4 * dim
         self.fc_w = nn.Parameter(init_linear(torch.empty(hdim, dim)).bfloat16())
         self.proj_w = nn.Parameter(torch.zeros(dim, hdim).bfloat16())
-        self.fc_w.wd_mul = 2.0
+        self.fc_w.wd_mul = 2.0 #Muon weight-decay multipliers
         self.proj_w.wd_mul = 2.0
 
     def forward(self, x: Tensor):

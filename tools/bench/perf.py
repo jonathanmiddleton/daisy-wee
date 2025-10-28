@@ -170,7 +170,7 @@ for cfg in combinations:
     except StopIteration:
         pass
 
-    gen.reset()
+    gen.reset_history()
     it = generate(X, max_new_tokens=max_tokens)
     with cuda_sync(device):
         t0 = time.time()

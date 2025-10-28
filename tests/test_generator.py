@@ -259,7 +259,7 @@ def test_generate_end_to_end(dummy_env):
     # tokens yielded only contain generated ids
     assert tokens == [4, 4, 4]
     # Final return from generator
-    gen.reset()
+    gen.reset_history()
     g = gen.generate(prompt, max_new_tokens=2)
     gen_tokens = []
     try:
