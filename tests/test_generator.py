@@ -48,6 +48,9 @@ class DummyModel(nn.Module):
         self.last_k_ctxs = None
         self.last_v_ctxs = None
 
+    def reset(self):
+        pass
+
     @torch.no_grad()
     def prefill_batch(self, input_ids: torch.Tensor, window: int | None = None, debug: bool = False):
         assert input_ids.ndim == 2 and input_ids.size(0) == 1
@@ -154,7 +157,8 @@ def test_step_writes_kv_and_advances_cache(dummy_env):
     t0 = gen.cache.t
 
     next_id = 11
-    logits = gen._step(next_id)
+    token_t = torch.tensor(next_id, dtype=torch.long, device=device)
+    logits = gen._step(token_t)
 
     # logits reflect current token
     expect = one_hot(V, next_id, device)
@@ -196,13 +200,24 @@ def test_sample_behaviors():
             Block = type("Block", (), {"attn": Attn()})
             self.blocks = [Block()]
             self.embed = type("E", (), {"num_embeddings": V})()
+        def reset(self):
+            pass
+        def prefill_batch(self, input_ids: torch.Tensor, window: int | None = None, debug: bool = False):
+            # Minimal stub to satisfy Generator.warmup path in tests
+            B, T = input_ids.shape
+            H, D = 1, 1
+            K = torch.zeros(1, B, H, T, D)
+            V = torch.zeros(1, B, H, T, D)
+            kv = torch.stack([K, V], dim=0)
+            logits = torch.zeros(B, 1)
+            return logits, kv
     gen = Generator(model=Minimal(vocab), window=4, seed=1337, device=device, dtype=torch.bfloat16)
     gen.history = torch.tensor([1, 2, 3, 2, 1], dtype=torch.long)
 
     # Temperature 0 picks argmax
     logits = torch.tensor([0.1, 0.9, 0.5, -1.0, 0.0, 0.0, 0.0, 0.0], device=device)
     gen.set_temperature(0.0)
-    assert gen._sample(logits) == 1
+    assert int(gen.sample(logits, gen.temperature, gen.top_k, gen.top_p)) == 1
 
     # Temperature scaling: ensure it doesn't crash and changes distribution
     gen.set_temperature(2.0)
@@ -214,13 +229,13 @@ def test_sample_behaviors():
     # top_k filtering
     gen.set_temperature(1.0)
     gen.top_k = 1
-    assert gen._sample(logits) == logits.argmax().item()
+    assert int(gen.sample(logits, gen.temperature, gen.top_k, gen.top_p)) == logits.argmax().item()
 
     # top_p filtering keeps minimal set summing <= p
     gen.top_k = None
     gen.top_p = 0.6
     # Should only allow token 1 in this setup
-    assert gen._sample(logits) == 1
+    assert int(gen.sample(logits, gen.temperature, gen.top_k, gen.top_p)) == 1
 
     # repetition penalty increases/decreases logits for seen tokens
     gen.top_p = None
@@ -228,7 +243,7 @@ def test_sample_behaviors():
     # Token 1 and 2 appear in history, so their logits are penalized; token 0 becomes best
     logits2 = torch.tensor([0.95, 0.94, 0.93, 0.0, 0.0, 0.0, 0.0, 0.0], device=device)
     gen.set_temperature(0.0)
-    choice = gen._sample(logits2)
+    choice = int(gen.sample(logits2, gen.temperature, gen.top_k, gen.top_p))
     assert choice == 0
 
 

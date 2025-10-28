@@ -216,10 +216,11 @@ def test_repetition_penalty_device_correct_and_compiled_equivalence(compiled):
     rep_h = 10.0
     cap = 2.0
 
-    y = fn(logits, prev_ids_some, rep_p, one, rep_w=rep_w, rep_h=rep_h, cap=cap)
+    prev_slice = prev_ids_some[-rep_w:]
+    y = fn(logits, prev_slice, rep_p, one, rep_h=rep_h, cap=cap)
 
     # Manual computation
-    prev = prev_ids_some[-rep_w:]
+    prev = prev_slice
     d = torch.arange(prev.numel(), 0, -1, device=device, dtype=dtype)
     w = (0.5 ** (d / rep_h))
     h = torch.zeros_like(logits)
@@ -293,9 +294,10 @@ def test_repetition_penalty_device_eager_vs_compiled_same():
     prev_ids = torch.tensor([0, 5, 2, 3, 2, 1, 0, 5, 0, 0, 3, 3, 5, 5, 5], dtype=torch.long, device=device)
     rep_p = torch.tensor(1.3, device=device, dtype=dtype)
     one = torch.tensor(1.0, device=device, dtype=dtype)
-    kwargs = dict(rep_w=10, rep_h=20.0, cap=2.5)
-    eager = _repetition_penalty_device(logits, prev_ids, rep_p, one, **kwargs)
-    compiled = torch.compile(_repetition_penalty_device)(logits, prev_ids, rep_p, one, **kwargs)
+    prev_slice = prev_ids[-10:]
+    kwargs = dict(rep_h=20.0, cap=2.5)
+    eager = _repetition_penalty_device(logits, prev_slice, rep_p, one, **kwargs)
+    compiled = torch.compile(_repetition_penalty_device)(logits, prev_slice, rep_p, one, **kwargs)
     assert torch.allclose(eager, compiled, rtol=1e-6, atol=1e-6)
 
 
