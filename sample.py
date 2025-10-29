@@ -82,6 +82,7 @@ gen = Generator(
     top_p=cli.top_p,
     repetition_penalty=cli.repetition_penalty,
     device=device,
+    try_mps_torch_compile=True if device.startswith("mps") else False,
 )
 
 def _parse_leading_params(s: str):

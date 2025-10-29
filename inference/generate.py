@@ -3,7 +3,10 @@ import logging
 from typing import Generator, Callable, Any
 import torch
 import torch.nn.functional as F
+
+from helpers import _as_bool
 from inference.kv_cache import KVCache
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +33,7 @@ def _gumbel(shape, device, dtype):
     u = torch.rand(shape, device=device, dtype=dtype)
     return -torch.log(-torch.log(u.clamp_min_(1e-6)))
 
-def _sample_device(logits, temperature=1.0, top_k=None, top_p=None):
+def _sample(logits, temperature=1.0, top_k=None, top_p=None):
     if temperature == 0.0:
         return torch.argmax(logits, dim=-1)
     x = logits / max(temperature, 1e-6)
@@ -41,7 +44,7 @@ def _sample_device(logits, temperature=1.0, top_k=None, top_p=None):
     y = torch.argmax(x + g, dim=-1)
     return y
 
-def _repetition_penalty_device(logits, prev: torch.Tensor, rep_p: torch.Tensor, _one: torch.Tensor, rep_h=140.0, cap=3.0):
+def _repetition_penalty(logits, prev: torch.Tensor, rep_p: torch.Tensor, _one: torch.Tensor, rep_h=140.0, cap=3.0):
     # if torch.equal(rep_p, _one) or prev_ids is None or prev_ids.numel() == 0:
     #     return logits
     # prev = prev_ids[-rep_w:]
@@ -56,7 +59,7 @@ def _repetition_penalty_device(logits, prev: torch.Tensor, rep_p: torch.Tensor, 
 
 
 class Generator:
-    def __init__(self, model, window, seed, device=None, dtype=torch.float16, max_seq_len: int = 65536, temperature=1.0, top_k=None, top_p=None, repetition_penalty=1.0, eos_token_id=None, torch_compile=True):
+    def __init__(self, model, window, seed, device=None, dtype=torch.float16, max_seq_len: int = 65536, temperature=1.0, top_k=None, top_p=None, repetition_penalty=1.0, eos_token_id=None, debug_compiles = False, try_mps_torch_compile=True):
         if eos_token_id is None:
             eos_token_id = getattr(model, "eos_token_id", None)
         assert eos_token_id is not None
@@ -84,43 +87,48 @@ class Generator:
         self.seed = seed
         torch.manual_seed(self.seed)
         self.history = torch.empty(0, dtype=torch.long, device=self.device)
-        self.torch_compile = torch_compile
+        self.mps_torch_compile = try_mps_torch_compile
+        self.debug_compiles = _as_bool(os.environ.get("DAISY_DEBUG_COMPILES", debug_compiles))
+        if self.debug_compiles:
+            logger.info("Enabling debug compiles")
         # maybe compile
         COMPILE_SAMPLE = False
-        self.sample = torch.compile(_sample_device, dynamic=False) if COMPILE_SAMPLE else _sample_device
-        self.apply_repetition_penalty = self._maybe_compile(_repetition_penalty_device)
+        self.sample = torch.compile(_sample, dynamic=False) if COMPILE_SAMPLE else _sample
+        self.apply_repetition_penalty = self._maybe_compile(_repetition_penalty)
         self.model_prefill_not_compiled = self.model.prefill
         self.model_prefill_medium = None
         self.model_prefill_large = None
             # finish initialization
         self.reset_history()
-        self.warmup_prefill()
 
     def _maybe_compile(self, func):
         """
         Compile if a device is available, with the appropriate context and options. Otherwise return the original function.
+        If self.debug_compiles is True, perform a test compile with backend="aot_eager".
         """
-        if not self.torch_compile:
+        if self.devtype == 'mps' and not self.mps_torch_compile:
             return func
+
+        backend = 'inductor' if self.debug_compiles == False else "aot_eager"
+        logger.debug(f"Compiling {func.__name__} with backend {backend}")
 
         with torch.inference_mode():
             if self.devtype == 'mps':
-                options = {"max_autotune_gemm": False}
-                return torch.compile(func, dynamic=False, options=options)
+                return torch.compile(func, dynamic=False, backend=backend)
             elif self.devtype == 'cuda':
-                return torch.compile(func, dynamic=False)
+                return torch.compile(func, dynamic=False, backend=backend)
             else:
                 return func
 
     def _prefill_func_bounds(self) -> list[tuple[Callable[[int], bool], tuple[str, tuple[int,int]]]]:
+        """
+            For dynamic shapes, Inductor infers the following constraints:
+            1) that sequence length is bounded from above by DaisyCore's window_size-1
+            2) that sequence length is bounded from below by 9
+            3) that sequence length _may_ be bounded from above by 1023 (MPS SDPA kernel fast path)
+         """
         min_sdpa = 9 # magic
-        max_for_fast_sdpa = 1023 # inferred from torch 2.9.0 MPS SDPA kernels
-        """
-            max_seq_len_sdpa:
-            Torch infers that sequence length is bounded by our window_size-1:
-            torch.fx.experimental.symbolic_shapes.ConstraintViolationError: Constraints violated ...
-            ...Not all values of L['input_ids'].size()[1] = L['input_ids'].size()[1] in the specified range 2048 <= L['input_ids'].size()[1] <= 65536 satisfy the generated guard 2048 <= L['input_ids'].size()[1] and L['input_ids'].size()[1] <= {window_size-1}
-        """
+        max_for_fast_sdpa = 1023 # inferred from torch 2.9.0 MPS SDPA kernel fast path
         max_seq_len_sdpa = self.window-1
         bounds: list[tuple[Callable[[int], bool], tuple[str, tuple[int,int]]]] = [
             # (Predicate, (Function name, (min,max))
@@ -148,7 +156,7 @@ class Generator:
         fn = None
         for pred, (fn_name,(min,max)) in bounds:
             if pred(x.size(1)):
-                fn = getattr(self, fn_name)
+                fn = getattr(self, fn_name, None)
                 if fn is None:
                     # lazy maybe-compile
                     compiled = self._maybe_compile(self.model.prefill)
@@ -160,22 +168,6 @@ class Generator:
         assert fn is not None
         return fn
 
-
-    def warmup_prefill(self):
-        """
-        Forces precompile of prefill function for each class of static guards on input sequence length.
-
-        Primarily for MPS.
-        """
-        logger.info("Generator warming up...")
-        bounds = self._prefill_func_bounds()
-        with torch.inference_mode():
-            for pred, (fn_name,(min,max)) in bounds:
-                logger.info(f"Case: prompt length [{min},{max})]...")
-                prompt = torch.randint(0, self.vocab_size, (1,min), device=self.device)
-                func = self._prefill_fn_for_input(prompt)
-                func(prompt, self.window)
-        logger.info("...done.")
 
     def _sync(self):
         d = str(self.device)

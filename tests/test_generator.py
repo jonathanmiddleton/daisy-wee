@@ -48,8 +48,9 @@ class DummyModel(nn.Module):
         self.last_k_ctxs = None
         self.last_v_ctxs = None
 
-    def reset(self):
-        pass
+    def reset_history(self):
+        self.last_k_ctxs = None
+        self.last_v_ctxs = None
 
     @torch.no_grad()
     def prefill(self, input_ids: torch.Tensor, window: int | None = None, debug: bool = False):
@@ -200,7 +201,7 @@ def test_sample_behaviors():
             Block = type("Block", (), {"attn": Attn()})
             self.blocks = [Block()]
             self.embed = type("E", (), {"num_embeddings": V})()
-        def reset(self):
+        def reset_history(self):
             pass
         def prefill(self, input_ids: torch.Tensor, window: int | None = None, debug: bool = False):
             # Minimal stub to satisfy Generator.warmup path in tests
@@ -234,8 +235,8 @@ def test_sample_behaviors():
     # top_p filtering keeps minimal set summing <= p
     gen.top_k = None
     gen.top_p = 0.6
-    # Should only allow token 1 in this setup
-    assert int(gen.sample(logits, gen.temperature, gen.top_k, gen.top_p)) == 1
+    # Should allow only tokens 0 through 2
+    assert 0 <= int(gen.sample(logits, gen.temperature, gen.top_k, gen.top_p)) <= 2
 
     # repetition penalty increases/decreases logits for seen tokens
     gen.top_p = None

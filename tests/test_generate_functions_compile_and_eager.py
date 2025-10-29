@@ -7,8 +7,8 @@ from inference.generate import (
     _topk_filter,
     _topp_filter,
     _gumbel,
-    _sample_device,
-    _repetition_penalty_device,
+    _sample,
+    _repetition_penalty,
 )
 
 
@@ -136,7 +136,7 @@ def test_sample_device_correct_and_compiled_equivalence(compiled):
     device = pick_device()
     dtype = torch.float32
 
-    fn = _sample_device
+    fn = _sample
     if compiled:
         fn = maybe_compile(fn)
 
@@ -192,7 +192,7 @@ def test_repetition_penalty_device_correct_and_compiled_equivalence(compiled):
     device = pick_device()
     dtype = torch.float32
 
-    fn = _repetition_penalty_device
+    fn = _repetition_penalty
     if compiled:
         fn = maybe_compile(fn)
 
@@ -280,9 +280,9 @@ def test_sample_device_eager_vs_compiled_same():
     top_p = 0.85
     seed = 777
     manual_seed_all(seed)
-    eager = _sample_device(logits, temperature=temperature, top_k=top_k, top_p=top_p)
+    eager = _sample(logits, temperature=temperature, top_k=top_k, top_p=top_p)
     manual_seed_all(seed)
-    compiled = maybe_compile(_sample_device)(logits, temperature=temperature, top_k=top_k, top_p=top_p)
+    compiled = maybe_compile(_sample)(logits, temperature=temperature, top_k=top_k, top_p=top_p)
     assert torch.equal(eager, compiled)
 
 
@@ -296,8 +296,8 @@ def test_repetition_penalty_device_eager_vs_compiled_same():
     one = torch.tensor(1.0, device=device, dtype=dtype)
     prev_slice = prev_ids[-10:]
     kwargs = dict(rep_h=20.0, cap=2.5)
-    eager = _repetition_penalty_device(logits, prev_slice, rep_p, one, **kwargs)
-    compiled = torch.compile(_repetition_penalty_device)(logits, prev_slice, rep_p, one, **kwargs)
+    eager = _repetition_penalty(logits, prev_slice, rep_p, one, **kwargs)
+    compiled = torch.compile(_repetition_penalty)(logits, prev_slice, rep_p, one, **kwargs)
     assert torch.allclose(eager, compiled, rtol=1e-6, atol=1e-6)
 
 

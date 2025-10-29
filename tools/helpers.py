@@ -1,4 +1,4 @@
-from typing import get_origin, get_args
+from typing import get_origin, get_args, Any
 import yaml
 
 
@@ -53,6 +53,20 @@ def _coerce_value(val_str: str, typ):
         return parsed
     except Exception:
         return val_str
+
+def _as_bool(value: Any, default: bool = False) -> bool:
+    """Convert environment variable value to boolean."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, str)):
+        v = str(value).lower()
+        if v in ("1", "true", "yes", "y"):
+            return True
+        if v in ("0", "false", "no", "n"):
+            return False
+    return default
 
 
 import time
