@@ -94,7 +94,7 @@ class Generator:
         self.model_prefill_large = None
             # finish initialization
         self.reset_history()
-        self.warmup()
+        self.warmup_prefill()
 
     def _maybe_compile(self, func):
         """
@@ -112,6 +112,24 @@ class Generator:
             else:
                 return func
 
+    def _prefill_func_bounds(self) -> list[tuple[Callable[[int], bool], tuple[str, tuple[int,int]]]]:
+        min_sdpa = 9 # magic
+        max_for_fast_sdpa = 1023 # inferred from torch 2.9.0 MPS SDPA kernels
+        """
+            max_seq_len_sdpa:
+            Torch infers that sequence length is bounded by our window_size-1:
+            torch.fx.experimental.symbolic_shapes.ConstraintViolationError: Constraints violated ...
+            ...Not all values of L['input_ids'].size()[1] = L['input_ids'].size()[1] in the specified range 2048 <= L['input_ids'].size()[1] <= 65536 satisfy the generated guard 2048 <= L['input_ids'].size()[1] and L['input_ids'].size()[1] <= {window_size-1}
+        """
+        max_seq_len_sdpa = self.window-1
+        bounds: list[tuple[Callable[[int], bool], tuple[str, tuple[int,int]]]] = [
+            # (Predicate, (Function name, (min,max))
+            (lambda n: n <= min_sdpa, ('model_prefill_not_compiled', (1, min_sdpa)),),
+            (lambda n: min_sdpa < n <= max_for_fast_sdpa, ('model_prefill_medium', (min_sdpa+1, max_for_fast_sdpa))),
+            (lambda n: max_for_fast_sdpa < n, ('model_prefill_large', (max_for_fast_sdpa+1, max_seq_len_sdpa))),
+        ]
+        return bounds
+
     def _prefill_fn_for_input(self, x: torch.Tensor):
         """
         This is an ugly hack to make compiling work on MPS.
@@ -126,29 +144,9 @@ class Generator:
         """
         assert x.ndim == 2
         assert x.size(1) > 0
-        min_sdpa = 9 # magic
-        max_for_fast_sdpa = 1023 # inferred from torch 2.9.0 MPS SDPA kernels
-
-        """
-            max_seq_len_sdpa:
-            Torch infers that sequence length is bounded by our window_size-1:
-            torch.fx.experimental.symbolic_shapes.ConstraintViolationError: Constraints violated ...
-            ...Not all values of L['input_ids'].size()[1] = L['input_ids'].size()[1] in the specified range 2048 <= L['input_ids'].size()[1] <= 65536 satisfy the generated guard 2048 <= L['input_ids'].size()[1] and L['input_ids'].size()[1] <= {window_size-1}
-        """
-        max_seq_len_sdpa = self.window-1
-
-        if x.size(1) > max_seq_len_sdpa:
-            # compile will fail
-            return self.model.prefill
-
-        rules: list[tuple[Callable[[int], bool], tuple[str, tuple[int,int]]]] = [
-            # (Predicate, (Function name, (min,max))
-            (lambda n: n <= min_sdpa, ('model_prefill_not_compiled', (1, min_sdpa)),),
-            (lambda n: min_sdpa < n <= max_for_fast_sdpa, ('model_prefill_medium', (min_sdpa+1, max_for_fast_sdpa))),
-            (lambda n: max_for_fast_sdpa < n, ('model_prefill_large', (max_for_fast_sdpa+1, max_seq_len_sdpa))),
-        ]
+        bounds = self._prefill_func_bounds()
         fn = None
-        for pred, (fn_name,(min,max)) in rules:
+        for pred, (fn_name,(min,max)) in bounds:
             if pred(x.size(1)):
                 fn = getattr(self, fn_name)
                 if fn is None:
@@ -163,23 +161,20 @@ class Generator:
         return fn
 
 
-    def warmup(self):
+    def warmup_prefill(self):
         """
-        Force precompile of functions with inputs that induce appropriate guards. Primarily a concern for MPS.
+        Forces precompile of prefill function for each class of static guards on input sequence length.
+
+        Primarily for MPS.
         """
         logger.info("Generator warming up...")
-
+        bounds = self._prefill_func_bounds()
         with torch.inference_mode():
-            logger.info("[1/2]...")
-            prompt_len_med = 10
-            prompt_med = torch.randint(0, self.vocab_size, (1,prompt_len_med), device=self.device)
-            fn_med = self._prefill_fn_for_input(prompt_med)
-            fn_med(prompt_med, self.window)
-            logger.info("[2/2]...")
-            prompt_len_lg = 1024
-            prompt_lg = torch.randint(0, self.vocab_size, (1,prompt_len_lg), device=self.device)
-            fn_lg = self._prefill_fn_for_input(prompt_lg)
-            fn_lg(prompt_lg, self.window)
+            for pred, (fn_name,(min,max)) in bounds:
+                logger.info(f"Case: prompt length [{min},{max})]...")
+                prompt = torch.randint(0, self.vocab_size, (1,min), device=self.device)
+                func = self._prefill_fn_for_input(prompt)
+                func(prompt, self.window)
         logger.info("...done.")
 
     def _sync(self):

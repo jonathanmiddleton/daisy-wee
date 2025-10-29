@@ -8,6 +8,18 @@ from torch import nn, tensor
 
 from inference.generate import Generator
 from tools.checkpoint import model_from_checkpoint
+import logging
+
+def configure_logging():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)],
+        force=True,
+    )
+
+configure_logging()
+logger = logging.getLogger(__name__)
 
 VOCAB_SIZE = 50257
 MAX_SEQ_LEN = 16*1024
