@@ -59,7 +59,7 @@ def _repetition_penalty(logits, prev: torch.Tensor, rep_p: torch.Tensor, _one: t
 
 
 class Generator:
-    def __init__(self, model, window, seed, device=None, dtype=torch.float16, max_seq_len: int = 65536, temperature=1.0, top_k=None, top_p=None, repetition_penalty=1.0, eos_token_id=None, debug_compiles = False, try_mps_torch_compile=True):
+    def __init__(self, model, window, seed, device=None, dtype=torch.float16, max_seq_len: int = 65536, temperature=1.0, top_k=None, top_p=None, repetition_penalty=1.0, eos_token_id=None):
         if eos_token_id is None:
             eos_token_id = getattr(model, "eos_token_id", None)
         assert eos_token_id is not None
@@ -87,8 +87,8 @@ class Generator:
         self.seed = seed
         torch.manual_seed(self.seed)
         self.history = torch.empty(0, dtype=torch.long, device=self.device)
-        self.mps_torch_compile = try_mps_torch_compile
-        self.debug_compiles = _as_bool(os.environ.get("DAISY_DEBUG_COMPILES", debug_compiles))
+        self.mps_torch_compile = os.environ.get("DAISY_MPS_TORCH_COMPILE", "1") == "1"
+        self.debug_compiles = os.environ.get("DAISY_DEBUG_COMPILES", "0") == "1"
         if self.debug_compiles:
             logger.info("Enabling debug compiles")
         # maybe compile
@@ -110,14 +110,16 @@ class Generator:
             return func
 
         backend = 'inductor' if self.debug_compiles == False else "aot_eager"
-        logger.debug(f"Compiling {func.__name__} with backend {backend}")
 
         with torch.inference_mode():
             if self.devtype == 'mps':
+                logger.debug(f"Compiling function '{func.__name__}' with backend '{backend}'")
                 return torch.compile(func, dynamic=False, backend=backend)
             elif self.devtype == 'cuda':
+                logger.debug(f"Compiling function '{func.__name__}' with backend '{backend}'")
                 return torch.compile(func, dynamic=False, backend=backend)
             else:
+                logger.debug(f"Not compiling function '{func.__name__}'. Unsupported device: '{self.devtype}'")
                 return func
 
     def _prefill_func_bounds(self) -> list[tuple[Callable[[int], bool], tuple[str, tuple[int,int]]]]:
@@ -140,15 +142,20 @@ class Generator:
 
     def _prefill_fn_for_input(self, x: torch.Tensor):
         """
-        This is an ugly hack to make compiling work on MPS.
+        This is an hack to overcome lack of dynamic shape support in torch.compile for MPS.
 
         Lazily compile model_prefill for different sequence lengths. Mark the input tensor as dynamic as appropriate.
         This is a workaround for MPS related defects in torch 2.8.0, 2.9.0, and 2.10.0-pre.
-        (1) dynamic=True fails on MPS.
-        (2) in torch/_meta_registrations.py:
-            calling a compiled function that calls into SDPA from within torch.no_grad/inference_mode context seems creates
-            a static guard on a SymInt based on internal SDPA indirection. As a workaround I compile for different
-            cases implied by the guards and indirect accordingly.
+        (1) dynamic=True is unsupported on MPS [2.8.0, 2.9.0, 2.10.0-pre]
+        (2) compilations fail within a torch.no_grad/inference_mode context [2.9.0, 2.10.0-pre] (a defect causing a
+            comparison between a SymInt and an Int)
+        (3) torch.fx.experimental.symbolic_shapes.ConstraintViolationError resulting from specialized guards for
+            SDPA fast and 2-pass kernels [2.9.0, 2.10.0-pre]
+
+        Note that while we cache per-bounds compilations of prefill, the torch compiler uses the same code object to
+        cache frames and - presumably - guards. Effectively, this means that each subsequent compilation is a recompilation
+        and subject to the torch._dynamo.config.recompile_limit. This also means that you may see one recompilation
+        for prefill (two total compilations).
         """
         assert x.ndim == 2
         assert x.size(1) > 0
@@ -163,9 +170,37 @@ class Generator:
                     setattr(self, fn_name, compiled)
                     fn = compiled
                     torch._dynamo.mark_dynamic(x, 1, min=min, max=max)
+                    logger.debug(f"Compiled function '{fn_name}' for input shape {x.shape} and bounds [{min},{max}].")
                     break
 
         assert fn is not None
+
+        #log compiled function details
+        import dis
+        from torch._dynamo.eval_frame import _debug_get_cache_entry_list, innermost_fn
+
+        entries = _debug_get_cache_entry_list(innermost_fn(fn))
+        if entries is not None:
+            # specializations
+            for i in range(len(entries)):
+                e = entries[i]
+                guard = getattr(e, "check_fn", None)
+                if guard is not None:
+                    code = e.code  # the specialized code object
+
+                    #  guard clauses
+                    for part in guard.code_parts:
+                        logger.debug(f"Function '{fn}' guard clause: {part}")
+
+                    #  disassemble guard / code
+                    dis.dis(guard)
+                    dis.dis(code)
+
+                    #  evaluate guard manually on a locals() dict L for the frame
+                    # (keys are the original parameter names; run once to see names)
+                    # L = {"a": a_tensor, "b": b_tensor}
+                    # print(guard(L))
+
         return fn
 
 

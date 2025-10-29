@@ -153,5 +153,8 @@ def model_from_checkpoint(path: str, device: torch.device | str) -> nn.Module:
         eos_token_id=eos_token_id,
     ).to(device)
 
+    if getattr(model, "desc", None) is None:
+        setattr(model, "desc", hparams)
+
     apply_model_state(model, state_dict, strict=False)
     return model, hparams
