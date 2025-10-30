@@ -6,13 +6,16 @@ import tiktoken
 import torch
 from torch import nn, tensor
 
+from helpers import log_level_from_env
 from inference.generate import Generator
 from tools.checkpoint import model_from_checkpoint
 import logging
 
+
+
 def configure_logging():
     logging.basicConfig(
-        level=logging.INFO,
+        level=log_level_from_env(),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         handlers=[logging.StreamHandler(sys.stdout)],
         force=True,

@@ -4,7 +4,7 @@ from typing import Generator, Callable, Any
 import torch
 import torch.nn.functional as F
 
-from helpers import _as_bool
+from helpers import torch_compiled_callable_debug_wrapper, torch_get_guards_from_callable
 from inference.kv_cache import KVCache
 import os
 
@@ -88,55 +88,71 @@ class Generator:
         torch.manual_seed(self.seed)
         self.history = torch.empty(0, dtype=torch.long, device=self.device)
         self.mps_torch_compile = os.environ.get("DAISY_MPS_TORCH_COMPILE", "1") == "1"
-        self.debug_compiles = os.environ.get("DAISY_DEBUG_COMPILES", "0") == "1"
-        if self.debug_compiles:
+        self.torch_backend_aot = os.environ.get("DAISY_DEBUG_COMPILES", "0") == "1"
+        self.debug_mode = os.environ.get("DAISY_DEBUG_MODE", "0") == "1"
+        if self.torch_backend_aot:
             logger.info("Enabling debug compiles")
         # maybe compile
         COMPILE_SAMPLE = False
         self.sample = torch.compile(_sample, dynamic=False) if COMPILE_SAMPLE else _sample
         self.apply_repetition_penalty = self._maybe_compile(_repetition_penalty)
         self.model_prefill_not_compiled = self.model.prefill
-        self.model_prefill_medium = None
-        self.model_prefill_large = None
-            # finish initialization
-        self.reset_history()
 
     def _maybe_compile(self, func):
         """
         Compile if a device is available, with the appropriate context and options. Otherwise return the original function.
-        If self.debug_compiles is True, perform a test compile with backend="aot_eager".
+        If self.torch_backend_aot is True, perform a test compile with backend="aot_eager".
         """
         if self.devtype == 'mps' and not self.mps_torch_compile:
             return func
 
-        backend = 'inductor' if self.debug_compiles == False else "aot_eager"
+        backend = 'inductor' if not self.torch_backend_aot else "aot_eager"
 
+        f_c = None
         with torch.inference_mode():
             if self.devtype == 'mps':
-                logger.debug(f"Compiling function '{func.__name__}' with backend '{backend}'")
-                return torch.compile(func, dynamic=False, backend=backend)
+                try:
+                    logger.debug(f"Compiling function '{func.__name__}' with backend '{backend}'")
+                    f_c = torch.compile(func, dynamic=False, backend=backend)
+                except Exception as e:
+                    logger.debug(f"Failed to compile function '{func.__name__}' with backend '{backend}': {e}")
+                    f_c = func
             elif self.devtype == 'cuda':
-                logger.debug(f"Compiling function '{func.__name__}' with backend '{backend}'")
-                return torch.compile(func, dynamic=False, backend=backend)
+                try:
+                    logger.debug(f"Compiling function '{func.__name__}' with backend '{backend}'")
+                    f_c = torch.compile(func, dynamic=False, backend=backend)
+                except Exception as e:
+                    logger.debug(f"Failed to compile function '{func.__name__}' with backend '{backend}': {e}")
+                    f_c = func
             else:
                 logger.debug(f"Not compiling function '{func.__name__}'. Unsupported device: '{self.devtype}'")
-                return func
+                f_c = func
+
+        assert f_c is not None
+        if self.debug_mode:
+            f_c = torch_compiled_callable_debug_wrapper(fn=f_c,post_exec_hook=torch_get_guards_from_callable)
+
+        return f_c
 
     def _prefill_func_bounds(self) -> list[tuple[Callable[[int], bool], tuple[str, tuple[int,int]]]]:
         """
-            For dynamic shapes, Inductor infers the following constraints:
+            Dynamo computed static boundaries for guards. For MPS and torch 2.8.0-2.10.0-pre. Determined empirically.
+            For dynamic shapes, Dynamo infers the following constraints:
             1) that sequence length is bounded from above by DaisyCore's window_size-1
             2) that sequence length is bounded from below by 9
-            3) that sequence length _may_ be bounded from above by 1023 (MPS SDPA kernel fast path)
+            3) that sequence length _may_ be bounded from above by 1023 (MPS SDPA kernel fast path), or
+            4) that sequence length _may_ be bounded from below by 2048
          """
         min_sdpa = 9 # magic
         max_for_fast_sdpa = 1023 # inferred from torch 2.9.0 MPS SDPA kernel fast path
+        two_zero_four_eight = 2048
         max_seq_len_sdpa = self.window-1
         bounds: list[tuple[Callable[[int], bool], tuple[str, tuple[int,int]]]] = [
             # (Predicate, (Function name, (min,max))
-            (lambda n: n <= min_sdpa, ('model_prefill_not_compiled', (1, min_sdpa)),),
-            (lambda n: min_sdpa < n <= max_for_fast_sdpa, ('model_prefill_medium', (min_sdpa+1, max_for_fast_sdpa))),
-            (lambda n: max_for_fast_sdpa < n, ('model_prefill_large', (max_for_fast_sdpa+1, max_seq_len_sdpa))),
+            (lambda n: n <= min_sdpa, ('_model_prefill_not_compiled', (1, min_sdpa)),),
+            (lambda n: min_sdpa < n <= max_for_fast_sdpa, (f'_model_prefill_{min_sdpa+1}', (min_sdpa+1, max_for_fast_sdpa))),
+            (lambda n: max_for_fast_sdpa < n <= two_zero_four_eight, (f'_model_prefill_{max_for_fast_sdpa + 1}', (max_for_fast_sdpa + 1, two_zero_four_eight))),
+            (lambda n: two_zero_four_eight < n, (f'_model_prefill_{two_zero_four_eight + 1}', (two_zero_four_eight+1, max_seq_len_sdpa))),
         ]
         return bounds
 
@@ -174,33 +190,6 @@ class Generator:
                     break
 
         assert fn is not None
-
-        #log compiled function details
-        import dis
-        from torch._dynamo.eval_frame import _debug_get_cache_entry_list, innermost_fn
-
-        entries = _debug_get_cache_entry_list(innermost_fn(fn))
-        if entries is not None:
-            # specializations
-            for i in range(len(entries)):
-                e = entries[i]
-                guard = getattr(e, "check_fn", None)
-                if guard is not None:
-                    code = e.code  # the specialized code object
-
-                    #  guard clauses
-                    for part in guard.code_parts:
-                        logger.debug(f"Function '{fn}' guard clause: {part}")
-
-                    #  disassemble guard / code
-                    dis.dis(guard)
-                    dis.dis(code)
-
-                    #  evaluate guard manually on a locals() dict L for the frame
-                    # (keys are the original parameter names; run once to see names)
-                    # L = {"a": a_tensor, "b": b_tensor}
-                    # print(guard(L))
-
         return fn
 
 
@@ -237,11 +226,6 @@ class Generator:
         return logits
 
     def _step(self, token: torch.Tensor | int):
-        # ensure token is a 0-dim long tensor on device
-        # if not isinstance(token, torch.Tensor):
-        #     token = torch.tensor(token, dtype=torch.long, device=self.device)
-        # else:
-        #     token = token.to(device=self.device, dtype=torch.long).reshape(())
         k_ctxs, v_ctxs = [], []
         for i in range(len(self.model.blocks)):
             kc, vc = self.cache.view(i)
