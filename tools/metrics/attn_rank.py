@@ -21,24 +21,6 @@ def attention_matrix_from_attn(attn: CausalSelfAttention) -> torch.Tensor:
     - X: (T, dim) hidden states entering this attention block
     Returns: A of shape (num_heads, T, T)
     """
-    assert hasattr(attn, 'qkvo_w'), 'Expected attn.qkvo_w merged weights.'
-    # H = int(attn.num_heads)
-    # Dh = int(attn.head_dim)
-    # T, D = X.shape
-    #
-    # # Extract Q and K weights and compute projected states.
-    # Wq = attn.qkvo_w[0].to(dtype=torch.float32)  # (H*Dh, D)
-    # Wk = attn.qkvo_w[1].to(dtype=torch.float32)  # (H*Dh, D)
-    # Xf = X.to(dtype=torch.float32)
-    # Q = Xf @ Wq.T  # (T, H*Dh)
-    # K = Xf @ Wk.T  # (T, H*Dh)
-    #
-    # # Reshape to per‑head tensors: (B, T, H, Dh)
-    # B = 1
-    # Q, K = Q.view(B, T, H, Dh), K.view(B, T, H, Dh)
-    # Q = attn.rotary(norm(Q))
-    # K = attn.rotary(norm(K))
-
     Q, K = attn.last_q, attn.last_k
     assert(Q is not None and K is not None)
     assert(Q.ndim == K.ndim == 4)
