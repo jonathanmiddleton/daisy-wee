@@ -11,6 +11,18 @@ from torch.nn.attention.flex_attention import BlockMask
 def next_multiple_of_n(v: float | int, *, n: int):
     return next(x for x in range(n, int(v) + 1 + n, n) if x >= v)
 
+def build_attn_mask(input_seq: Tensor, sliding_window_num_blocks: int):
+    assert input_seq.ndim == 2
+    T = input_seq.shape[1]
+    q = torch.arange(T, device=input_seq.device)[:, None]  # (T, 1)
+    k = torch.arange(T, device=input_seq.device)[None, :]  # (1, T)
+    d = q - k  # d[q, k] = q - k
+
+    m = torch.zeros(T, T, device=input_seq.device, dtype=torch.float32)
+    m[d < 0] = float("-inf")  # forbid future (k > q)
+    m[d >= sliding_window_num_blocks] = float("-inf")  # forbid too-far past
+    attn_mask = m[None, None, :, :]
+    return attn_mask
 
 class DaisyCore(nn.Module):
     def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim, window_block_size: int = 128, eos_token_id: int | None = None, desc: dict | None = None):
@@ -184,15 +196,15 @@ class DaisyCore(nn.Module):
         logits = F.linear(x.flatten(end_dim=1).bfloat16(), self.lm_head_w.bfloat16()).float()
         return logits, k_new_list, v_new_list
 
-    def prefill(self, input_ids: Tensor, window: int | None = None, debug: bool = False):
-        assert input_ids.ndim == 2
-        B, T = input_ids.shape
+    def prefill(self, input_seq: Tensor, sliding_window_num_blocks: int | None = None, debug: bool = False):
+        assert input_seq.ndim == 2
+        B, T = input_seq.shape
         L = len(self.blocks)
 
-        x = norm(self.embed(input_ids))
+        x = norm(self.embed(input_seq))
         x0 = x
 
-        ve0, ve1, ve2 = [emb(input_ids) for emb in self.value_embeds]
+        ve0, ve1, ve2 = [emb(input_seq) for emb in self.value_embeds]
         ve = [ve0, ve1, ve2] + [None] * (L - 6) + [ve0, ve1, ve2]
 
         skip_map = self.skip_map
@@ -200,14 +212,7 @@ class DaisyCore(nn.Module):
         lambdas = self.scalars[1 * L:3 * L].view(-1, 2)
         sa_lambdas = self.scalars[3 * L:5 * L].view(-1, 2)
 
-        q = torch.arange(T, device=input_ids.device)[:, None]  # (T, 1)
-        k = torch.arange(T, device=input_ids.device)[None, :]  # (1, T)
-        d = q - k  # d[q, k] = q - k
-
-        m = torch.zeros(T, T, device=input_ids.device, dtype=torch.float32)
-        m[d < 0] = float("-inf")  # forbid future (k > q)
-        m[d >= window] = float("-inf")  # forbid too-far past
-        attn_mask = m[None, None, :, :]
+        attn_mask = build_attn_mask(input_seq, sliding_window_num_blocks)
 
         k_list, v_list, skip_connections = [], [], []
         for i in range(L):

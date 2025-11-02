@@ -114,40 +114,7 @@ class CausalSelfAttention(nn.Module):
         y = F.linear(y, self.qkvo_w[3])
         return y
 
-    def step(self, x, k_ctx: Tensor, v_ctx: Tensor, pos: int, ve: Tensor | None, lambdas: Tensor, window: int):
-        B, _, _ = x.shape
-        x = x.to(self.qkvo_w.dtype)
-        w = self.qkvo_w[:3].flatten(end_dim=1)
-        q, k, v = F.linear(x, w).view(B, 1, 3 * self.num_heads, self.head_dim).chunk(3, dim=-2)
-        q, k = norm(q), norm(k) # QK norm @Grad62304977
-        q, k = self.rotary.step(q, pos), self.rotary.step(k, pos)
-        v = norm(v)
-        target_dtype = q.dtype
-        v = v.to(target_dtype)
-        if ve is not None:
-            ve = ve.to(target_dtype)
-            lambdas = lambdas.to(target_dtype)
-            v = lambdas[0] * v + lambdas[1] * ve.view_as(v) # @KoszarskyB & @Grad62304977
-        else: # skip mid-layers token value embeddings by @YouJiacheng
-            lambdas = lambdas.to(target_dtype)
-            v = lambdas[0] * v
-        n = k_ctx.size(1)
-        # r = tokens to take from cache = last window-1 tokens (or all if fewer)
-        r = n if window is None else min(n, max(window - 1, 0))
-        k_all = torch.cat([k_ctx[:, n - r:n], k], 1)
-        v_all = torch.cat([v_ctx[:, n - r:n], v], 1)
-
-        # SDPA expects (..., L, E) where L is the sequence length; put heads before time
-        q_ = q.transpose(1, 2)      # (B, H, 1, D)
-        k_ = k_all.transpose(1, 2).to(target_dtype)  # (B, H, S, D)
-        v_ = v_all.transpose(1, 2).to(target_dtype)  # (B, H, S, D)
-        y = F.scaled_dot_product_attention(q_, k_, v_, scale=self.attn_scale, is_causal=False)
-        y = y.transpose(1, 2).reshape(B, 1, self.num_heads * self.head_dim)
-        y = F.linear(y, self.qkvo_w[3])
-        return y, k, v
-
-    def prefill(self, x: torch.Tensor, ve: torch.Tensor | None, lambdas: torch.Tensor,
-                attn_mask: torch.Tensor | None = None, debug: bool = False,):
+    def prefill(self, x: torch.Tensor, ve: torch.Tensor | None, lambdas: torch.Tensor, attn_mask: torch.Tensor | None = None, debug: bool = False,):
         B, T, _ = x.shape
         x = x.to(self.qkvo_w.dtype)
         w = self.qkvo_w[:3]
@@ -181,3 +148,36 @@ class CausalSelfAttention(nn.Module):
         y = y.transpose(1, 2).reshape(B, T, self.num_heads * self.head_dim)
         y = torch.nn.functional.linear(y, self.qkvo_w[3])
         return y, k_, v_
+
+
+    def step(self, x, k_ctx: Tensor, v_ctx: Tensor, pos: int, ve: Tensor | None, lambdas: Tensor, window: int):
+        B, _, _ = x.shape
+        x = x.to(self.qkvo_w.dtype)
+        w = self.qkvo_w[:3].flatten(end_dim=1)
+        q, k, v = F.linear(x, w).view(B, 1, 3 * self.num_heads, self.head_dim).chunk(3, dim=-2)
+        q, k = norm(q), norm(k) # QK norm @Grad62304977
+        q, k = self.rotary.step(q, pos), self.rotary.step(k, pos)
+        v = norm(v)
+        target_dtype = q.dtype
+        v = v.to(target_dtype)
+        if ve is not None:
+            ve = ve.to(target_dtype)
+            lambdas = lambdas.to(target_dtype)
+            v = lambdas[0] * v + lambdas[1] * ve.view_as(v) # @KoszarskyB & @Grad62304977
+        else: # skip mid-layers token value embeddings by @YouJiacheng
+            lambdas = lambdas.to(target_dtype)
+            v = lambdas[0] * v
+        n = k_ctx.size(1)
+        # r = tokens to take from cache = last window-1 tokens (or all if fewer)
+        r = n if window is None else min(n, max(window - 1, 0))
+        k_all = torch.cat([k_ctx[:, n - r:n], k], 1)
+        v_all = torch.cat([v_ctx[:, n - r:n], v], 1)
+
+        # SDPA expects (..., L, E) where L is the sequence length; put heads before time
+        q_ = q.transpose(1, 2)      # (B, H, 1, D)
+        k_ = k_all.transpose(1, 2).to(target_dtype)  # (B, H, S, D)
+        v_ = v_all.transpose(1, 2).to(target_dtype)  # (B, H, S, D)
+        y = F.scaled_dot_product_attention(q_, k_, v_, scale=self.attn_scale, is_causal=False)
+        y = y.transpose(1, 2).reshape(B, 1, self.num_heads * self.head_dim)
+        y = F.linear(y, self.qkvo_w[3])
+        return y, k, v

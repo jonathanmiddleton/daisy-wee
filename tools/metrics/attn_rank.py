@@ -69,7 +69,7 @@ def average_per_head_over_sequences(model: DaisyCore, I: list[torch.Tensor], lay
     cnt = torch.zeros(H, dtype=torch.int64, device=device)
 
     for i in range(len(I)):
-        model.prefill(I[i], window=int(I[i].size(-1)), debug=True)
+        model.prefill(I[i], sliding_window_num_blocks=int(I[i].size(-1)), debug=True)
         A = attention_matrix_from_attn(attn)
         for h in range(H):
             r = effective_rank90(A[h], device=device)
