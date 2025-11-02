@@ -8,8 +8,6 @@ Examples:
 
 This will execute torchrun multiple times, once for each combination of overrides.
 """
-
-
 import argparse
 import itertools
 import os
@@ -18,14 +16,15 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
-
+from typing import List, Tuple
+from io import TextIOBase
+import platform, sys as _sys
 
 def _timestamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
-
-def _setup_log_file() -> Tuple[Path, "io.TextIOBase"]:
+#TODO single logging ownership - see train.py
+def _setup_log_file() -> Tuple[Path, "TextIOBase"]:
     logs_dir = Path(__file__).resolve().parent.parent / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     log_path = logs_dir / f"{_timestamp()}.log"
@@ -65,7 +64,7 @@ def _cartesian_product(overrides: List[Tuple[str, List[str]]]) -> List[List[Tupl
     return combos
 
 
-def build_torchrun_cmd(
+def build_run_cmd(
     *,
     nproc: int,
     config: str,
@@ -73,13 +72,10 @@ def build_torchrun_cmd(
     extra_long_opts: List[str],
     overrides: List[Tuple[str, str]],
 ) -> List[str]:
-    cmd = [
-        "torchrun",
-        "--standalone",
-        f"--nproc_per_node={nproc}",
-        "train.py",
-        config,
-    ]
+
+    cmd = ["torchrun", "--standalone", f"--nproc_per_node={nproc}"] if nproc > 1 else ["python"]
+    cmd = cmd + ["train.py", config]
+    
     if checkpoint:
         cmd.append(f"--init_checkpoint={checkpoint}")
     # include any extra pre-parsed long opts (already prefixed with --)
@@ -88,6 +84,7 @@ def build_torchrun_cmd(
     for k, v in overrides:
         # preserve original key style expected by train.py (underscores); it'll accept --key=value
         cmd.append(f"--{k}={v}")
+
     return cmd
 
 
@@ -106,9 +103,8 @@ def _stream_subprocess(cmd: List[str], log_fp) -> int:
     ) as p:
         assert p.stdout is not None
         for line in p.stdout:
-            # write to console
             print(line, end="", flush=True)
-            # write to log
+            # noinspection PyBroadException
             try:
                 log_fp.write(line)
             except Exception:
@@ -116,6 +112,8 @@ def _stream_subprocess(cmd: List[str], log_fp) -> int:
         returncode = p.wait()
     return returncode
 
+def is_mac_os():
+    return _sys.platform == "darwin" or platform.system() == "Darwin"
 
 def main(argv: List[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -123,7 +121,7 @@ def main(argv: List[str] | None = None) -> int:
     # We accept a mix of short opts and trailing overrides. Use argparse for known ones and leave the rest.
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("config", help="Path to YAML config file")
-    parser.add_argument("-n", dest="nproc", type=int, default=8, help="nproc per node")
+    parser.add_argument("-n", dest="nproc", type=int, default=8, help="nproc per node (nproc=1 if MacOS)")
     parser.add_argument("-p", dest="checkpoint", default="", help="init checkpoint path")
     parser.add_argument("-s", dest="begin_shard", default="", help="BEGIN_SHARD env value")
     parser.add_argument("-r", dest="run_id", default="1", help="RUN_ID env value for the run")
@@ -133,7 +131,6 @@ def main(argv: List[str] | None = None) -> int:
     args, extras = parser.parse_known_args(argv)
 
     config = args.config
-    nproc = int(args.nproc)
     checkpoint = args.checkpoint or ""
     begin_shard = args.begin_shard or ""
     run_id = str(args.run_id)
@@ -189,6 +186,9 @@ def main(argv: List[str] | None = None) -> int:
     base_run_id = int(run_id) if run_id.isdigit() else run_id
 
     log_path, log_fp = _setup_log_file()
+
+    nproc = 1 if is_mac_os() else args.nproc
+
     try:
         print(f"Config: {config}")
         print(f"nproc: {nproc}")
@@ -207,7 +207,7 @@ def main(argv: List[str] | None = None) -> int:
             else:
                 os.environ["RUN_ID"] = str(base_run_id)
             # Build command
-            cmd = build_torchrun_cmd(
+            cmd = build_run_cmd(
                 nproc=nproc,
                 config=config,
                 checkpoint=checkpoint or None,
@@ -221,6 +221,7 @@ def main(argv: List[str] | None = None) -> int:
                 return rc
         return 0
     finally:
+        # noinspection PyBroadException
         try:
             log_fp.flush()
             log_fp.close()

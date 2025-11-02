@@ -6,6 +6,7 @@ import math
 from datetime import datetime, timezone
 
 from dataclasses import asdict
+from typing import Optional
 
 from models import get_model_class
 from data.data_gen_stream import DistributedDataGenerator
@@ -16,42 +17,105 @@ from training.eval import Evaluator
 from tools.checkpoint import load_checkpoint, save_checkpoint, apply_model_state
 from training.hparams import Hyperparameters, load_hparams_from_yaml, apply_cli_overrides
 
-os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
-import torch
-
-from torch import nn
-import torch.distributed as dist
-
+########################################
+#        App Config & Setup            #
+########################################
 # Load config from YAML (first CLI arg if provided)
 _config_path = sys.argv[1] if len(sys.argv) > 1 else None
 args = load_hparams_from_yaml(_config_path)
-
 # Apply overrides from the remaining CLI args: support --key=value or key=value
 args = apply_cli_overrides(args, sys.argv[2:])
+# Apply optional scheduling toggle for attention windows
+set_full_windows(args.full_windows)
+run_id = int(os.environ.get("RUN_ID", 0))
+### End App Config ###
 
-# Configure PyTorch compile/tuning based on config
+
+########################################
+#        Torch Setup                   #
+########################################
+os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+import torch
+from torch import nn
+import torch.distributed as dist
+# Configure inductor/dynamo compile/tuning
 torch._inductor.config.coordinate_descent_tuning = bool(getattr(args, "torch_coordinate_descent_tuning", False))
 torch._dynamo.config.compiled_autograd = True
-torch._dynamo.config.error_on_nested_fx_trace = False  # temp workaround/diagnostic for dynamo error
-
-# Apply scheduling toggle for attention windows
-set_full_windows(args.full_windows)
-
-run_id = int(os.environ.get("RUN_ID", 0))
+torch._dynamo.config.error_on_nested_fx_trace = False  # temp workaround/diagnostic for dynamo error related to FlexAttention
 # torchrun sets these env variables
 rank = int(os.environ.get("RANK", "0"))
 world_size = int(os.environ.get("WORLD_SIZE", "1"))
 local_rank = int(os.environ.get("LOCAL_RANK", "0"))
 TORCH_COMPILE_OFF = os.environ.get("TORCH_COMPILE_OFF", "0") == "1"
 use_distributed = world_size > 1
-assert torch.cuda.is_available()
-device = torch.device("cuda", local_rank)
-torch.cuda.set_device(device)
-torch.empty(1, device="cuda", requires_grad=True).backward()  # prevents a bug on some systems
-if use_distributed:
-    dist.init_process_group(backend="nccl", device_id=device, world_size=world_size)
-    dist.barrier()
-master_process = (rank == 0)  # this process will do logging, checkpointing etc.
+
+device = torch.device("cuda", local_rank) if torch.cuda.is_available() else torch.device('mps') if torch.mps.is_available() else torch.device('cpu')
+if device.type == 'cuda':
+    torch.cuda.set_device(device)
+    if use_distributed:
+        dist.init_process_group(backend="nccl", device_id=device, world_size=world_size)
+        dist.barrier()
+    is_master = (rank == 0)
+elif device.type == 'mps':
+    if use_distributed:
+        raise ValueError("Distributed training is not supported on macOS/MPS")
+    is_master = True
+else:
+    is_master = True
+
+def maybe_compile(model: nn.Module, dynamic: bool = False) -> nn.Module:
+    if TORCH_COMPILE_OFF:
+        logger.info(f"Compiling disabled: TORCH_COMPILE_OFF={TORCH_COMPILE_OFF}")
+    else:
+        logger.info(f"Compiling model (dynamic={dynamic})...")
+        model: nn.Module = torch.compile(model, dynamic=dynamic)
+        logger.info("Finished compiling model.")
+
+def maybe_reset_peak_memory_stats() -> None:
+    if device.type == 'cuda':
+        torch.cuda.reset_peak_memory_stats()
+    else:
+        logger.debug(f"reset_memory_stats() unsupported on device.type={device.type}")
+
+def get_max_memory_allocated() -> Optional[int]:
+    if device.type == 'cuda':
+        return torch.cuda.max_memory_allocated()
+    else:
+        logger.debug(f"max_memory_allocated() unsupported on device.type={device.type}")
+        return None
+### End Torch Setup ###
+
+
+########################################
+#        Logging                       #
+########################################
+import logging.config
+import yaml
+
+class MasterLogger:
+    def __init__(self, master_process: bool):
+        if master_process:
+            with open("config/logging.yml", "r") as f:
+                config = yaml.safe_load(f.read())
+                logging.config.dictConfig(config)
+        self.logger = logging.getLogger(__name__)
+
+    def debug(self, st):
+        if is_master:
+            self.logger.debug(st)
+    def info(self, st):
+        if is_master:
+            self.logger.info(st)
+    def warning(self, st):
+        if is_master:
+            self.logger.warning(st)
+    def error(self, st):
+        if is_master:
+            self.logger.error(st)
+
+logger = MasterLogger(is_master)
+### End Logging ###
+
 
 # Run start timestamp truncated to the minute (UTC)
 _run_start_dt = datetime.now(timezone.utc).replace(second=0, microsecond=0)
@@ -59,10 +123,12 @@ run_start_minute = _run_start_dt.strftime("%Y%m%dT%H%M")
 # Track last checkpoint file saved for this run so we can replace it
 _last_run_ckpt_path: str | None = None
 
-# Optional Weights & Biases logging (minimal config)
+########################################
+#       Weights & Biases (Optional)    #
+########################################
 _wandb = None
 _wandb_enabled = False
-if master_process and args.wandb_log:
+if is_master and args.wandb_log:
     try:
         import wandb as _wandb
 
@@ -70,7 +136,7 @@ if master_process and args.wandb_log:
         _name = args.wandb_run_name or f"{run_start_minute}-run{run_id}"
         _wandb.init(project=_project, name=_name, config=asdict(args))
         _wandb_enabled = True
-        print(f"wandb logging enabled: project={_project} name={_name}")
+        logger.info(f"wandb logging enabled: project={_project} name={_name}")
         art = _wandb.Artifact(name=f"models-src-{run_id}", type="code")
         import glob
         files = [p for p in glob.glob("models/**/*.py", recursive=True) if os.path.basename(p) != "__init__.py"]
@@ -78,7 +144,7 @@ if master_process and args.wandb_log:
             art.add_file(p, name=os.path.relpath(p, start="models"))
         _wandb.log_artifact(art)
     except Exception as _e:
-        print(f"[warn] Failed to initialize wandb logging: {_e}")
+        logger.error(f"[warn] Failed to initialize wandb logging: {_e}")
         _wandb = None
         _wandb_enabled = False
 
@@ -88,11 +154,19 @@ def log_wandb(d: dict):
         try:
             _wandb.log(d)
         except Exception as _e:
-            print0(f"[warn] wandb.log failed: {_e}")
+            logger.error(f"[warn] wandb.log failed: {_e}")
 
-def print0(st):
-    if master_process:
-        print(st, flush=True)
+def update_wandb_config(d: dict):
+    if _wandb_enabled:
+        try:
+            _wandb.config.update(d, allow_val_change=True)
+        except Exception as _e:
+            logger.error(f"[warn] Failed to update wandb config: {_e}")
+
+
+########################################
+#               Helpers                #
+########################################
 
 # noinspection PyShadowingNames
 def _build_hparams_from_args(args: Hyperparameters) -> dict:
@@ -100,16 +174,13 @@ def _build_hparams_from_args(args: Hyperparameters) -> dict:
     return asdict(args)
 
 # noinspection PyShadowingNames
-def _run_ckpt_filename(
-        *, val_value: float | None, step: int, run_start_minute: str, run_id: int, suffix: str | None = None,
-) -> str:
+def _get_ckpt_filename(*, val_value: float | None, step: int, run_start_minute: str, run_id: int, suffix: str | None = None, ) -> str:
     os.makedirs("checkpoints", exist_ok=True)
     _val_trunc = math.trunc(val_value * 100) / 100 if val_value is not None else float("nan")
     return f"checkpoints/{run_start_minute}-val{_val_trunc:.3f}-step{step:06d}-run{run_id}" + (f"-{suffix}" if suffix else "") + ".pt"
 
-
 # noinspection PyShadowingNames
-def _save_run_checkpoint(
+def _save_checkpoint(
         *,
         val_value: float | None,
         step: int,
@@ -129,7 +200,7 @@ def _save_run_checkpoint(
     Returns the path to the saved checkpoint.
     """
     global _last_run_ckpt_path
-    fname = _run_ckpt_filename(
+    fname = _get_ckpt_filename(
         val_value=val_value,
         step=step,
         run_start_minute=run_start_minute,
@@ -156,7 +227,7 @@ def _save_run_checkpoint(
 
 
 ########################################
-#    Construct model and optimizer     #
+#        Model & Optimizers            #
 ########################################
 
 # Rehydrate critical hyperparameters from checkpoint if available
@@ -176,18 +247,13 @@ if args.init_checkpoint:
         ]:
             if k in _saved_hparams and _saved_hparams[k] is not None:
                 setattr(args, k, _saved_hparams[k])
-        print0("Rehydrated model hyperparameters from checkpoint.")
+        logger.info("Rehydrated model hyperparameters from checkpoint.")
 
-# Determine schedule denominator (decoupled from stop condition) after (optional) checkpoint rehydration
-print0(json.dumps(asdict(args), indent=2, sort_keys=True))
+logger.info("Hyperparameters:\n" + json.dumps(asdict(args), indent=2, sort_keys=True))
 # Ensure wandb sees the final effective hyperparameters (after overrides and any rehydration)
-if _wandb_enabled:
-    try:
-        _wandb.config.update(asdict(args), allow_val_change=True)
-    except Exception as _e:
-        print0(f"[warn] Failed to update wandb config: {_e}")
+update_wandb_config(asdict(args))
 
-# Now we can safely build the model with possibly rehydrated args
+# Build the model with possibly rehydrated args
 _ModelClass = get_model_class(args.model_class)
 model: nn.Module = _ModelClass(
     vocab_size=args.vocab_size,
@@ -199,15 +265,16 @@ model: nn.Module = _ModelClass(
     head_dim=args.head_dim,
     window_block_size=args.window_block_size,
     eos_token_id=args.eos_token_id,
-).cuda()
+).to(device)
 
 # If a checkpoint was provided, load weights and training metadata
 if args.init_checkpoint:
     _sd = _ckpt_obj.model
     _missing, _unexpected = apply_model_state(model, _sd, strict=False)
     if _missing or _unexpected:
-        raise ValueError(f"init_checkpoint:{args.init_checkpoint} missing:{_missing} unexpected:{_unexpected}")
-    # Weights-only init: do not adopt training metadata (step, best_val, tokens_per_step)
+        msg = f"init_checkpoint:{args.init_checkpoint} missing:{_missing} unexpected:{_unexpected}"
+        logger.error(msg)
+        raise ValueError(msg)
 
 for m in model.modules():
     if isinstance(m, nn.Embedding):
@@ -225,28 +292,22 @@ optimizers: list[torch.optim.Optimizer] = build_optimizers_from_cfg(
     world_size=world_size,
 )
 
-
 def opt_params(opt: torch.optim.Optimizer) -> list[nn.Parameter]:
     return [p for g in opt.param_groups for p in g["params"]]
-
 
 opt2params = {opt: opt_params(opt) for opt in optimizers}
 for opt in optimizers:
     for group in opt.param_groups:
         group["initial_lr"] = group["lr"]
 
-if not TORCH_COMPILE_OFF:
-    print0("Compiling model...")
-    model: nn.Module = torch.compile(model, dynamic=False)
-    print0("Finished compiling model.")
-else:
-    print0(f"Compiling disabled: TORCH_COMPILE_OFF={TORCH_COMPILE_OFF}")
+model: nn.Module = maybe_compile(model, dynamic=False)
+
 
 ########################################
-#        Training and validation       #
+#    Training and Validation Setup     #
 ########################################
 
-torch.cuda.reset_peak_memory_stats()
+maybe_reset_peak_memory_stats()
 # Optional beginning shard (1-based) from environment
 _begin_shard_env = os.environ.get("BEGIN_SHARD")
 _begin_shard = int(_begin_shard_env) if _begin_shard_env not in (None, "",) else None
@@ -302,7 +363,7 @@ warmup_end = 0.0
 while progress.tokens_processed < progress.target_tokens:
     # --------------- Evaluation -----------------
     if progress.should_eval():
-        print0("[eval] starting evaluations...")
+        logger.info("[eval] starting evaluations...")
         if use_distributed:
             dist.barrier()
         training_time_ms += 1000 * (time.perf_counter() - t0)
@@ -313,7 +374,7 @@ while progress.tokens_processed < progress.target_tokens:
             # Announce dataset evaluation with expected steps for better visibility
             _world_batch = val_batch_size
             _steps = args.tot_val_tokens // _world_batch if _world_batch > 0 else 0
-            print0(f"[eval] dataset={_label} steps={_steps} (global_batch={_world_batch}, tot_tokens={args.tot_val_tokens})")
+            logger.info(f"[eval] dataset={_label} steps={_steps} (global_batch={_world_batch}, tot_tokens={args.tot_val_tokens})")
             _ev.reset_generator()
             _out = _ev.eval(model=model, total_tokens=args.tot_val_tokens)
             per_ds_results.append((_label, _out))
@@ -324,7 +385,7 @@ while progress.tokens_processed < progress.target_tokens:
         ema_dloss_per_token = primary_out.get("ema_dloss_per_token", ema_dloss_per_token)
         # Print a compact per-dataset summary line
         parts = [f"{lbl}:{float(out.get('val_loss', float('nan'))):.6f}" for lbl, out in per_ds_results]
-        print0(
+        logger.info(
             f"step:{step} tokens:{progress.tokens_processed:,}/{progress.target_tokens:,} (s={progress.s:.4f}) "
             + " ".join(parts) +
             f" train_time:{training_time_ms:,.0f}ms ema_dloss_per_1e6_tokens:{ema_dloss_per_token*1e6:.6f}")
@@ -344,11 +405,11 @@ while progress.tokens_processed < progress.target_tokens:
             wb[f"val/{lbl}/ppl"] = math.exp(_loss) if _loss < 20 else float("inf")
         log_wandb(wb)
         # checkpoints by tokens (save only if validation improves) using primary dataset
-        if master_process and args.save_checkpoint and progress.should_checkpoint():
+        if is_master and args.save_checkpoint and progress.should_checkpoint():
             if cur_val < best_val:
                 best_val = cur_val
                 # Save checkpoint (handles filename, cleanup, and bookkeeping)
-                fname = _save_run_checkpoint(
+                fname = _save_checkpoint(
                     val_value=cur_val,
                     step=step,
                     run_start_minute=run_start_minute,
@@ -361,9 +422,9 @@ while progress.tokens_processed < progress.target_tokens:
                     overwrite=False,
                     suffix="best",
                 )
-                print0(f"Saved checkpoint to {fname} with val loss {float(cur_val):.6f}")
+                logger.info(f"Saved checkpoint to {fname} with val loss {float(cur_val):.6f}")
             else:
-                print0(f"No improvement in val loss: best={best_val:.6f}, current={cur_val:.6f}. Skipping checkpoint.")
+                logger.info(f"No improvement in val loss: best={best_val:.6f}, current={cur_val:.6f}. Skipping checkpoint.")
 
             progress.mark_checkpoint_done()
         # resume training clock
@@ -428,7 +489,7 @@ while progress.tokens_processed < progress.target_tokens:
     if step == 9:
         warmup_end = approx_training_time_ms
     avg_step = f"avg_step:{(approx_training_time_ms - warmup_end) / max(step - 9, 1):.2f}ms" if step >= 10 else "avg_step: (warmup to step 10)"
-    print0(
+    logger.info(
         f"step:{step} train_loss:{train_loss_est:.4f} tokens:{progress.tokens_processed:,}/{progress.target_tokens:,} (s={progress.s:.4f}) train_time:{approx_training_time_ms:,.0f}ms {avg_step} lr_scale:{lr_scale:.4f}")
     log_wandb({
                 "train/loss": train_loss_est,
@@ -439,8 +500,8 @@ while progress.tokens_processed < progress.target_tokens:
                 "train/time_ms": approx_training_time_ms,})
 
 # End of training: save final checkpoint
-if master_process and args.save_checkpoint:
-    _ = _save_run_checkpoint(
+if is_master and args.save_checkpoint:
+    _ = _save_checkpoint(
         val_value=last_val_loss,
         step=step,
         run_start_minute=run_start_minute,
@@ -454,8 +515,9 @@ if master_process and args.save_checkpoint:
         suffix="final"
     )
 
-print0(
-    f"peak memory allocated: {torch.cuda.max_memory_allocated() // 1024 // 1024} MiB reserved: {torch.cuda.max_memory_reserved() // 1024 // 1024} MiB")
+_peak_mem = get_max_memory_allocated()
+if _peak_mem is not None:
+    logger.info(f"peak memory allocated: {_peak_mem // 1024 // 1024} MiB")
 if _wandb_enabled:
     # noinspection PyBroadException
     try:

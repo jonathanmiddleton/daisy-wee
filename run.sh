@@ -11,4 +11,4 @@ cd "$SCRIPT_DIR"
 # Ensure Python uses repository root for imports
 export PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH-}"
 
-python -m tools.runner "$@"
+python -m training.runner "$@"

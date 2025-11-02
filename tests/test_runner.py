@@ -1,16 +1,12 @@
-import io
 import os
 from pathlib import Path
 from typing import List
 
 import yaml
-import builtins
-import types
-import contextlib
 
 import pytest
 
-from tools import runner
+import runner
 
 
 class FakePopen:
@@ -69,7 +65,7 @@ def test_split_override_and_cartesian():
 
 
 def test_build_torchrun_cmd_basic():
-    cmd = runner.build_torchrun_cmd(
+    cmd = runner.build_run_cmd(
         nproc=2,
         config="config/test_tiny.yml",
         checkpoint="ckpt.pt",

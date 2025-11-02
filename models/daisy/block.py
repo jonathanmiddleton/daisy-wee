@@ -9,7 +9,7 @@ class Block(nn.Module):
     def __init__(self, dim: int, num_heads: int, max_seq_len: int, layer_idx: int, head_dim: int, total_layers: int):
         super().__init__()
 
-        attn_layers = [i for i in range(total_layers)]
+        attn_layers = [i for i in range(total_layers)] #TODO configurable
         self.attn: CausalSelfAttention  = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim) if layer_idx in attn_layers else None
         self.mlp = MLP(dim)
 

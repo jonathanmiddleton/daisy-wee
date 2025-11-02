@@ -1,4 +1,5 @@
 import os
+from math import floor, log2
 
 import torch
 from torch import nn, Tensor
@@ -18,14 +19,24 @@ class DaisyCore(nn.Module):
             raise ValueError("eos_token_id is required.")
 
         def _get_skip_map(L: int):
-            K = max(1, L // 8)
+            """
+            Side‑band residual mappings. Places targets just past the midpoint to avoid bypassing too much computation,
+            while spacing sources by `s` partitions the first half into `K+1` chunks, giving progressively longer skips
+            that cover diverse timescales.
+            Parameters:
+                L: int
+                    Layer count
+
+            Returns:
+                dict[int, int]
+                    A dictionary mapping target indices to source indices.
+            """
+            K = max(1, floor(log2(L)) - 1)
             c = L // 2
-            s = max(1, L // (2 * (K + 1)))
-            _skip_map = {i: j for t in range(1, K + 1)
-                         for i in [c - K + (t - 1)]
-                         for j in [i - t * s]
-                         if 0 <= j < i}
-            return _skip_map
+            s = max(1, c // (K + 1))
+            m = {c + t: c - t * s for t in range(1, K + 1)}
+            return {i: j for i, j in m.items() if 0 <= j < i < L}
+
         self.skip_map = _get_skip_map(num_layers)
         self.eos_token_id = int(eos_token_id)
         self.embed = nn.Embedding(vocab_size, model_dim)

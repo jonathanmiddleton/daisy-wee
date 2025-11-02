@@ -24,9 +24,6 @@ def configure_logging():
 configure_logging()
 logger = logging.getLogger(__name__)
 
-VOCAB_SIZE = 50257
-MAX_SEQ_LEN = 16*1024
-
 # Command line interface
 parser = argparse.ArgumentParser(description="Generate text with a GPT model from a checkpoint.")
 parser.add_argument("checkpoint", type=str, help="Path to model checkpoint (.pt)")
