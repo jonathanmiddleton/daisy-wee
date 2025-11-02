@@ -66,10 +66,12 @@ else:
 def maybe_compile(model: nn.Module, dynamic: bool = False) -> nn.Module:
     if TORCH_COMPILE_OFF:
         logger.info(f"Compiling disabled: TORCH_COMPILE_OFF={TORCH_COMPILE_OFF}")
+        return model
     else:
-        logger.info(f"Compiling model (dynamic={dynamic})...")
+        logger.info(f"Compiling model (dynamic={dynamic}).")
         model: nn.Module = torch.compile(model, dynamic=dynamic)
         logger.info("Finished compiling model.")
+        return model
 
 def maybe_reset_peak_memory_stats() -> None:
     if device.type == 'cuda':
@@ -312,7 +314,7 @@ maybe_reset_peak_memory_stats()
 _begin_shard_env = os.environ.get("BEGIN_SHARD")
 _begin_shard = int(_begin_shard_env) if _begin_shard_env not in (None, "",) else None
 _train_ddg = DistributedDataGenerator(args.train_shards, world_size * args.training_sequence_length, rank, world_size,
-                                      start_shard=_begin_shard)
+                                      start_shard=_begin_shard, device=device.type)
 val_batch_size = world_size * args.val_seq_len
 if args.tot_val_tokens % val_batch_size != 0:
     raise ValueError(f"tot_val_tokens ({args.tot_val_tokens}) must be divisible by val_batch_size ({val_batch_size})")
@@ -440,7 +442,8 @@ while progress.tokens_processed < progress.target_tokens:
 
     for micro_step in range(ga_steps):
         inputs, targets = next(_train_ddg)
-        loss = model(inputs, get_num_window_blocks(progress.s, attention_window_len=args.train_attention_window_len, window_block_size=args.window_block_size), targets)
+        n_blocks = get_num_window_blocks(progress.s, attention_window_len=args.train_attention_window_len, window_block_size=args.window_block_size)
+        loss = model(inputs, n_blocks, targets)
         # scale loss so that gradients are averaged across micro-steps
         loss_to_backward = loss / ga_steps
         if use_distributed:
