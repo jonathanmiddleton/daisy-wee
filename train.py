@@ -213,7 +213,7 @@ def _save_checkpoint(
         try:
             os.remove(_last_run_ckpt_path)
         except OSError:
-            pass
+            logger.warning(f"Failed to remove previous run checkpoint: {_last_run_ckpt_path}")
 
     save_checkpoint(
         fname,
@@ -323,7 +323,7 @@ _val_evals: list[tuple[str, Evaluator]] = []
 for _v in args.val_shards:
     _label = _v.get("type")
     _path = _v.get("path")
-    _ddg = DistributedDataGenerator(_path, val_batch_size, rank, world_size)
+    _ddg = DistributedDataGenerator(_path, val_batch_size, rank, world_size, device=device.type)
     _eval = Evaluator(
         data_generator=_ddg,
         distributed_enabled=use_distributed,
@@ -373,7 +373,6 @@ while progress.tokens_processed < progress.target_tokens:
         # Evaluate using all configured Evaluators (per-rank tokens)
         per_ds_results: list[tuple[str, dict]] = []
         for _label, _ev in _val_evals:
-            # Announce dataset evaluation with expected steps for better visibility
             _world_batch = val_batch_size
             _steps = args.tot_val_tokens // _world_batch if _world_batch > 0 else 0
             logger.info(f"[eval] dataset={_label} steps={_steps} (global_batch={_world_batch}, tot_tokens={args.tot_val_tokens})")
@@ -525,7 +524,7 @@ if _wandb_enabled:
     # noinspection PyBroadException
     try:
         _wandb.finish()
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.warning("wandb.finish(): " + str(_e))
 if use_distributed and dist.is_initialized():
     dist.destroy_process_group()

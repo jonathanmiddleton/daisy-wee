@@ -80,7 +80,10 @@ def zeropower_via_newtonschulz5(G: Tensor) -> Tensor:
     return X
 
 @torch.compile
-def update(acc_bf16_view_u16: Tensor, mantissa: Tensor, momentum_buffer: Tensor, grad: Tensor, momentum: Tensor, eff_lr: Tensor, eff_weight_decay: Tensor):
+def update_faster(acc_bf16_view_u16: Tensor, mantissa: Tensor, momentum_buffer: Tensor, grad: Tensor, momentum: Tensor, eff_lr: Tensor, eff_weight_decay: Tensor):
+    """
+    Mixed precision with full precision math.
+    """
     assert acc_bf16_view_u16.dtype == mantissa.dtype == torch.uint16
     grad = grad.float()
     momentum_buffer.copy_(momentum * momentum_buffer + (1 - momentum) * grad)
@@ -91,6 +94,16 @@ def update(acc_bf16_view_u16: Tensor, mantissa: Tensor, momentum_buffer: Tensor,
     acc_m_u32.view(torch.float32).add_(other=v, alpha=-eff_lr)
     acc_bf16_view_u16.copy_((acc_m_u32 >> 16).to(torch.uint16))
     mantissa.copy_(acc_m_u32.to(torch.uint16))
+
+@torch.compile
+def update_slower(acc: Tensor, momentum_buffer: Tensor, grad: Tensor, momentum: Tensor, eff_lr: Tensor, eff_weight_decay: Tensor):
+    """
+    Full precision alternative to update_fast for platforms that don't support uint* ops.
+    """
+    grad = grad.float()
+    momentum_buffer.copy_(momentum * momentum_buffer + (1 - momentum) * grad)
+    v = zeropower_via_newtonschulz5(momentum * momentum_buffer + (1 - momentum) * grad)
+    acc.mul_(1 - eff_weight_decay).add_(other=v, alpha=-eff_lr)
 
 
 class Muon(torch.optim.Optimizer):
@@ -110,6 +123,8 @@ class Muon(torch.optim.Optimizer):
     def __init__(self, params, lr=0.02, weight_decay=0.01, momentum=0.95, rank=0, world_size=1):
         self.rank = rank
         self.world_size = world_size
+        self.uint16_ops = torch.cuda.is_available()
+
         defaults = dict(lr=lr, weight_decay=weight_decay, momentum=momentum)
         super().__init__(params, defaults)
         assert all(p.dtype == torch.bfloat16 for group in self.param_groups for p in group["params"])
@@ -128,15 +143,25 @@ class Muon(torch.optim.Optimizer):
                     if p.grad is None:
                         continue
                     state = self.state[p]
-                    if len(state) == 0:
-                        state["mantissa"] = torch.zeros_like(p, dtype=torch.uint16)
-                        state["momentum_buffer"] = torch.zeros_like(p, dtype=torch.float32)
-                    update(
-                        p.view(torch.uint16), state["mantissa"], state["momentum_buffer"],
-                        p.grad, momentum,
-                        eff_lr=torch._as_tensor_fullprec(group["lr"] * max(1, p.size(-2) / p.size(-1)) ** 0.5),
-                        eff_weight_decay=torch._as_tensor_fullprec(group["lr"] * group["weight_decay"] * getattr(p, "wd_mul", 1.0)),
-                    )
+                    if self.uint16_ops:
+                        if len(state) == 0:
+                            state["mantissa"] = torch.zeros_like(p, dtype=torch.uint16)
+                            state["momentum_buffer"] = torch.zeros_like(p, dtype=torch.float32)
+                        update_faster(
+                            p.view(torch.uint16), state["mantissa"], state["momentum_buffer"],
+                            p.grad, momentum,
+                            eff_lr=torch._as_tensor_fullprec(group["lr"] * max(1, p.size(-2) / p.size(-1)) ** 0.5),
+                            eff_weight_decay=torch._as_tensor_fullprec(group["lr"] * group["weight_decay"] * getattr(p, "wd_mul", 1.0)),
+                        )
+                    else:
+                        if len(state) == 0:
+                            state["momentum_buffer"] = torch.zeros_like(p, dtype=torch.float32)
+                        update_slower(
+                            p, state["momentum_buffer"],
+                            p.grad, momentum,
+                            eff_lr=torch._as_tensor_fullprec(group["lr"] * max(1, p.size(-2) / p.size(-1)) ** 0.5),
+                            eff_weight_decay=torch._as_tensor_fullprec(group["lr"] * group["weight_decay"] * getattr(p, "wd_mul", 1.0)),
+                        )
                 if self.world_size > 1 and dist.is_available() and dist.is_initialized():
                     futures.append(
                         dist.all_gather(

@@ -11,11 +11,23 @@ from torch.nn.attention.flex_attention import BlockMask
 def next_multiple_of_n(v: float | int, *, n: int):
     return next(x for x in range(n, int(v) + 1 + n, n) if x >= v)
 
+
+# def build_attn_mask(input_seq: Tensor, sliding_window_num_blocks: int):
+#     T = input_seq.size(-1)
+#     q = torch.arange(T, device=input_seq.device, requires_grad=False)[:, None]  # (T, 1)
+#     k = torch.arange(T, device=input_seq.device, requires_grad=False)[None, :]  # (1, T)
+#     d = q - k  # d[q, k] = q - k
+#
+#     m = torch.zeros(T, T, device=input_seq.device, dtype=torch.bfloat16, requires_grad=False)
+#     m[d < 0] = float("-inf")  # forbid future (k > q)
+#     m[d >= sliding_window_num_blocks] = float("-inf")  # forbid too-far past
+#     attn_mask = m[None, None, :, :]
+#     return attn_mask
+
 def build_attn_mask(input_seq: Tensor, sliding_window_num_blocks: int):
-    assert input_seq.ndim == 2
-    T = input_seq.shape[1]
-    q = torch.arange(T, device=input_seq.device)[:, None]  # (T, 1)
-    k = torch.arange(T, device=input_seq.device)[None, :]  # (1, T)
+    T = input_seq.size(-1)
+    q = torch.arange(T, device=input_seq.device )[:, None]  # (T, 1)
+    k = torch.arange(T, device=input_seq.device )[None, :]  # (1, T)
     d = q - k  # d[q, k] = q - k
 
     m = torch.zeros(T, T, device=input_seq.device, dtype=torch.float32)
@@ -74,7 +86,7 @@ class DaisyCore(nn.Module):
         for b in self.blocks:
             b.reset_history()
 
-    def create_blockmasks(self, input_seq: Tensor, sliding_window_num_blocks: Tensor):
+    def create_blockmasks(self, input_seq: Tensor, sliding_window_num_blocks: Tensor, L: int):
         BLOCK_SIZE = self.window_block_size
         assert (len(input_seq) % BLOCK_SIZE == 0)
         device = input_seq.device
@@ -115,7 +127,11 @@ class DaisyCore(nn.Module):
             )
 
         # Long-short SWA block masks by @leloykun & @YouJiacheng, adapated from suggestion by @Grad62304977, following Gemma 2 paper
-        return build_bm(sliding_window_num_blocks), build_bm(sliding_window_num_blocks // 2)
+        long_bm, short_bm = build_bm(sliding_window_num_blocks), build_bm(sliding_window_num_blocks // 2)
+
+        cycle = [long_bm] + [short_bm] * 3
+        block_masks = (cycle * ((L + 3) // 4))[:L - 1] + [long_bm]
+        return block_masks
 
     def forward(self, input_seq: Tensor, sliding_window_num_blocks: Tensor, target_seq: Tensor = None):
         assert input_seq.ndim == 1
@@ -123,11 +139,6 @@ class DaisyCore(nn.Module):
 
         ve = [value_embed(input_seq) for value_embed in self.value_embeds]
         ve = [ve[0], ve[1], ve[2]] + [None] * (L - 6) + [ve[0], ve[1], ve[2]]
-
-        long_bm, short_bm = self.create_blockmasks(input_seq, sliding_window_num_blocks)
-        # TODO: hoursglass pattern
-        cycle = [long_bm] + [short_bm] * 3
-        block_masks = (cycle * ((L + 3) // 4))[:L-1] + [long_bm]
 
         x = x0 = norm(self.embed(input_seq)[None])
 
@@ -137,10 +148,16 @@ class DaisyCore(nn.Module):
         sa_lambdas = self.scalars[3 * L:5 * L].view(-1, 2)
 
         skip_connections = []
+
         for i in range(L):
             if i in skip_map:
                 x = x + skip_weights[skip_map[i]] * skip_connections[skip_map[i]]
-            x = self.blocks[i](x, ve[i], x0, block_masks[i], lambdas[i], sa_lambdas[i])
+            if input_seq.device.type == "cuda":
+                block_masks = self.create_blockmasks(input_seq, sliding_window_num_blocks, L=L)
+                x = self.blocks[i](x, ve[i], x0, lambdas[i], sa_lambdas[i], block_masks=block_masks[i])
+            else:
+                attn_mask = build_attn_mask(input_seq, sliding_window_num_blocks)
+                x = self.blocks[i](x, ve[i], x0, lambdas[i], sa_lambdas[i], attn_mask=attn_mask)
             skip_connections.append(x)
 
         x = norm(x)
@@ -149,7 +166,7 @@ class DaisyCore(nn.Module):
             loss = F.cross_entropy(15 * logits * torch.rsqrt(logits.square() + 225), target_seq)
             return loss
 
-        # eval
+        # eval, assuming 4xtrain_seq_len
         loss = 0
         for i in range(4):
             logits: Tensor = F.linear(x.flatten(end_dim=1).chunk(4)[i].bfloat16(), self.lm_head_w.bfloat16()).float()

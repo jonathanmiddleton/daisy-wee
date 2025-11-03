@@ -12,7 +12,6 @@ def _apply_rope(x_BTHD , cos, sin):
     y2 = x1 * (-sin) + x2 * cos
     return torch.cat((y1, y2), dim=-1).type_as(x_BTHD)
 
-#@torch.compile
 def _flex_call(q, k, v, block_mask, scale):
     return flex_attention(q, k, v, block_mask=block_mask, scale=scale)
 
@@ -85,8 +84,8 @@ class CausalSelfAttention(nn.Module):
         self.last_q = None
         self.last_k = None
 
-    def forward(self, x: Tensor, ve: Tensor | None, block_mask: BlockMask, lambdas: Tensor):
-        B, T = x.size(0), x.size(1) # batch size, sequence length
+    def forward(self, x: Tensor, ve: Tensor | None,  lambdas: Tensor, block_mask: BlockMask = None, attn_mask: Tensor | None = None,):
+        B, T = x.size(0), x.size(1)
         assert B == 1, "Must use batch size = 1 for FlexAttention"
         x = x.to(self.qkvo_w.dtype)
         q, k, v = F.linear(x, self.qkvo_w[:3].flatten(end_dim=1)).view(B, T, 3 * self.num_heads, self.head_dim).chunk(3, dim=-2)
@@ -98,18 +97,24 @@ class CausalSelfAttention(nn.Module):
         if ve is not None:
             ve = ve.to(target_dtype)
             lambdas = lambdas.to(target_dtype)
-            v = lambdas[0] * v + lambdas[1] * ve.view_as(v) # @KoszarskyB & @Grad62304977
-        else: # skip mid-layers token value embeddings by @YouJiacheng
+            v = lambdas[0] * v + lambdas[1] * ve.view_as(v)
+        else:
             lambdas = lambdas.to(target_dtype)
             v = lambdas[0] * v
 
-        y = _flex_call(
-            q.transpose(1, 2),
-            k.transpose(1, 2),
-            v.transpose(1, 2),
-            block_mask=block_mask,
-            scale=self.attn_scale,
-        ).transpose(1, 2)
+        q_ = q.transpose(1, 2)
+        k_ = k.transpose(1, 2)
+        v_ = v.transpose(1, 2)
+
+        if x.device.type == "cuda":
+            y = _flex_call(q_, k_, v_, block_mask=block_mask, scale=self.attn_scale).transpose(1, 2)
+        else:
+            if attn_mask is not None:
+                attn_mask = attn_mask.to(target_dtype)
+                y = F.scaled_dot_product_attention(q_, k_, v_, scale=self.attn_scale, attn_mask=attn_mask, is_causal=False)
+            else:
+                y = F.scaled_dot_product_attention(q_, k_, v_, is_causal=True, scale=self.attn_scale)
+
         y = y.contiguous().view(B, T, self.num_heads * self.head_dim) # re-assemble all head outputs side by side
         y = F.linear(y, self.qkvo_w[3])
         return y

@@ -17,11 +17,14 @@ class Block(nn.Module):
         if self.attn is not None:
             self.attn.reset_history()
 
-    def forward(self, x: Tensor, ve: Tensor | None, x0: Tensor, block_mask: BlockMask, lambdas: Tensor, sa_lambdas: Tensor):
+    def forward(self, x: Tensor, ve: Tensor | None, x0: Tensor, lambdas: Tensor, sa_lambdas: Tensor, block_mask: BlockMask = None, attn_mask: Tensor | None = None,):
         x = lambdas[0] * x + lambdas[1] * x0
         if self.attn is not None:
             x = x.to(self.attn.qkvo_w.dtype)
-            x = x + self.attn(x, ve, block_mask, sa_lambdas)
+            if x.device.type == "cuda":
+                x = x + self.attn(x, ve, sa_lambdas, block_mask=block_mask)
+            else:
+                x = x + self.attn(x, ve, sa_lambdas, attn_mask=attn_mask)
         x = x + self.mlp(norm(x))
         return x
 
