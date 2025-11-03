@@ -415,7 +415,7 @@ The `-p` flag loads model weights from the checkpoint but resets the optimizer a
 #### Single-GPU Debugging
 
 ```bash
-./run.sh config/pretrain_150m.yml -n 1 \
+./run.sh config/pretrain_280m.yml -n 1 \
     target_tokens=100000000 \
     val_loss_every_tokens=10000000
 ```

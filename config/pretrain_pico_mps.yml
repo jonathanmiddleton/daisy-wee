@@ -39,12 +39,12 @@ grad_acc_steps: 4
 val_shards:
   - type: "fineweb-edu"
     path: "data/fineweb-edu/edu_fineweb_val_000000.bin"
-val_loss_every_tokens:     1310720
-val_seq_len: 16384       # 4 * 8192
-tot_val_tokens: 65536
+val_loss_every_tokens:     3276800
+val_seq_len: 16384          # 4 * 64 * 1024
+tot_val_tokens: 163840
 # Checkpoints
-checkpoint_warmup_tokens:     1           # token warmup before checkpoints
-checkpoint_per_n_tokens:      1           # checkpoint interval by tokens
+checkpoint_warmup_tokens:   3276800         # token warmup before checkpoints
+checkpoint_per_n_tokens:     1         # checkpoint interval by tokens
 save_checkpoint: true
 # Model Definition
 model_spec: daisy_pico
