@@ -26,7 +26,8 @@ use_value_embeddings: false
 # eval] dataset=fineweb-edu steps=10 (global_batch=16384, tot_tokens=163840)
 # step:100 tokens:6,553,600/6,569,984 (s=0.9975) fineweb-edu:5.788924 train_time:405,852ms ema_dloss_per_1e6_tokens:-0.437410
 # again:
-#
+# [eval] dataset=fineweb-edu steps=10 (global_batch=16384, tot_tokens=163840)
+# step:100 tokens:6,553,600/6,569,984 (s=0.9975) fineweb-edu:5.789969 train_time:403,340ms ema_dloss_per_1e6_tokens:-0.447629
 #
 
 
