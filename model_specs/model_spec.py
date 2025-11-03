@@ -22,6 +22,7 @@ class ModelSpec:
     window_block_size: int  # block granularity for sliding window/masks
     attention_window_len: int  # largest sliding attention window supported by the model
     max_seq_len: int  # maximum context size supported by the model
+    use_value_embeddings: bool = True
 
 
 def _strict_keys(obj: dict[str, Any], allowed: set[str], ctx: str) -> None:

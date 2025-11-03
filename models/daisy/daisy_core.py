@@ -11,19 +11,6 @@ from torch.nn.attention.flex_attention import BlockMask
 def next_multiple_of_n(v: float | int, *, n: int):
     return next(x for x in range(n, int(v) + 1 + n, n) if x >= v)
 
-
-# def build_attn_mask(input_seq: Tensor, sliding_window_num_blocks: int):
-#     T = input_seq.size(-1)
-#     q = torch.arange(T, device=input_seq.device, requires_grad=False)[:, None]  # (T, 1)
-#     k = torch.arange(T, device=input_seq.device, requires_grad=False)[None, :]  # (1, T)
-#     d = q - k  # d[q, k] = q - k
-#
-#     m = torch.zeros(T, T, device=input_seq.device, dtype=torch.bfloat16, requires_grad=False)
-#     m[d < 0] = float("-inf")  # forbid future (k > q)
-#     m[d >= sliding_window_num_blocks] = float("-inf")  # forbid too-far past
-#     attn_mask = m[None, None, :, :]
-#     return attn_mask
-
 def build_attn_mask(input_seq: Tensor, sliding_window_num_blocks: int):
     T = input_seq.size(-1)
     q = torch.arange(T, device=input_seq.device )[:, None]  # (T, 1)
@@ -39,7 +26,7 @@ def build_attn_mask(input_seq: Tensor, sliding_window_num_blocks: int):
 class DaisyCore(nn.Module):
     def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim,
                  window_block_size: int = 128, eos_token_id: int | None = None, desc: dict | None = None,
-                 enable_ve: bool = True):
+                 use_value_embeddings: bool = True):
         super().__init__()
         if eos_token_id is None:
             raise ValueError("eos_token_id is required.")
@@ -66,7 +53,7 @@ class DaisyCore(nn.Module):
         self.skip_map = _get_skip_map(num_layers)
         self.eos_token_id = int(eos_token_id)
         self.embed = nn.Embedding(vocab_size, model_dim)
-        self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(3)]) if enable_ve else None
+        self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(3)]) if use_value_embeddings else None
         self.blocks = nn.ModuleList([Block(model_dim, num_heads, max_seq_len, i, head_dim, num_layers) for i in range(num_layers)])
         if os.getenv("DISABLE_O_ZERO_INIT", "") != "1":
             # != 1 training
@@ -189,11 +176,15 @@ class DaisyCore(nn.Module):
                 h = b.attn.num_heads
                 d = b.attn.head_dim
                 break
-        ve0 = self.value_embeds[0](token_id).view(B, 1, h, d)
-        ve1 = self.value_embeds[1](token_id).view(B, 1, h, d)
-        ve2 = self.value_embeds[2](token_id).view(B, 1, h, d)
         L = len(self.blocks)
-        ve = [ve0, ve1, ve2] + [None] * (L - 6) + [ve0, ve1, ve2]
+
+        if self.value_embeds is None:
+            ve = [None] * (L + 6)
+        else:
+            ve0 = self.value_embeds[0](token_id).view(B, 1, h, d)
+            ve1 = self.value_embeds[1](token_id).view(B, 1, h, d)
+            ve2 = self.value_embeds[2](token_id).view(B, 1, h, d)
+            ve = [ve0, ve1, ve2] + [None] * (L - 6) + [ve0, ve1, ve2]
 
         skip_map = self.skip_map
         scalars = self.scalars
@@ -221,13 +212,25 @@ class DaisyCore(nn.Module):
     def prefill(self, input_seq: Tensor, sliding_window_num_blocks: int | None = None, debug: bool = False):
         assert input_seq.ndim == 2
         B, T = input_seq.shape
+        h = None
+        d = None
+        for b in self.blocks:
+            if getattr(b, "attn", None) is not None:
+                h = b.attn.num_heads
+                d = b.attn.head_dim
+                break
         L = len(self.blocks)
 
         x = norm(self.embed(input_seq))
         x0 = x
 
-        ve0, ve1, ve2 = [emb(input_seq) for emb in self.value_embeds]
-        ve = [ve0, ve1, ve2] + [None] * (L - 6) + [ve0, ve1, ve2]
+        if self.value_embeds is None:
+            ve = [None] * (L + 6)
+        else:
+            ve0 = self.value_embeds[0](input_seq).view(B, 1, h, d)
+            ve1 = self.value_embeds[1](input_seq).view(B, 1, h, d)
+            ve2 = self.value_embeds[2](input_seq).view(B, 1, h, d)
+            ve = [ve0, ve1, ve2] + [None] * (L - 6) + [ve0, ve1, ve2]
 
         skip_map = self.skip_map
         skip_weights = self.scalars[:L]

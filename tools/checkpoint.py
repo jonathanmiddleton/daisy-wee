@@ -5,8 +5,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 from torch import nn
+from torch.nn import Module
 
-from models import get_model_class
+from models import model_from_spec
 
 STANDARD_KEYS = {
     "model",         # state_dict of the model
@@ -111,9 +112,9 @@ def save_checkpoint(
     torch.save(payload, path)
 
 
-def apply_model_state(model: nn.Module, state_dict: Dict[str, Any], strict: bool = False) -> Tuple[List[str], List[str]]:
+def apply_model_state(model: nn.Module, state_dict: Dict[str, Any], strict: bool = True, assign: bool = True) -> Tuple[List[str], List[str]]:
     # Convenience to load with common prefix stripping already handled by load_checkpoint
-    missing, unexpected = model.load_state_dict(state_dict, strict=strict)
+    missing, unexpected = model.load_state_dict(state_dict, strict=strict, assign=assign)
     return list(missing), list(unexpected)
 
 
@@ -122,39 +123,12 @@ def peek_hparams(path: str, map_location: Any | None = None) -> Dict[str, Any]:
     ckpt = _normalize(obj)
     return ckpt.hparams or {}
 
-def model_from_checkpoint(path: str, device: torch.device | str) -> nn.Module:
+def model_from_checkpoint(path: str, device: torch.device | str) -> tuple[Module, dict[str, Any]]:
     ckpt = load_checkpoint(path, map_location=device)
     state_dict = ckpt.model
-    hparams = ckpt.hparams or {}
+    hparams = ckpt.hparams
 
-    vocab_size = int(hparams.get('vocab_size'))
-    num_layers = int(hparams.get('num_layers'))
-    num_heads = int(hparams.get('num_heads'))
-    model_dim = int(hparams.get('model_dim'))
-    head_dim = int(hparams.get('head_dim'))
-    max_seq_len = int(hparams.get('max_seq_len'))
-    window_block_size = int(hparams.get('window_block_size', 128))
-    model_class = str(hparams.get('model_class'))
-    if not model_class:
-        raise ValueError("Checkpoint hparams must include 'model_class' (fully-qualified class name)")
-    if 'eos_token_id' not in hparams:
-        raise ValueError("Checkpoint hparams must include 'eos_token_id'")
-    eos_token_id = int(hparams.get('eos_token_id'))
+    model = model_from_spec(hparams, device=device)
+    apply_model_state(model, state_dict, strict=True, assign=True)
 
-    ModelClass = get_model_class(model_class)
-    model: nn.Module = ModelClass(
-        vocab_size=vocab_size,
-        num_layers=num_layers,
-        num_heads=num_heads,
-        model_dim=model_dim,
-        max_seq_len=max_seq_len,
-        head_dim=head_dim,
-        window_block_size=window_block_size,
-        eos_token_id=eos_token_id,
-    ).to(device)
-
-    if getattr(model, "desc", None) is None:
-        setattr(model, "desc", hparams)
-
-    apply_model_state(model, state_dict, strict=False)
     return model, hparams

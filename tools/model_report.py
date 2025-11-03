@@ -67,6 +67,7 @@ def analyze_scalars(model: nn.Module, hparams: Dict[str, Any], zero_threshold: f
         out["error"] = f"Unexpected scalars shape: length={S}, num_layers={L}"
         return out
 
+    # TODO dont hardcode
     skip_w = s[:L]
     lambdas = s[1 * L:3 * L].view(-1, 2)
     sa_lambdas = s[3 * L:5 * L].view(-1, 2)

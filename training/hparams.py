@@ -53,6 +53,7 @@ class Hyperparameters:
     wandb_project: str = ""
     wandb_run_name: str = ""
     init_checkpoint: str | None = None
+    use_value_embeddings: bool = True
 
 
 def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
@@ -109,7 +110,7 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
     if missing:
         raise ValueError(f"Missing required hyperparameter(s) in {used_path}: {missing}")
 
-    # Normalize and validate new multi-eval schema for val_shards (no backward compatibility)
+    # Normalize and validate
     vcfg = cfg_dict.get("val_shards")
     if not isinstance(vcfg, list) or len(vcfg) == 0:
         raise ValueError("val_shards must be a non-empty list of objects with 'path' and optional 'type' fields")

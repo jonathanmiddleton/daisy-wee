@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 from dataclasses import asdict
 from typing import Optional
 
-from models import get_model_class
+from model_report import build_report, format_report_text
+from models import get_model_class, model_from_spec
 from data.data_gen_stream import DistributedDataGenerator
 from training.optim import Muon, get_lr_scale
 from training.optim import get_num_window_blocks, set_full_windows
@@ -70,7 +71,6 @@ def maybe_compile(model: nn.Module, dynamic: bool = False) -> nn.Module:
     else:
         logger.info(f"Compiling model (dynamic={dynamic}).")
         model: nn.Module = torch.compile(model, dynamic=dynamic)
-        logger.info("Finished compiling model.")
         return model
 
 def maybe_reset_peak_memory_stats() -> None:
@@ -267,6 +267,7 @@ model: nn.Module = _ModelClass(
     head_dim=args.head_dim,
     window_block_size=args.window_block_size,
     eos_token_id=args.eos_token_id,
+    use_value_embeddings=args.use_value_embeddings
 ).to(device)
 
 # If a checkpoint was provided, load weights and training metadata
@@ -442,6 +443,7 @@ while progress.tokens_processed < progress.target_tokens:
     for micro_step in range(ga_steps):
         inputs, targets = next(_train_ddg)
         n_blocks = get_num_window_blocks(progress.s, attention_window_len=args.train_attention_window_len, window_block_size=args.window_block_size)
+        # with torch.autocast("mps", dtype=torch.bfloat16):
         loss = model(inputs, n_blocks, targets)
         # scale loss so that gradients are averaged across micro-steps
         loss_to_backward = loss / ga_steps

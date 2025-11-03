@@ -6,7 +6,7 @@ wandb_run_name: 'pico'
 torch.coordinate_descent_tuning: true
 # Pretraining configuration
 train_shards: "data/fineweb-edu/edu_fineweb_val_000000.bin"
-target_tokens: 40550400
+target_tokens: 6569984 # 101 steps @ training_sequence_length: 16384
 cooldown_frac: 0.2
 learning_rate_schedule: linear_decay
 training_sequence_length: 16384        #  N * 1024; must be divisible by window_block_size
@@ -43,8 +43,8 @@ val_loss_every_tokens:     3276800
 val_seq_len: 16384          # 4 * 64 * 1024
 tot_val_tokens: 163840
 # Checkpoints
-checkpoint_warmup_tokens:   3276800         # token warmup before checkpoints
-checkpoint_per_n_tokens:     1         # checkpoint interval by tokens
+checkpoint_warmup_tokens: 0           # token warmup before checkpoints
+checkpoint_per_n_tokens: 0            # checkpoint interval by tokens
 save_checkpoint: true
 # Model Definition
 model_spec: daisy_pico
