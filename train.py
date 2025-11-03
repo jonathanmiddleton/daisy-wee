@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from dataclasses import asdict
 from typing import Optional
 
-from model_report import build_report, format_report_text
+from tools.model_report import build_report, format_report_text
 from models import get_model_class, model_from_spec
 from data.data_gen_stream import DistributedDataGenerator
 from training.optim import Muon, get_lr_scale
@@ -303,6 +303,8 @@ for opt in optimizers:
     for group in opt.param_groups:
         group["initial_lr"] = group["lr"]
 
+report = build_report(model)
+logger.info(f"Model report:\n{format_report_text(report)}")
 model: nn.Module = maybe_compile(model, dynamic=False)
 
 
@@ -443,13 +445,13 @@ while progress.tokens_processed < progress.target_tokens:
     for micro_step in range(ga_steps):
         inputs, targets = next(_train_ddg)
         n_blocks = get_num_window_blocks(progress.s, attention_window_len=args.train_attention_window_len, window_block_size=args.window_block_size)
-        # with torch.autocast("mps", dtype=torch.bfloat16):
-        loss = model(inputs, n_blocks, targets)
-        # scale loss so that gradients are averaged across micro-steps
-        loss_to_backward = loss / ga_steps
-        if use_distributed:
-            model.require_backward_grad_sync = (micro_step == ga_steps - 1) # no_sync()
-        loss_to_backward.backward()
+        with torch.autocast("mps", dtype=torch.bfloat16):
+            loss = model(inputs, n_blocks, targets)
+            # scale loss so that gradients are averaged across micro-steps
+            loss_to_backward = loss / ga_steps
+            if use_distributed:
+                model.require_backward_grad_sync = (micro_step == ga_steps - 1) # no_sync()
+            loss_to_backward.backward()
         total_train_loss += float(loss.item())
 
     # collect the futures for all the optimizers (do distributed grad average once after accumulation)
