@@ -17,5 +17,5 @@ handlers:
     filename: logs/app.log
 
 root:
-  level: DEBUG
+  level: INFO
   handlers: [console, file]
