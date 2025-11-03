@@ -37,7 +37,9 @@ def build_attn_mask(input_seq: Tensor, sliding_window_num_blocks: int):
     return attn_mask
 
 class DaisyCore(nn.Module):
-    def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim, window_block_size: int = 128, eos_token_id: int | None = None, desc: dict | None = None):
+    def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim,
+                 window_block_size: int = 128, eos_token_id: int | None = None, desc: dict | None = None,
+                 enable_ve: bool = True):
         super().__init__()
         if eos_token_id is None:
             raise ValueError("eos_token_id is required.")
@@ -64,7 +66,7 @@ class DaisyCore(nn.Module):
         self.skip_map = _get_skip_map(num_layers)
         self.eos_token_id = int(eos_token_id)
         self.embed = nn.Embedding(vocab_size, model_dim)
-        self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(3)])
+        self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(3)]) if enable_ve else None
         self.blocks = nn.ModuleList([Block(model_dim, num_heads, max_seq_len, i, head_dim, num_layers) for i in range(num_layers)])
         if os.getenv("DISABLE_O_ZERO_INIT", "") != "1":
             # != 1 training
@@ -137,8 +139,11 @@ class DaisyCore(nn.Module):
         assert input_seq.ndim == 1
         L = len(self.blocks)
 
-        ve = [value_embed(input_seq) for value_embed in self.value_embeds]
-        ve = [ve[0], ve[1], ve[2]] + [None] * (L - 6) + [ve[0], ve[1], ve[2]]
+        if self.value_embeds is not None:
+            ve = [value_embed(input_seq) for value_embed in self.value_embeds]
+            ve = [ve[0], ve[1], ve[2]] + [None] * (L - 6) + [ve[0], ve[1], ve[2]]
+        else:
+            ve = [None] * (L + 6)
 
         x = x0 = norm(self.embed(input_seq)[None])
 

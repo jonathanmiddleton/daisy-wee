@@ -23,7 +23,7 @@ def derive_named_param_groups(model: nn.Module) -> dict[str, list[nn.Parameter]]
         reverse=True,
     )
     # Embedding parameters
-    embed_params = [*model.embed.parameters(), *model.value_embeds.parameters()]
+    embed_params = [*model.embed.parameters(), *model.value_embeds.parameters()] if model.value_embeds is not None else [*model.embed.parameters()]
     # Learned scalar gates
     scalar_params = [model.scalars]
     # Output head weights
