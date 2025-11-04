@@ -20,6 +20,9 @@ from typing import List, Tuple
 from io import TextIOBase
 import platform, sys as _sys
 
+from helpers import is_mac_os
+
+
 def _timestamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -111,9 +114,6 @@ def _stream_subprocess(cmd: List[str], log_fp) -> int:
                 pass
         returncode = p.wait()
     return returncode
-
-def is_mac_os():
-    return _sys.platform == "darwin" or platform.system() == "Darwin"
 
 def main(argv: List[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)

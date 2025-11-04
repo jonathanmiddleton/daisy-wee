@@ -53,7 +53,8 @@ class Hyperparameters:
     wandb_project: str = ""
     wandb_run_name: str = ""
     init_checkpoint: str | None = None
-    use_value_embeddings: bool = True
+    value_embeddings: bool = True
+    tied_embeddings: bool = False
 
 
 def load_hparams_from_yaml(config_path: str) -> Hyperparameters:

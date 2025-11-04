@@ -19,12 +19,13 @@ optimizers:
     weight_decay: 0.0
     fused: true
     params:
-      - group: head_params
-        lr: 0.004
+# tied
+#      - group: head_params
+#        lr: 0.004
       - group: embed_params
-        lr: 0.2
+        lr: 0.002
       - group: scalar_params
-        lr: 0.015
+        lr: 0.0015
 
   - type: Muon
     momentum: 0.95
@@ -47,4 +48,4 @@ checkpoint_warmup_tokens: 0           # token warmup before checkpoints
 checkpoint_per_n_tokens: 0            # checkpoint interval by tokens
 save_checkpoint: true
 # Model Definition
-model_spec: daisy_pico
+model_spec: daisy_pico_tied

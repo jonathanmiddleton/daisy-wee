@@ -9,8 +9,5 @@ model_dim: 256
 window_block_size: 128
 attention_window_len: 128
 max_seq_len: 4096
-value_embeddings: true
-tied_embeddings: false
-
-
-
+value_embeddings: false
+tied_embeddings: true

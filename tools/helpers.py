@@ -190,5 +190,8 @@ def measure_time():
     t0 = time.perf_counter()
     yield lambda: time.perf_counter() - t0
 
+def is_mac_os():
+    import sys as _sys, platform
+    return _sys.platform == "darwin" or platform.system() == "Darwin"
 
 __all__ = ["_coerce_value", "measure_time"]

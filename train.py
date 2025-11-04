@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from dataclasses import asdict
 from typing import Optional
 
+from checkpoint import model_from_checkpoint
 from tools.model_report import build_report, format_report_text
 from models import get_model_class, model_from_spec
 from data.data_gen_stream import DistributedDataGenerator
@@ -238,46 +239,52 @@ resume_from_step = None
 _resume_tokens_per_step: int | None = None
 _ckpt_obj = None
 if args.init_checkpoint:
-    _ckpt_obj = load_checkpoint(args.init_checkpoint, map_location=device)
-    _saved_hparams = _ckpt_obj.hparams if _ckpt_obj is not None else None
-    if isinstance(_saved_hparams, dict):
-        # Only adopt architecture/sequence related fields required to restore the model
-        for k in [
-            "vocab_size", "num_layers", "num_heads", "model_dim", "head_dim",
-            "training_sequence_length", "val_seq_len", "train_attention_window_len", "window_block_size",
-            "eos_token_id", "model_class",
-        ]:
-            if k in _saved_hparams and _saved_hparams[k] is not None:
-                setattr(args, k, _saved_hparams[k])
-        logger.info("Rehydrated model hyperparameters from checkpoint.")
+    # _ckpt_obj = load_checkpoint(args.init_checkpoint, map_location=device)
+    # _saved_hparams = _ckpt_obj.hparams if _ckpt_obj is not None else None
+    # if isinstance(_saved_hparams, dict):
+    #     # Only adopt architecture/sequence related fields required to restore the model
+    #     for k in [
+    #         "vocab_size", "num_layers", "num_heads", "model_dim", "head_dim",
+    #         "training_sequence_length", "val_seq_len", "train_attention_window_len", "window_block_size",
+    #         "eos_token_id", "model_class",
+    #     ]:
+    #         if k in _saved_hparams and _saved_hparams[k] is not None:
+    #             setattr(args, k, _saved_hparams[k])
+    model, hparams = model_from_checkpoint(args.init_checkpoint, device=device)
+    # TODO diff args/hparams
+    logger.info("Rehydrated model from checkpoint.")
+else:
+    model = model_from_spec(args.model_spec, device=device.type)
+    hparams = _build_hparams_from_args(args)
 
 logger.info("Hyperparameters:\n" + json.dumps(asdict(args), indent=2, sort_keys=True))
 # Ensure wandb sees the final effective hyperparameters (after overrides and any rehydration)
 update_wandb_config(asdict(args))
-
-# Build the model with possibly rehydrated args
-_ModelClass = get_model_class(args.model_class)
-model: nn.Module = _ModelClass(
-    vocab_size=args.vocab_size,
-    num_layers=args.num_layers,
-    num_heads=args.num_heads,
-    model_dim=args.model_dim,
-    # RoPE requires a potentially different max_seq_len than may be specified in the model spec
-    max_seq_len=max(args.training_sequence_length, args.val_seq_len),
-    head_dim=args.head_dim,
-    window_block_size=args.window_block_size,
-    eos_token_id=args.eos_token_id,
-    use_value_embeddings=args.use_value_embeddings
-).to(device)
+#
+# # Build the model with possibly rehydrated args
+# _ModelClass = get_model_class(args.model_class)
+# model: nn.Module = _ModelClass(
+#     vocab_size=args.vocab_size,
+#     num_layers=args.num_layers,
+#     num_heads=args.num_heads,
+#     model_dim=args.model_dim,
+#     # RoPE requires a potentially different max_seq_len than may be specified in the model spec
+#     max_seq_len=max(args.training_sequence_length, args.val_seq_len),
+#     head_dim=args.head_dim,
+#     window_block_size=args.window_block_size,
+#     eos_token_id=args.eos_token_id,
+#     value_embeddings=args.value_embeddings,
+#     tied_embeddings=args.tied_embeddings,
+# ).to(device)
 
 # If a checkpoint was provided, load weights and training metadata
-if args.init_checkpoint:
-    _sd = _ckpt_obj.model
-    _missing, _unexpected = apply_model_state(model, _sd, strict=False)
-    if _missing or _unexpected:
-        msg = f"init_checkpoint:{args.init_checkpoint} missing:{_missing} unexpected:{_unexpected}"
-        logger.error(msg)
-        raise ValueError(msg)
+# if args.init_checkpoint:
+#     _sd = _ckpt_obj.model
+#     _missing, _unexpected = apply_model_state(model, _sd, strict=False)
+#     if _missing or _unexpected:
+#         msg = f"init_checkpoint:{args.init_checkpoint} missing:{_missing} unexpected:{_unexpected}"
+#         logger.error(msg)
+#         raise ValueError(msg)
 
 for m in model.modules():
     if isinstance(m, nn.Embedding):

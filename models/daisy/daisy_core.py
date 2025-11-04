@@ -12,6 +12,7 @@ def next_multiple_of_n(v: float | int, *, n: int):
     return next(x for x in range(n, int(v) + 1 + n, n) if x >= v)
 
 def build_attn_mask(input_seq: Tensor, sliding_window_num_blocks: int):
+    assert input_seq.ndim == 1
     T = input_seq.size(-1)
     q = torch.arange(T, device=input_seq.device )[:, None]  # (T, 1)
     k = torch.arange(T, device=input_seq.device )[None, :]  # (1, T)
@@ -26,7 +27,7 @@ def build_attn_mask(input_seq: Tensor, sliding_window_num_blocks: int):
 class DaisyCore(nn.Module):
     def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim,
                  window_block_size: int = 128, eos_token_id: int | None = None, desc: dict | None = None,
-                 use_value_embeddings: bool = True):
+                 value_embeddings: bool = True, tied_embeddings: bool = False, ):
         super().__init__()
         if eos_token_id is None:
             raise ValueError("eos_token_id is required.")
@@ -53,15 +54,21 @@ class DaisyCore(nn.Module):
         self.skip_map = _get_skip_map(num_layers)
         self.eos_token_id = int(eos_token_id)
         self.embed = nn.Embedding(vocab_size, model_dim)
-        self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(3)]) if use_value_embeddings else None
+        self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(3)]) if value_embeddings else None
         self.blocks = nn.ModuleList([Block(model_dim, num_heads, max_seq_len, i, head_dim, num_layers) for i in range(num_layers)])
-        if os.getenv("DISABLE_O_ZERO_INIT", "") != "1":
-            # != 1 training
-            self.lm_head_w = nn.Parameter(torch.zeros(next_multiple_of_n(vocab_size, n=128), model_dim))
+        if tied_embeddings:
+            nn.init.normal_(self.embed.weight, mean=0.0, std=0.02)
+            # nn.init.uniform_(self.embed.weight, a=-0.01, b=0.01)
+            self.lm_head_w = self.embed.weight
         else:
-            # == 1 to allow backpropagation for lr_sweep or cases where the LM head is frozen for testing
-            self.lm_head_w = nn.Parameter(torch.empty(next_multiple_of_n(vocab_size, n=128), model_dim))
-            nn.init.normal_(self.lm_head_w, mean=0.0, std=0.02)
+            if os.getenv("DISABLE_O_ZERO_INIT", "") != "1":
+                # != 1 training
+                self.lm_head_w = nn.Parameter(torch.zeros(next_multiple_of_n(vocab_size, n=128), model_dim))
+            else:
+                # == 1 to allow backpropagation for lr_sweep or cases where the LM head is frozen for testing
+                self.lm_head_w = nn.Parameter(torch.empty(next_multiple_of_n(vocab_size, n=128), model_dim))
+                nn.init.normal_(self.lm_head_w, mean=0.0, std=0.02)
+
         self.window_block_size = int(window_block_size)
         assert num_layers % 2 == 0
         self.scalars = nn.Parameter(torch.cat([

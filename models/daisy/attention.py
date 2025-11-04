@@ -41,10 +41,7 @@ class Rotary(nn.Module):
         self._max_seq_len = int(max_seq_len)
 
     def _get_cos_sin(self, length: int):
-        torch._assert(
-            length <= self._max_seq_len,
-            f"Rotary buffers too small: requested length={{length}} > preallocated max_seq_len={self._max_seq_len}."
-        )
+        torch._assert(length <= self._max_seq_len,f"Rotary buffers too small: requested length={length} > preallocated max_seq_len={self._max_seq_len}.")
         return self.cos[:length], self.sin[:length]
 
     def forward(self, x_BTHD: Tensor):

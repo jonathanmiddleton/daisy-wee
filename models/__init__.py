@@ -32,7 +32,7 @@ def get_model_class(model_class: str) -> Type[nn.Module]:
     return cls
 
 
-def model_from_spec(spec_or_cfg: str | dict | ModelSpec | Any, device: str = 'cpu') -> nn.Module:
+def model_from_spec(spec_or_cfg: str | dict | ModelSpec | Any, device: str) -> nn.Module:
     # Normalize to ModelSpec for validation of architecture fields
     spec: ModelSpec
     aux_cfg: Dict[str, Any] = {}
@@ -68,8 +68,8 @@ def model_from_spec(spec_or_cfg: str | dict | ModelSpec | Any, device: str = 'cp
     head_dim = int(spec.head_dim)
     max_seq_len = int(spec.max_seq_len)
     window_block_size = int(spec.window_block_size)
-    use_value_embeddings = bool(spec.use_value_embeddings)
-
+    value_embeddings = bool(spec.value_embeddings)
+    tied_embeddings = bool(spec.tied_embeddings)
 
     ModelClass = get_model_class(model_class)
     model: nn.Module = ModelClass(
@@ -82,7 +82,8 @@ def model_from_spec(spec_or_cfg: str | dict | ModelSpec | Any, device: str = 'cp
         window_block_size=window_block_size,
         eos_token_id=eos_token_id,
         desc=asdict(spec),
-        use_value_embeddings=use_value_embeddings,
+        value_embeddings=value_embeddings,
+        tied_embeddings=tied_embeddings,
     ).to(device)
     return model
 

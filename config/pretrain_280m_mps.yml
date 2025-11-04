@@ -47,4 +47,4 @@ checkpoint_warmup_tokens:   3276800         # token warmup before checkpoints
 checkpoint_per_n_tokens:     1         # checkpoint interval by tokens
 save_checkpoint: true
 # Model Definition
-model_spec: daisy_150m
+model_spec: daisy_280m

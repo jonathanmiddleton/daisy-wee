@@ -27,21 +27,33 @@ def derive_named_param_groups(model: nn.Module) -> dict[str, list[nn.Parameter]]
     # Learned scalar gates
     scalar_params = [model.scalars]
     # Output head weights
-    head_params: list[nn.Parameter] = [model.lm_head_w]
+    a = model.embed.weight
+    b =  model.lm_head_w
+    if model.embed.weight is model.lm_head_w:
+        # tied embeddings
+        head_params = None
+    else:
+        head_params: list[nn.Parameter] = [model.lm_head_w]
+
 
     # Sanity: ensure exact partitioning of all model parameters
     params_collections = [hidden_matrix_params, embed_params, scalar_params, head_params]
-    optimized_parameters_set = {p for params in params_collections for p in params}
+    params_collections = [p for p in params_collections if p is not None]
+    optimized_parameters_set = {p for params in params_collections if params for p in params}
     all_params = set(model.parameters())
     assert optimized_parameters_set == all_params
     assert len(optimized_parameters_set) == sum(len(lst) for lst in params_collections)
 
-    return {
+    p_dict = {
         "hidden_matrix_params": hidden_matrix_params,
         "embed_params": embed_params,
         "scalar_params": scalar_params,
-        "head_params": head_params,
     }
+
+    if head_params is not None:
+        p_dict["head_params"] = head_params
+
+    return p_dict
 
 # -----------------------------------------------------------------------------
 # Muon optimizer

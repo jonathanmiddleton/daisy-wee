@@ -2,6 +2,8 @@
 import pytest
 import torch
 from torch.nn.attention.flex_attention import create_block_mask
+
+from daisy.daisy_core import build_attn_mask
 from models.daisy.attention import CausalSelfAttention
 
 def _make_block_mask(T: int, H: int, W: int, device: torch.device):
@@ -16,6 +18,7 @@ def test_causal_self_attention_forward_equals_step(T, W, use_ve, monkeypatch):
     # TODO fix this test since it will spuriously fail for small T,W
     monkeypatch.setenv("DISABLE_O_ZERO_INIT", "1")
     torch.manual_seed(0)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     H, D = 4, 8
     dim, max_seq_len = H * D, 256
@@ -27,7 +30,10 @@ def test_causal_self_attention_forward_equals_step(T, W, use_ve, monkeypatch):
     if use_ve:
         ve_full = torch.randn(1, T, H, D, device=device, dtype=dtype)
     bm = _make_block_mask(T, H, W, device)
-    y_full = m.forward(x, ve_full, bm, lambdas)
+    # assume one sliding window block covers the test case
+    # shape,device as the only material aspect for building the attn_mask so we reshape as [0,:,0] for expediency
+    attn_mask = build_attn_mask(x[0,:,0],1)
+    y_full = m.forward(x, ve_full, block_mask=bm, lambdas=lambdas, attn_mask=attn_mask)
     # Initialize empty KV caches and append per token to match causal semantics
     K = torch.empty(1, 0, H, D, device=device, dtype=dtype)
     V = torch.empty(1, 0, H, D, device=device, dtype=dtype)

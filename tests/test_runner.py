@@ -7,6 +7,7 @@ import yaml
 import pytest
 
 import runner
+from helpers import is_mac_os
 
 
 class FakePopen:
@@ -84,7 +85,7 @@ def test_main_invokes_subprocess_with_env_and_overrides(fake_popen, tmp_logfile,
     # Provide argv with 2-value override to trigger 2 runs and RUN_ID increment
     argv = [
         "config/test_tiny.yml",
-        "-n", "2",
+        "-n", "1" if is_mac_os() else "2",
         "-p", "ckpt.pt",
         "-s", "7",
         "-r", "10",
@@ -105,9 +106,10 @@ def test_main_invokes_subprocess_with_env_and_overrides(fake_popen, tmp_logfile,
 
     # First cmd assertions
     first_cmd = fake_popen[0].cmd
-    assert first_cmd[0] == "torchrun"
-    assert "--nproc_per_node=2" in first_cmd
-    assert first_cmd[3] == "train.py"
+    assert first_cmd[0] == "python" if is_mac_os() else "torchrun"
+    if not is_mac_os():
+        assert "--nproc_per_node=2" in first_cmd
+    assert first_cmd[1] == "train.py"
     assert "config/test_tiny.yml" in first_cmd
     assert "--init_checkpoint=ckpt.pt" in first_cmd
     # passthrough long opts and overrides present
