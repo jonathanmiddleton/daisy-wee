@@ -55,7 +55,7 @@ class Rotary(nn.Module):
 
     def step(self, x_BTHD: Tensor, pos: int):
         # Use preallocated tables and select a single position
-        assert x_BTHD.size(-3) == 1, "step() requires single position only"
+        torch._assert(x_BTHD.shape[1] == 1, "step() requires single position only")
         cos, sin = self._get_cos_sin(pos + 1)
         cos = cos[None, pos, None, :]
         sin = sin[None, pos, None, :]
@@ -97,7 +97,7 @@ class CausalSelfAttention(nn.Module):
         return q, k, v
 
     def forward(self, x: Tensor, ve: Tensor | None,  lambdas: Tensor, block_mask: BlockMask = None, attn_mask: Tensor | None = None):
-        assert block_mask is None or attn_mask is None, "block_mask and attn_mask are mutually exclusive"
+        torch._assert(block_mask is None or attn_mask is None, "block_mask and attn_mask are mutually exclusive")
         B, T = x.size(0), x.size(1)
         q, k, v = self.calc_qkv(x)
 
