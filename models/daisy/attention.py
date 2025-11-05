@@ -53,6 +53,7 @@ class Rotary(nn.Module):
 
     def step(self, x_BTHD: Tensor, pos: int):
         # Use preallocated tables and select a single position
+        assert x_BTHD.size(-3) == 1, "step() requires single position only"
         cos, sin = self._get_cos_sin(pos + 1)
         cos = cos[None, pos, None, :]
         sin = sin[None, pos, None, :]
@@ -64,10 +65,10 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim =  head_dim
-        hdim = num_heads * head_dim
+        m_dim = num_heads * head_dim
         # merged QKV weights: suggested by many, implemented by @fernbear.bsky.social, and further improved by @YouJiacheng
         # https://x.com/hi_tysam/status/1879699187107033311
-        self.qkvo_w = nn.Parameter(init_linear(torch.empty(4, hdim, dim)).bfloat16())
+        self.qkvo_w = nn.Parameter(init_linear(torch.empty(4, m_dim, dim)).bfloat16())
         if os.getenv("DISABLE_O_ZERO_INIT", "") != "1": # 1 for unittests
             self.qkvo_w.detach()[3].zero_() # zero-out init suggested by @Grad62304977
         self.rotary = Rotary(head_dim, max_seq_len)
@@ -81,14 +82,23 @@ class CausalSelfAttention(nn.Module):
         self.last_q = None
         self.last_k = None
 
-    def forward(self, x: Tensor, ve: Tensor | None,  lambdas: Tensor, block_mask: BlockMask = None, attn_mask: Tensor | None = None,):
+    def calc_qkv(self, x: Tensor, pos: int | None = None):
         B, T = x.size(0), x.size(1)
-        assert B == 1, "Must use batch size = 1 for FlexAttention"
         x = x.to(self.qkvo_w.dtype)
-        q, k, v = F.linear(x, self.qkvo_w[:3].flatten(end_dim=1)).view(B, T, 3 * self.num_heads, self.head_dim).chunk(3, dim=-2)
-        q, k = norm(q), norm(k) # QK norm @Grad62304977
-        q, k = self.rotary(q), self.rotary(k)
-        v = norm(v)
+        qkv = self.qkvo_w[:3].flatten(end_dim=1)
+        q, k, v = F.linear(x, qkv).view(B, T, 3 * self.num_heads, self.head_dim).chunk(3, dim=-2)
+        q, k, v = norm(q), norm(k), norm(v)
+        if pos:
+            q, k = self.rotary.step(q,pos), self.rotary.step(k,pos)
+        else:
+            q, k = self.rotary(q), self.rotary(k)
+        return q, k, v
+
+    def forward(self, x: Tensor, ve: Tensor | None,  lambdas: Tensor, block_mask: BlockMask = None, attn_mask: Tensor | None = None):
+        assert block_mask is None or attn_mask is None, "block_mask and attn_mask are mutually exclusive"
+        B, T = x.size(0), x.size(1)
+        q, k, v = self.calc_qkv(x)
+
         target_dtype = q.dtype
         v = v.to(target_dtype)
         if ve is not None:
@@ -99,32 +109,26 @@ class CausalSelfAttention(nn.Module):
             lambdas = lambdas.to(target_dtype)
             v = lambdas[0] * v
 
-        q_ = q.transpose(1, 2)
         k_ = k.transpose(1, 2)
         v_ = v.transpose(1, 2)
+        q_ = q.transpose(1, 2)
 
-        if x.device.type == "cuda":
-            y = _flex_call(q_, k_, v_, block_mask=block_mask, scale=self.attn_scale).transpose(1, 2)
+        if block_mask is not None:
+             y = _flex_call(q_, k_, v_, block_mask=block_mask, scale=self.attn_scale)
+        elif attn_mask is not None:
+            attn_mask = attn_mask.to(target_dtype)
+            y = F.scaled_dot_product_attention(q_, k_, v_, scale=self.attn_scale, attn_mask=attn_mask)
         else:
-            if attn_mask is not None:
-                attn_mask = attn_mask.to(target_dtype)
-                y = F.scaled_dot_product_attention(q_, k_, v_, scale=self.attn_scale, attn_mask=attn_mask, is_causal=False)
-            else:
-                y = F.scaled_dot_product_attention(q_, k_, v_, is_causal=True, scale=self.attn_scale)
-
-        y = y.contiguous().view(B, T, self.num_heads * self.head_dim) # re-assemble all head outputs side by side
+            y = F.scaled_dot_product_attention(q_, k_, v_, scale=self.attn_scale,  is_causal=True)
+        y = y.transpose(1, 2).contiguous().view(B, T, self.num_heads * self.head_dim)
         y = F.linear(y, self.qkvo_w[3])
         return y
 
+
     def prefill(self, x: torch.Tensor, ve: torch.Tensor | None, lambdas: torch.Tensor, attn_mask: torch.Tensor | None = None, debug: bool = False,):
-        B, T, _ = x.shape
-        x = x.to(self.qkvo_w.dtype)
-        w = self.qkvo_w[:3]
-        w = w.flatten(end_dim=1)
-        qkv = torch.nn.functional.linear(x, w).view(B, T, 3 * self.num_heads, self.head_dim)
-        q, k, v = qkv.chunk(3, dim=-2)
-        q, k = norm(q), norm(k)
-        q, k = self.rotary(q), self.rotary(k)
+        B, T = x.size(0), x.size(1)
+        q, k, v = self.calc_qkv(x)
+
         if debug:
             self.last_q = q
             self.last_k = k
@@ -143,8 +147,7 @@ class CausalSelfAttention(nn.Module):
         v_ = v.transpose(1, 2)
         if attn_mask is not None:
             attn_mask = attn_mask.to(target_dtype)
-            y = torch.nn.functional.scaled_dot_product_attention(q_, k_, v_, attn_mask=attn_mask, is_causal=False,
-                                                                 scale=self.attn_scale)
+            y = torch.nn.functional.scaled_dot_product_attention(q_, k_, v_, attn_mask=attn_mask, scale=self.attn_scale)
         else:
             y = torch.nn.functional.scaled_dot_product_attention(q_, k_, v_, is_causal=True, scale=self.attn_scale)
         y = y.transpose(1, 2).reshape(B, T, self.num_heads * self.head_dim)
@@ -153,33 +156,27 @@ class CausalSelfAttention(nn.Module):
 
 
     def step(self, x, k_ctx: Tensor, v_ctx: Tensor, pos: int, ve: Tensor | None, lambdas: Tensor, window: int):
-        B, _, _ = x.shape
-        x = x.to(self.qkvo_w.dtype)
-        w = self.qkvo_w[:3].flatten(end_dim=1)
-        q, k, v = F.linear(x, w).view(B, 1, 3 * self.num_heads, self.head_dim).chunk(3, dim=-2)
-        q, k = norm(q), norm(k) # QK norm @Grad62304977
-        q, k = self.rotary.step(q, pos), self.rotary.step(k, pos)
-        v = norm(v)
+        B, T = x.size(0), x.size(1)
+        q, k, v = self.calc_qkv(x, pos)
+
         target_dtype = q.dtype
         v = v.to(target_dtype)
         if ve is not None:
             ve = ve.to(target_dtype)
             lambdas = lambdas.to(target_dtype)
-            v = lambdas[0] * v + lambdas[1] * ve.view_as(v) # @KoszarskyB & @Grad62304977
-        else: # skip mid-layers token value embeddings by @YouJiacheng
+            v = lambdas[0] * v + lambdas[1] * ve.view_as(v)
+        else:
             lambdas = lambdas.to(target_dtype)
             v = lambdas[0] * v
-        n = k_ctx.size(1)
-        # r = tokens to take from cache = last window-1 tokens (or all if fewer)
-        r = n if window is None else min(n, max(window - 1, 0))
-        k_all = torch.cat([k_ctx[:, n - r:n], k], 1)
-        v_all = torch.cat([v_ctx[:, n - r:n], v], 1)
 
-        # SDPA expects (..., L, E) where L is the sequence length; put heads before time
-        q_ = q.transpose(1, 2)      # (B, H, 1, D)
-        k_ = k_all.transpose(1, 2).to(target_dtype)  # (B, H, S, D)
-        v_ = v_all.transpose(1, 2).to(target_dtype)  # (B, H, S, D)
+        n = k_ctx.size(1)
+        r = n if window is None else min(n, max(window - 1, 0))
+        k_ = torch.cat([k_ctx[:, n - r:n], k], 1).transpose(1, 2).to(target_dtype)
+        v_ = torch.cat([v_ctx[:, n - r:n], v], 1).transpose(1, 2).to(target_dtype)
+        q_ = q.transpose(1, 2)
+
+        # since q holds a single position `is_causal` must be False or indices after 0 will be masked out
         y = F.scaled_dot_product_attention(q_, k_, v_, scale=self.attn_scale, is_causal=False)
-        y = y.transpose(1, 2).reshape(B, 1, self.num_heads * self.head_dim)
+        y = y.transpose(1, 2).contiguous().view(B, T, self.num_heads * self.head_dim)
         y = F.linear(y, self.qkvo_w[3])
         return y, k, v

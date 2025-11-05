@@ -48,6 +48,7 @@ def model_from_spec(spec_or_cfg: str | dict | ModelSpec | Any, device: str) -> n
         aux_cfg = cfg
         allowed = {f.name for f in dc_fields(ModelSpec)}
         spec_data = {k: v for k, v in cfg.items() if k in allowed}
+        spec_data.setdefault("attention_window_len", 4096)
         spec = ModelSpec(**spec_data)
     elif is_dataclass(spec_or_cfg):
         cfg = dc_asdict(spec_or_cfg)

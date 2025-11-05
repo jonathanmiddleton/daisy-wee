@@ -106,10 +106,12 @@ def test_main_invokes_subprocess_with_env_and_overrides(fake_popen, tmp_logfile,
 
     # First cmd assertions
     first_cmd = fake_popen[0].cmd
-    assert first_cmd[0] == "python" if is_mac_os() else "torchrun"
+    assert first_cmd[0] == "torchrun" if not is_mac_os() else "python"
     if not is_mac_os():
         assert "--nproc_per_node=2" in first_cmd
-    assert first_cmd[1] == "train.py"
+        assert first_cmd[3] == "train.py"
+    else:
+        assert first_cmd[1] == "train.py"
     assert "config/test_tiny.yml" in first_cmd
     assert "--init_checkpoint=ckpt.pt" in first_cmd
     # passthrough long opts and overrides present
