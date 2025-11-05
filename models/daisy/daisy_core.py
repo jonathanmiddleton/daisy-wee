@@ -11,7 +11,7 @@ from torch.nn.attention.flex_attention import BlockMask
 def next_multiple_of_n(v: float | int, *, n: int):
     return next(x for x in range(n, int(v) + 1 + n, n) if x >= v)
 
-def build_attn_mask(input_seq: Tensor, sliding_window_num_blocks: int):
+def build_attn_mask(input_seq: Tensor, window_size: int):
     T = input_seq.size(-1)
     q = torch.arange(T, device=input_seq.device )[:, None]  # (T, 1)
     k = torch.arange(T, device=input_seq.device )[None, :]  # (1, T)
@@ -19,12 +19,12 @@ def build_attn_mask(input_seq: Tensor, sliding_window_num_blocks: int):
 
     m = torch.zeros(T, T, device=input_seq.device, dtype=torch.float32)
     m[d < 0] = float("-inf")  # forbid future (k > q)
-    m[d >= sliding_window_num_blocks] = float("-inf")  # forbid too-far past
+    m[d >= window_size] = float("-inf")  # forbid too-far past
     attn_mask = m[None, None, :, :]
     return attn_mask
 
 class DaisyCore(nn.Module):
-    def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim,
+    def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim: int, window_size: int = 1024,
                  window_block_size: int = 128, eos_token_id: int | None = None, desc: dict | None = None,
                  use_value_embeddings: bool = True):
         super().__init__()
@@ -62,6 +62,7 @@ class DaisyCore(nn.Module):
             # == 1 to allow backpropagation for lr_sweep or cases where the LM head is frozen for testing
             self.lm_head_w = nn.Parameter(torch.empty(next_multiple_of_n(vocab_size, n=128), model_dim))
             nn.init.normal_(self.lm_head_w, mean=0.0, std=0.02)
+        self.window_size = window_size
         self.window_block_size = int(window_block_size)
         assert num_layers % 2 == 0
         self.scalars = nn.Parameter(torch.cat([
@@ -148,7 +149,7 @@ class DaisyCore(nn.Module):
                 block_masks = self.create_blockmasks(input_seq, sliding_window_num_blocks, L=L)
                 x = self.blocks[i](x, ve[i], x0, lambdas[i], sa_lambdas[i], block_masks=block_masks[i])
             else:
-                attn_mask = build_attn_mask(input_seq, sliding_window_num_blocks)
+                attn_mask = build_attn_mask(input_seq, self.window_size)
                 x = self.blocks[i](x, ve[i], x0, lambdas[i], sa_lambdas[i], attn_mask=attn_mask)
             skip_connections.append(x)
 
