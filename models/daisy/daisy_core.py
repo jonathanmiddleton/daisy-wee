@@ -32,15 +32,14 @@ class ZeroEmbedding(nn.Module):
         self.end_dim = end_dim
         self.zero = nn.Buffer(torch.zeros(1, dtype=dtype, device=device), persistent=False) # anchor for device/dtype so that we're moved when .to is called
 
-    @lru_cache(maxsize=1)
+    @lru_cache(maxsize=1, typed=True)
     def __call__(self, x: Tensor):
         # Return a zero tensor shaped like an embedding(x)
         out_shape = (*x.shape, self.end_dim)
         return torch.zeros(out_shape, dtype=self.zero.dtype, device = self.zero.device, requires_grad=False)
 
     def _apply(self, fn, recurse=True):
-        super()._apply(fn)
-        fn(self.zero)
+        super()._apply(fn, recurse)
 
         try:
             self.__call__.cache_clear()
