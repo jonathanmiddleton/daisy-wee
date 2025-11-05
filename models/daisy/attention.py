@@ -40,15 +40,17 @@ class Rotary(nn.Module):
         # Track capacity for assertions
         self._max_seq_len = int(max_seq_len)
 
-    def _get_cos_sin(self, length: int):
-        torch._assert(length <= self._max_seq_len,f"Rotary buffers too small: requested length={length} > preallocated max_seq_len={self._max_seq_len}.")
-        return self.cos[:length], self.sin[:length]
+    def _get_cos_sin(self, L):
+        torch._assert(L <= self.cos.shape[0], "Rotary buffers too small")
+        cos = self.cos.narrow(0, 0, L)
+        sin = self.sin.narrow(0, 0, L)
+        return cos, sin
 
-    def forward(self, x_BTHD: Tensor):
+    def forward(self, x_BTHD: torch.Tensor):
         L = x_BTHD.size(-3)
         cos, sin = self._get_cos_sin(L)
-        cos = cos[None, :L, None, :]
-        sin = sin[None, :L, None, :]
+        cos = cos.unsqueeze(0).unsqueeze(2)
+        sin = sin.unsqueeze(0).unsqueeze(2)
         return _apply_rope(x_BTHD, cos, sin)
 
     def step(self, x_BTHD: Tensor, pos: int):

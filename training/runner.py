@@ -179,6 +179,7 @@ def main(argv: List[str] | None = None) -> int:
 
     # Environment setup
     os.environ.setdefault("TORCH_COMPILE_OFF", "0")
+    os.environ.setdefault("TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS", "1")
     os.environ["OMP_NUM_THREADS"] = os.environ.get("OMP_NUM_THREADS", "8")
     if begin_shard:
         os.environ["BEGIN_SHARD"] = str(begin_shard)

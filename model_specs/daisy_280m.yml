@@ -1,4 +1,3 @@
-# Daisy 350M-ish spec
 model_class: models.daisy.daisy_core.DaisyCore
 eos_token_id: 50256
 vocab_size: 50257
@@ -9,3 +8,4 @@ model_dim: 768
 window_block_size: 128
 attention_window_len: 1792
 max_seq_len: 65536
+use_value_embeddings: true

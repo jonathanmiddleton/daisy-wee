@@ -1,6 +1,5 @@
 import argparse
-import sys
-import time
+import sys, os
 
 import tiktoken
 import torch
