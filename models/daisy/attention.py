@@ -6,6 +6,10 @@ from torch.nn.attention.flex_attention import BlockMask, flex_attention
 from torch.nn import functional as F
 from models.daisy.functional import norm, init_linear
 
+def is_flex_available(enable_for_cpu: bool = False):
+    # FlexAttention is supported only on cuda (limited on CPU)
+    return torch.cuda.is_available() or enable_for_cpu
+
 def _apply_rope(x_BTHD , cos, sin):
     x1, x2 = x_BTHD.to(dtype=torch.float32).chunk(2, dim=-1)
     y1 = x1 * cos + x2 * sin
@@ -63,7 +67,7 @@ class Rotary(nn.Module):
 
 
 class CausalSelfAttention(nn.Module):
-    def __init__(self, dim: int, num_heads: int, max_seq_len: int, head_dim):
+    def __init__(self, dim: int, num_heads: int, max_seq_len: int, head_dim, use_flex_attn: bool = False,):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim =  head_dim
@@ -79,6 +83,11 @@ class CausalSelfAttention(nn.Module):
         self.attn_scale = 0.12
         self.last_q = None
         self.last_k = None
+
+        if use_flex_attn:
+            self.forward = self.forward_flex
+        else:
+            self.forward = self.forward_sdpa
 
     def reset_history(self):
         self.last_q = None
@@ -96,34 +105,61 @@ class CausalSelfAttention(nn.Module):
             q, k = self.rotary(q), self.rotary(k)
         return q, k, v
 
-    def forward(self, x: Tensor, ve: Tensor | None,  lambdas: Tensor, block_mask: BlockMask = None, attn_mask: Tensor | None = None):
-        torch._assert(block_mask is None or attn_mask is None, "block_mask and attn_mask are mutually exclusive")
+
+
+    def forward_flex(self, x: torch.Tensor, ve: torch.Tensor | None, lambdas: torch.Tensor,
+                block_mask: BlockMask | None = None, attn_mask: torch.Tensor | None = None):
+        torch._assert(attn_mask is None, "attn_mask should not be provided for FlexAttention")
+        torch._assert(block_mask is not None, "BlockMask is required for FlexAttention")
+
         B, T = x.size(0), x.size(1)
         q, k, v = self.calc_qkv(x)
+        dtype, dev = q.dtype, q.device
 
-        target_dtype = q.dtype
-        v = v.to(target_dtype)
+        lambdas = lambdas.to(device=dev, dtype=dtype)
         if ve is not None:
-            ve = ve.to(target_dtype)
-            lambdas = lambdas.to(target_dtype)
+            ve = ve.to(device=dev, dtype=dtype)
             v = lambdas[0] * v + lambdas[1] * ve.view_as(v)
         else:
-            lambdas = lambdas.to(target_dtype)
             v = lambdas[0] * v
 
+        q_ = q.transpose(1, 2)
         k_ = k.transpose(1, 2)
         v_ = v.transpose(1, 2)
-        q_ = q.transpose(1, 2)
 
-        if block_mask is not None:
-             y = _flex_call(q_, k_, v_, block_mask=block_mask, scale=self.attn_scale)
-        elif attn_mask is not None:
-            attn_mask = attn_mask.to(target_dtype)
-            y = F.scaled_dot_product_attention(q_, k_, v_, scale=self.attn_scale, attn_mask=attn_mask)
-        else:
-            y = F.scaled_dot_product_attention(q_, k_, v_, scale=self.attn_scale,  is_causal=True)
+        y = _flex_call(q_, k_, v_, block_mask=block_mask, scale=self.attn_scale)
+
         y = y.transpose(1, 2).contiguous().view(B, T, self.num_heads * self.head_dim)
-        y = F.linear(y, self.qkvo_w[3])
+        y = torch.nn.functional.linear(y, self.qkvo_w[3])
+        return y
+
+    def forward_sdpa(self, x: torch.Tensor, ve: torch.Tensor | None, lambdas: torch.Tensor,
+                block_mask: BlockMask | None = None, attn_mask: torch.Tensor | None = None):
+        torch._assert(block_mask is None, "BlockMask should not be provided for SDPA")
+        torch._assert(attn_mask is not None, "Attention mask must be provided for SDPA")
+
+        B, T = x.size(0), x.size(1)
+        q, k, v = self.calc_qkv(x)
+        dtype, dev = q.dtype, q.device
+
+        lambdas = lambdas.to(device=dev, dtype=dtype)
+        if ve is not None:
+            ve = ve.to(device=dev, dtype=dtype)
+            v = lambdas[0] * v + lambdas[1] * ve.view_as(v)
+        else:
+            v = lambdas[0] * v
+
+        q_ = q.transpose(1, 2)
+        k_ = k.transpose(1, 2)
+        v_ = v.transpose(1, 2)
+
+        attn_mask = attn_mask.to(device=dev, dtype=dtype)
+        y = torch.nn.functional.scaled_dot_product_attention(
+            q_, k_, v_, scale=self.attn_scale, attn_mask=attn_mask
+        )
+
+        y = y.transpose(1, 2).contiguous().view(B, T, self.num_heads * self.head_dim)
+        y = torch.nn.functional.linear(y, self.qkvo_w[3])
         return y
 
 
@@ -152,7 +188,7 @@ class CausalSelfAttention(nn.Module):
             y = torch.nn.functional.scaled_dot_product_attention(q_, k_, v_, attn_mask=attn_mask, scale=self.attn_scale)
         else:
             y = torch.nn.functional.scaled_dot_product_attention(q_, k_, v_, is_causal=True, scale=self.attn_scale)
-        y = y.transpose(1, 2).reshape(B, T, self.num_heads * self.head_dim)
+        y = y.transpose(1, 2).contiguous().view(B, T, self.num_heads * self.head_dim)
         y = torch.nn.functional.linear(y, self.qkvo_w[3])
         return y, k_, v_
 

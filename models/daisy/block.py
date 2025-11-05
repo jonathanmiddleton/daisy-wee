@@ -1,5 +1,5 @@
 import torch.nn as nn
-from models.daisy.attention import CausalSelfAttention
+from models.daisy.attention import CausalSelfAttention, is_flex_available
 from models.daisy.mlp import MLP
 from models.daisy.functional import norm
 from torch import Tensor
@@ -10,7 +10,7 @@ class Block(nn.Module):
         super().__init__()
 
         attn_layers = [i for i in range(total_layers)] #TODO configurable
-        self.attn: CausalSelfAttention  = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim) if layer_idx in attn_layers else None
+        self.attn: CausalSelfAttention  = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim, use_flex_attn=is_flex_available() ) if layer_idx in attn_layers else None
         self.mlp = MLP(dim)
 
     def reset_history(self):

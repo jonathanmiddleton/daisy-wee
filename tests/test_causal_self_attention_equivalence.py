@@ -4,7 +4,7 @@ import torch
 from torch.nn.attention.flex_attention import create_block_mask, BlockMask
 
 from daisy.daisy_core import build_attn_mask
-from models.daisy.attention import CausalSelfAttention
+from models.daisy.attention import CausalSelfAttention, is_flex_available
 
 
 def _make_block_mask(T: int, H: int, W: int, device: torch.device):
@@ -24,7 +24,7 @@ def test_causal_self_attention_forward_equals_step(T, W, use_ve, monkeypatch, bl
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         H, D = 1, 2
         dim, max_seq_len = H * D, 256
-        m = CausalSelfAttention(dim=dim, num_heads=H, max_seq_len=max_seq_len, head_dim=D).to(device).eval()
+
         dtype = torch.bfloat16
         x_t = torch.ones(T, dtype=torch.int) #pseudo-tokens
         x = torch.randn(1, T, dim, device=device, dtype=dtype) #pseudo-embedding
@@ -34,9 +34,13 @@ def test_causal_self_attention_forward_equals_step(T, W, use_ve, monkeypatch, bl
             ve_full = torch.randn(1, T, H, D, device=device, dtype=dtype)
 
         if block_or_attn_mask == "attn":
+            m = CausalSelfAttention(dim=dim, num_heads=H, max_seq_len=max_seq_len, head_dim=D,
+                                    use_flex_attn=False).to(device).eval()
             mask = build_attn_mask(x_t, window_size=W)
             y_full = m.forward(x, ve=ve_full, lambdas=lambdas, attn_mask=mask)
         elif block_or_attn_mask == "block":
+            m = CausalSelfAttention(dim=dim, num_heads=H, max_seq_len=max_seq_len, head_dim=D,
+                                    use_flex_attn=True).to(device).eval()
             mask = _make_block_mask(T, H, W, device)
             y_full = m.forward(x, ve=ve_full, block_mask=mask, lambdas=lambdas, )
         # Initialize empty KV caches and append per token to match causal semantics
