@@ -210,7 +210,7 @@ class DaisyCore(nn.Module):
         logits = F.linear(x.flatten(end_dim=1).bfloat16(), self.lm_head_w.bfloat16()).float()
         return logits, k_new_list, v_new_list
 
-    def prefill(self, input_seq: Tensor, sliding_window_num_blocks: int | None = None, debug: bool = False):
+    def prefill(self, input_seq: Tensor, window: int | None = None, debug: bool = False):
         assert input_seq.ndim == 2
         B, T = input_seq.shape
         h = None
@@ -228,9 +228,7 @@ class DaisyCore(nn.Module):
         if self.value_embeds is None:
             ve = [None] * (L + 6)
         else:
-            ve0 = self.value_embeds[0](input_seq).view(B, 1, h, d)
-            ve1 = self.value_embeds[1](input_seq).view(B, 1, h, d)
-            ve2 = self.value_embeds[2](input_seq).view(B, 1, h, d)
+            ve0, ve1, ve2 = [emb(input_seq) for emb in self.value_embeds]
             ve = [ve0, ve1, ve2] + [None] * (L - 6) + [ve0, ve1, ve2]
 
         skip_map = self.skip_map
@@ -238,7 +236,7 @@ class DaisyCore(nn.Module):
         lambdas = self.scalars[1 * L:3 * L].view(-1, 2)
         sa_lambdas = self.scalars[3 * L:5 * L].view(-1, 2)
 
-        attn_mask = build_attn_mask(input_seq, sliding_window_num_blocks)
+        attn_mask = build_attn_mask(input_seq, window)
 
         k_list, v_list, skip_connections = [], [], []
         for i in range(L):

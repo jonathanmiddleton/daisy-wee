@@ -85,14 +85,22 @@ class CausalSelfAttention(nn.Module):
         self.last_q = None
         self.last_k = None
 
-    def forward(self, x: Tensor, ve: Tensor | None,  lambdas: Tensor, block_mask: BlockMask = None, attn_mask: Tensor | None = None):
-        assert block_mask is None or attn_mask is None, "block_mask and attn_mask are mutually exclusive"
+    def calc_qkv(self, x: Tensor, pos: int | None = None):
         B, T = x.size(0), x.size(1)
         x = x.to(self.qkvo_w.dtype)
         qkv = self.qkvo_w[:3].flatten(end_dim=1)
         q, k, v = F.linear(x, qkv).view(B, T, 3 * self.num_heads, self.head_dim).chunk(3, dim=-2)
         q, k, v = norm(q), norm(k), norm(v)
-        q, k = self.rotary(q), self.rotary(k)
+        if pos:
+            q, k = self.rotary.step(q,pos), self.rotary.step(k,pos)
+        else:
+            q, k = self.rotary(q), self.rotary(k)
+        return q, k, v
+
+    def forward(self, x: Tensor, ve: Tensor | None,  lambdas: Tensor, block_mask: BlockMask = None, attn_mask: Tensor | None = None):
+        assert block_mask is None or attn_mask is None, "block_mask and attn_mask are mutually exclusive"
+        B, T = x.size(0), x.size(1)
+        q, k, v = self.calc_qkv(x)
 
         target_dtype = q.dtype
         v = v.to(target_dtype)
@@ -111,6 +119,7 @@ class CausalSelfAttention(nn.Module):
         if block_mask is not None:
              y = _flex_call(q_, k_, v_, block_mask=block_mask, scale=self.attn_scale)
         elif attn_mask is not None:
+            attn_mask = attn_mask.to(target_dtype)
             y = F.scaled_dot_product_attention(q_, k_, v_, scale=self.attn_scale, attn_mask=attn_mask)
         else:
             y = F.scaled_dot_product_attention(q_, k_, v_, scale=self.attn_scale,  is_causal=True)
@@ -120,14 +129,9 @@ class CausalSelfAttention(nn.Module):
 
 
     def prefill(self, x: torch.Tensor, ve: torch.Tensor | None, lambdas: torch.Tensor, attn_mask: torch.Tensor | None = None, debug: bool = False,):
-        B, T, _ = x.shape
-        x = x.to(self.qkvo_w.dtype)
-        w = self.qkvo_w[:3]
-        w = w.flatten(end_dim=1)
-        qkv = torch.nn.functional.linear(x, w).view(B, T, 3 * self.num_heads, self.head_dim)
-        q, k, v = qkv.chunk(3, dim=-2)
-        q, k = norm(q), norm(k)
-        q, k = self.rotary(q), self.rotary(k)
+        B, T = x.size(0), x.size(1)
+        q, k, v = self.calc_qkv(x)
+
         if debug:
             self.last_q = q
             self.last_k = k
@@ -146,8 +150,7 @@ class CausalSelfAttention(nn.Module):
         v_ = v.transpose(1, 2)
         if attn_mask is not None:
             attn_mask = attn_mask.to(target_dtype)
-            y = torch.nn.functional.scaled_dot_product_attention(q_, k_, v_, attn_mask=attn_mask, is_causal=False,
-                                                                 scale=self.attn_scale)
+            y = torch.nn.functional.scaled_dot_product_attention(q_, k_, v_, attn_mask=attn_mask, scale=self.attn_scale)
         else:
             y = torch.nn.functional.scaled_dot_product_attention(q_, k_, v_, is_causal=True, scale=self.attn_scale)
         y = y.transpose(1, 2).reshape(B, T, self.num_heads * self.head_dim)
@@ -157,11 +160,7 @@ class CausalSelfAttention(nn.Module):
 
     def step(self, x, k_ctx: Tensor, v_ctx: Tensor, pos: int, ve: Tensor | None, lambdas: Tensor, window: int):
         B, T = x.size(0), x.size(1)
-        x = x.to(self.qkvo_w.dtype)
-        qkv = self.qkvo_w[:3].flatten(end_dim=1)
-        q, k, v = F.linear(x, qkv).view(B, T, 3 * self.num_heads, self.head_dim).chunk(3, dim=-2)
-        q, k, v = norm(q), norm(k), norm(v)
-        q, k = self.rotary.step(q, pos), self.rotary.step(k, pos)
+        q, k, v = self.calc_qkv(x, pos)
 
         target_dtype = q.dtype
         v = v.to(target_dtype)
