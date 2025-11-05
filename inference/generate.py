@@ -177,7 +177,7 @@ class Generator:
         assert x.size(1) > 0
         bounds = self._prefill_func_bounds()
         fn = None
-        for pred, (fn_name,(min,max)) in bounds:
+        for pred, (fn_name,(min_,max_)) in bounds:
             if pred(x.size(1)):
                 fn = getattr(self, fn_name, None)
                 if fn is None:
@@ -185,8 +185,8 @@ class Generator:
                     compiled = self._maybe_compile(self.model.prefill)
                     setattr(self, fn_name, compiled)
                     fn = compiled
-                    torch._dynamo.mark_dynamic(x, 1, min=min, max=max)
-                    logger.debug(f"Compiled function '{fn_name}' for input shape {x.shape} and bounds [{min},{max}].")
+                    torch._dynamo.mark_dynamic(x, 1, min=min_, max=max_)
+                    logger.debug(f"Compiled function '{fn_name}' for input shape {x.shape} and bounds [{min_},{max_}].")
                     break
 
         assert fn is not None
@@ -225,7 +225,7 @@ class Generator:
         self.history = torch.cat([self.history, prompt_ids.to(dtype=torch.long, device=self.device)], dim=0)
         return logits
 
-    def _step(self, token: torch.Tensor | int):
+    def _step(self, token: torch.Tensor):
         k_ctxs, v_ctxs = [], []
         for i in range(len(self.model.blocks)):
             kc, vc = self.cache.view(i)
@@ -246,7 +246,7 @@ class Generator:
     def generate(self, prompt_ids: torch.Tensor, max_new_tokens) -> Generator[torch.Tensor, None, tuple[torch.Tensor, float, float]]:
         assert prompt_ids.ndim == 1
         assert prompt_ids.size(0) > 0 # must have at least one token
-        assert prompt_ids.size(0) <= self.window, "prompt length must be <= attention window"
+        assert prompt_ids.size(0) <= self.window, f"prompt length {prompt_ids.size(0)} must be <= attention window {self.window}"
         assert prompt_ids.size(0)
         assert max_new_tokens > 0
         self.reset_history()

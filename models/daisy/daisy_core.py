@@ -1,8 +1,10 @@
 import os
+from functools import lru_cache
 from math import floor, log2
+from typing import Any
 
 import torch
-from torch import nn, Tensor
+from torch import nn, Tensor, SymInt
 import torch.nn.functional as F
 from models.daisy.block import Block
 from models.daisy.functional import norm
@@ -22,6 +24,31 @@ def build_attn_mask(input_seq: Tensor, window_size: int):
     m[d >= window_size] = float("-inf")  # forbid too-far past
     attn_mask = m[None, None, :, :]
     return attn_mask
+
+
+class ZeroEmbedding(nn.Module):
+    def __init__(self, end_dim: int, device: torch.device, dtype: torch.dtype = torch.int64,  *args: Any, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        self.end_dim = end_dim
+        self.zero = nn.Buffer(torch.zeros(1, dtype=dtype, device=device), persistent=False) # anchor for device/dtype so that we're moved when .to is called
+
+    @lru_cache(maxsize=1)
+    def __call__(self, x: Tensor):
+        # Return a zero tensor shaped like an embedding(x)
+        out_shape = (*x.shape, self.end_dim)
+        return torch.zeros(out_shape, dtype=self.zero.dtype, device = self.zero.device, requires_grad=False)
+
+    def _apply(self, fn, recurse=True):
+        super()._apply(fn)
+        fn(self.zero)
+
+        try:
+            self.__call__.cache_clear()
+        except AttributeError:
+            pass
+
+        return self
+
 
 class DaisyCore(nn.Module):
     def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim: int, window_size: int = 1024,
@@ -54,6 +81,7 @@ class DaisyCore(nn.Module):
         self.eos_token_id = int(eos_token_id)
         self.embed = nn.Embedding(vocab_size, model_dim)
         self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(3)]) if value_embeddings else None
+        self.zero_embedding = ZeroEmbedding(end_dim=self.embed.weight.size(1), device=self.embed.weight.device, dtype=self.embed.weight.dtype)
         self.blocks = nn.ModuleList([Block(model_dim, num_heads, max_seq_len, i, head_dim, num_layers) for i in range(num_layers)])
         if tied_embeddings:
             nn.init.normal_(self.embed.weight, mean=0.0, std=0.02)
@@ -134,9 +162,9 @@ class DaisyCore(nn.Module):
 
         if self.value_embeds is not None:
             ve = [value_embed(input_seq) for value_embed in self.value_embeds]
-            ve = [ve[0], ve[1], ve[2]] + [None] * (L - 6) + [ve[0], ve[1], ve[2]]
+            ve = [ve[0], ve[1], ve[2]] + [self.zero_embedding(input_seq)] * (L - 6) + [ve[0], ve[1], ve[2]]
         else:
-            ve = [None] * (L + 6)
+            ve = [self.zero_embedding] * L
 
         x = x0 = norm(self.embed(input_seq)[None])
 
@@ -173,7 +201,7 @@ class DaisyCore(nn.Module):
 
     def step(self, token_id: Tensor, k_ctxs, v_ctxs, pos: int, window: int):
         assert token_id.ndim == 0
-        B = 1
+        B = T = 1
         x0 = norm(self.embed(token_id)[None, None, :])
         h = None
         d = None
@@ -185,12 +213,12 @@ class DaisyCore(nn.Module):
         L = len(self.blocks)
 
         if self.value_embeds is None:
-            ve = [None] * (L + 6)
+            ve = [self.zero_embedding(token_id)] * L
         else:
-            ve0 = self.value_embeds[0](token_id).view(B, 1, h, d)
-            ve1 = self.value_embeds[1](token_id).view(B, 1, h, d)
-            ve2 = self.value_embeds[2](token_id).view(B, 1, h, d)
-            ve = [ve0, ve1, ve2] + [None] * (L - 6) + [ve0, ve1, ve2]
+            ve0 = self.value_embeds[0](token_id).view(B, T, h, d)
+            ve1 = self.value_embeds[1](token_id).view(B, T, h, d)
+            ve2 = self.value_embeds[2](token_id).view(B, T, h, d)
+            ve = [ve0, ve1, ve2] + [self.zero_embedding(token_id)] * (L - 6) + [ve0, ve1, ve2]
 
         skip_map = self.skip_map
         scalars = self.scalars
@@ -230,11 +258,11 @@ class DaisyCore(nn.Module):
         x = norm(self.embed(input_seq))
         x0 = x
 
-        if self.value_embeds is None:
-            ve = [None] * (L + 6)
+        if self.value_embeds is not None:
+            ve = [value_embed(input_seq) for value_embed in self.value_embeds]
+            ve = [ve[0], ve[1], ve[2]] + [self.zero_embedding(input_seq)] * (L - 6) + [ve[0], ve[1], ve[2]]
         else:
-            ve0, ve1, ve2 = [emb(input_seq) for emb in self.value_embeds]
-            ve = [ve0, ve1, ve2] + [None] * (L - 6) + [ve0, ve1, ve2]
+            ve = [self.zero_embedding(input_seq)] * L
 
         skip_map = self.skip_map
         skip_weights = self.scalars[:L]

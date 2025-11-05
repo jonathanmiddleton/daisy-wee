@@ -13,7 +13,7 @@ def make_attn(dim=16, heads=2, head_dim=8, max_seq_len=64):
     return attn
 
 
-def batched_sdpa_reference(attn: CausalSelfAttention, x: torch.Tensor, lambdas: torch.Tensor, ve: torch.Tensor | None):
+def batched_sdpa_reference(attn: CausalSelfAttention, x: torch.Tensor, lambdas: torch.Tensor, ve: torch.Tensor):
     # Compute reference outputs by reproducing the internal computations in batched form using SDPA
     B, T, D = x.shape
     H, Hd = attn.num_heads, attn.head_dim
@@ -38,7 +38,7 @@ def batched_sdpa_reference(attn: CausalSelfAttention, x: torch.Tensor, lambdas: 
     return y
 
 
-def per_token_windowed_reference(attn: CausalSelfAttention, x: torch.Tensor, lambdas: torch.Tensor, ve: torch.Tensor | None, window: int):
+def per_token_windowed_reference(attn: CausalSelfAttention, x: torch.Tensor, lambdas: torch.Tensor, ve: torch.Tensor, window: int):
     # Compute q/k/v for the whole sequence, then for each token t apply SDPA over the last `window` keys/values
     B, T, D = x.shape
     H, Hd = attn.num_heads, attn.head_dim
@@ -100,7 +100,7 @@ def test_step_matches_batched_sdpa_full_context(T, window, use_ve):
         for t in range(T):
             x_t = x[:, t : t + 1, :]
             ve_t = None if ve is None else ve[:, t : t + 1, :]
-            y_t, k_t, v_t = attn.step(x_t, k_ctx, v_ctx, pos=t, ve=ve_t, lambdas=lambdas, window=window)
+            y_t, k_t, v_t = attn.step(x_t, k_ctx, v_ctx, pos=t, ve=ve_t, sa_lambdas=lambdas, window=window)
             ys.append(y_t)
             # update caches
             k_ctx = torch.cat([k_ctx, k_t], dim=1)
@@ -135,7 +135,7 @@ def test_step_matches_windowed_reference():
         ys = []
         for t in range(T):
             x_t = x[:, t : t + 1, :]
-            y_t, k_t, v_t = attn.step(x_t, k_ctx, v_ctx, pos=t, ve=None, lambdas=lambdas, window=window)
+            y_t, k_t, v_t = attn.step(x_t, k_ctx, v_ctx, pos=t, ve=None, sa_lambdas=lambdas, window=window)
             ys.append(y_t)
             k_ctx = torch.cat([k_ctx, k_t], dim=1)
             v_ctx = torch.cat([v_ctx, v_t], dim=1)
