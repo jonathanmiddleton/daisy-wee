@@ -5,7 +5,6 @@ from typing import Any
 
 import yaml
 
-@dataclass(frozen=True)
 class ModelSpec:
     """
     Strict schema for model_specs/*.yml files.
