@@ -1,4 +1,4 @@
-# ~2MM param test config
+# config assumes 8xh100; for different CUDA devices/counts try adjusting token volumes/grad_acc_steps proportionally
 wandb_log: true
 wandb_project: 'daisy-wee'
 wandb_run_name: 'pico'
@@ -36,12 +36,12 @@ grad_acc_steps: 1
 val_shards:
   - type: "fineweb-edu"
     path: "data/fineweb-edu/edu_fineweb_val_000000.bin"
-val_loss_every_tokens:     1310720
+val_loss_every_tokens:     104857600  #200 steps
 val_seq_len: 65536       # 4 * 8192
-tot_val_tokens: 1048576
+tot_val_tokens: 10485760
 # Checkpoints
-checkpoint_warmup_tokens:     1310720           # token warmup before checkpoints
-checkpoint_per_n_tokens:      1           # checkpoint interval by tokens
+checkpoint_warmup_tokens:     209715200           # token warmup before checkpoints
+checkpoint_per_n_tokens:      52428800           # checkpoint interval by tokens
 save_checkpoint: true
 # Model Definition
 model_spec: daisy_pico_tied
