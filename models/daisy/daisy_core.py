@@ -117,7 +117,7 @@ class DaisyCore(nn.Module):
 
     def create_blockmasks(self, input_seq: Tensor, sliding_window_num_blocks: Tensor, L: int):
         BLOCK_SIZE = self.window_block_size
-        assert (len(input_seq) % BLOCK_SIZE == 0)
+        torch._assert(len(input_seq) % BLOCK_SIZE == 0, "input_seq must be divisible by BLOCK_SIZE")
         device = input_seq.device
         docs = (input_seq == self.eos_token_id).cumsum(0)
 
@@ -146,6 +146,7 @@ class DaisyCore(nn.Module):
         full_kv_num_blocks, full_kv_indices = dense_to_ordered(blockmask_all)
 
         def build_bm(window_size_blocks: Tensor) -> BlockMask:
+            # print(f"partial_kv_num_blocks.device={partial_kv_num_blocks.device.type} window_size_blocks.device={window_size_blocks.device} full_kv_num_blocks.device={full_kv_num_blocks.device.type}")
             return BlockMask.from_kv_blocks(
                 torch.clamp_max(partial_kv_num_blocks, torch.clamp_min(window_size_blocks - full_kv_num_blocks, 1)),
                 partial_kv_indices,
