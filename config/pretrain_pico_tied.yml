@@ -40,7 +40,7 @@ val_shards:
 # we don't care about val loss since we're overfitting on the training data
 val_loss_every_tokens: 888_888_888_888
 val_seq_len: 1
-tot_val_tokens: 1
+tot_val_tokens: 8  #must be divisible by global batch size
 # Checkpoints
 checkpoint_warmup_tokens:     1           # token warmup before checkpoints
 checkpoint_per_n_tokens:      1           # checkpoint interval by tokens
