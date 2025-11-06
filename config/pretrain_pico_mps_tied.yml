@@ -1,7 +1,7 @@
 # ~2MM param test config
 wandb_log: true
 wandb_project: 'daisy-wee'
-wandb_run_name: 'pico'
+wandb_run_name: 'pico_tied'
 # Torch config
 torch.coordinate_descent_tuning: true
 # Pretraining configuration
