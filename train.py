@@ -221,7 +221,9 @@ if args.init_checkpoint:
     # TODO diff args/hparams
     logger.info("Rehydrated model from checkpoint.")
 else:
-    model = model_from_spec(args.model_spec, device=device.type)
+    # TODO override model spec from args
+
+    model = model_from_spec(args.model_spec, device=device.type, overrides=asdict(args))
     hparams = _build_hparams_from_args(args)
 
 logger.info("Hyperparameters:\n" + json.dumps(asdict(args), indent=2, sort_keys=True))

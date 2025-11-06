@@ -31,8 +31,13 @@ def get_model_class(model_class: str) -> Type[nn.Module]:
         raise ImportError(f"Class '{cls_name}' not found in module '{module_path}' for model_class '{model_class}'")
     return cls
 
+def override_model_spec(spec:ModelSpec, overrides:dict):
+    for k,v in overrides.items():
+        if hasattr(spec,k):
+            setattr(spec,k,v)
+    return spec
 
-def model_from_spec(spec_or_cfg: str | dict | ModelSpec | Any, device: str) -> nn.Module:
+def model_from_spec(spec_or_cfg: str | dict | ModelSpec | Any, device: str, overrides: dict = None) -> nn.Module:
     # Normalize to ModelSpec for validation of architecture fields
     spec: ModelSpec
     aux_cfg: Dict[str, Any] = {}
@@ -58,6 +63,9 @@ def model_from_spec(spec_or_cfg: str | dict | ModelSpec | Any, device: str) -> n
         spec = ModelSpec(**spec_data)
     else:
         raise ValueError(f"Invalid spec_or_cfg type: {type(spec_or_cfg)}")
+
+    if overrides is not None:
+        spec = override_model_spec(spec,overrides)
 
     # Pull fields from validated ModelSpec
     model_class = str(spec.model_class)
