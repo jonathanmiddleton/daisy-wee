@@ -183,7 +183,7 @@ class DaisyCore(nn.Module):
                 x = x + skip_weights[skip_map[i]] * skip_connections[skip_map[i]]
             if input_seq.device.type == "cuda":
                 block_masks = self.create_blockmasks(input_seq, sliding_window_num_blocks, L=L)
-                x = self.blocks[i](x, ve[i], x0, lambdas[i], sa_lambdas[i], block_masks=block_masks[i])
+                x = self.blocks[i](x, ve[i], x0, lambdas[i], sa_lambdas[i], block_mask=block_masks[i])
             else:
                 attn_mask = build_attn_mask(input_seq, self.window_size)
                 x = self.blocks[i](x, ve[i], x0, lambdas[i], sa_lambdas[i], attn_mask=attn_mask)
