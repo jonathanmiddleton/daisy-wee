@@ -117,6 +117,7 @@ class CausalSelfAttention(nn.Module):
         q, k = self.rotary(q), self.rotary(k)
         return q, k, v
 
+    @torch.compile()
     def forward_flex(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, block_mask: BlockMask):
         B, T = x.size(0), x.size(1)
         q_, k_, v_ = self._qkv_common(x, ve, sa_lambdas)
