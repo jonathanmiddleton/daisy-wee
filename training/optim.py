@@ -360,7 +360,7 @@ def get_lincos_lr_s(s: float, cooldown_frac: float) -> float:
     return 0.5 * (1.0 + math.cos(math.pi * t))
 
 
-def get_constant_with_cosine_decay_lr_s(s: float, cooldown_frac: float) -> float:
+def get_cosine_decay_lr_s(s: float, cooldown_frac: float) -> float:
     """Constant 1.0 until cooldown, then cosine decay to 0.0 over cooldown span."""
     x = 0.0 if s < 0.0 else (1.0 if s > 1.0 else s)
     c = 0.0 if cooldown_frac < 0.0 else (1.0 if cooldown_frac > 1.0 else cooldown_frac)
@@ -376,7 +376,7 @@ def get_constant_with_cosine_decay_lr_s(s: float, cooldown_frac: float) -> float
 LEARNING_RATE_SCHEDULES: dict[str, callable] = {
     "linear_decay": get_linear_decay_lr_s,
     "linear_warmup_cosine_decay": get_lincos_lr_s,
-    "constant_with_cosine_decay": get_constant_with_cosine_decay_lr_s,
+    "cosine_decay": get_cosine_decay_lr_s,
 }
 
 

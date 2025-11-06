@@ -476,9 +476,9 @@ learning_rate_schedule=linear_decay cooldown_frac=0.5
 learning_rate_schedule=linear_warmup_cosine_decay cooldown_frac=0.7
 ```
 
-**constant_with_cosine_decay**: Constant LR until `1 - cooldown_frac`, then cosine decay
+**cosine_decay**: Constant LR until `1 - cooldown_frac`, then cosine decay
 ```bash
-learning_rate_schedule=constant_with_cosine_decay cooldown_frac=0.9
+learning_rate_schedule=cosine_decay cooldown_frac=0.9
 ```
 
 Note: Schedules apply to AdamW optimizers. Muon optimizers use linear momentum warmup from 0.85 to 0.95 based on progress.

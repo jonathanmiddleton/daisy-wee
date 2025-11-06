@@ -8,7 +8,7 @@ torch.coordinate_descent_tuning: false
 train_shards: "data/overfit/edu_fineweb_overfit_1M.bin"
 target_tokens: 1_048_576_000 # 8,000 steps w/ microbatch 8192 & grad acc 16; 10 epochs; note: 4*20*model_params = 2.4B tokens
 cooldown_frac: 0.8
-learning_rate_schedule: constant_with_cosine_decay
+learning_rate_schedule: cosine_decay
 training_sequence_length: 8192        #  N * 1024; must be divisible by window_block_size
 train_attention_window_len: 128        # largest sliding attention window used during training; must be divisible by window_block_size
 # Optimizers configuration
