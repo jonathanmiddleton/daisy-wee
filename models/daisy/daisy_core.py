@@ -79,7 +79,8 @@ class DaisyCore(nn.Module):
         self.skip_map = _get_skip_map(num_layers)
         self.eos_token_id = int(eos_token_id)
         self.embed = nn.Embedding(vocab_size, model_dim)
-        self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(3)]) if value_embeddings else None
+        num_ve = 3 if value_embeddings else 0
+        self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(num_ve)])
         self.zero_embedding = ZeroEmbedding(end_dim=self.embed.weight.size(1), device=self.embed.weight.device, dtype=self.embed.weight.dtype)
         self.blocks = nn.ModuleList([Block(model_dim, num_heads, max_seq_len, i, head_dim, num_layers) for i in range(num_layers)])
         if tied_embeddings:
@@ -159,11 +160,8 @@ class DaisyCore(nn.Module):
         assert input_seq.ndim == 1
         L = len(self.blocks)
 
-        if self.value_embeds is not None:
-            ve = [value_embed(input_seq) for value_embed in self.value_embeds]
-            ve = [ve[0], ve[1], ve[2]] + [self.zero_embedding(input_seq)] * (L - 6) + [ve[0], ve[1], ve[2]]
-        else:
-            ve = [self.zero_embedding] * L
+        ve = [value_embed(input_seq) for value_embed in self.value_embeds]
+        ve = ve + [self.zero_embedding(input_seq)] * (L - (2*len(ve))) + ve
 
         x = x0 = norm(self.embed(input_seq)[None])
 

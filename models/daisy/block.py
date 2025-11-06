@@ -5,11 +5,28 @@ from models.daisy.functional import norm
 from torch import Tensor
 from torch.nn.attention.flex_attention import BlockMask
 
+import math
+
+def pick_attention_layers(total_layers, d_model=None, num_heads=None):
+    if total_layers <= 0: return []
+    if total_layers == 1: return [0]
+    if total_layers == 2: return [0, 1]
+    if total_layers == 3: return [0, 2]
+    if total_layers == 4: return [0, 1, 3]
+    if total_layers == 5: return [0, 2, 4]
+    if total_layers == 6: return [0, 1, 3, 5]
+    d_head = (d_model // num_heads) if (d_model and num_heads) else 64
+    s = max(4, min(12, round(8 * (d_head / 64) ** 0.5)))
+    K = min(total_layers, max(math.ceil(total_layers / s), math.ceil(2 + math.log2(total_layers))))
+    idx = [int(round(i * (total_layers - 1) / (K - 1))) for i in range(K)]
+    return sorted(set(idx))
+
+
 class Block(nn.Module):
     def __init__(self, dim: int, num_heads: int, max_seq_len: int, layer_idx: int, head_dim: int, total_layers: int):
         super().__init__()
 
-        attn_layers = [i for i in range(total_layers)] #TODO configurable
+        attn_layers = pick_attention_layers(total_layers=total_layers, d_model=dim, num_heads=num_heads)
         self.attn: CausalSelfAttention  = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim, use_flex_attn=is_flex_available() ) if layer_idx in attn_layers else None
         self.mlp = MLP(dim)
 
