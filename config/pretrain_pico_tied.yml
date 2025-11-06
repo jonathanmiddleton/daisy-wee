@@ -1,4 +1,4 @@
-# overfit test config, attempts overfit on 100000000 tokens. ~= 6 seconds (train), 30 seconds (compile)
+# overfit test config, attempts overfit on 100000000 tokens. ~= few seconds (train), 30 seconds (device setup/compile)
 # config assumes 8xh100; for different CUDA devices/counts try adjusting token volumes/grad_acc_steps proportionally
 wandb_log: true
 wandb_project: 'daisy-wee'
@@ -7,7 +7,7 @@ wandb_run_name: 'pico_tied_overfit'
 torch.coordinate_descent_tuning: false
 # Pretraining configuration
 train_shards: "data/overfit/edu_fineweb_overfit_1M.bin" #attempting overfit on 100000000 tokens
-target_tokens: 52_428_800  # = 100 steps, 52 epochs; note: 4*20*model_params = 2.4B tokens
+target_tokens: 10_485_760  # = 20 steps, 10 epochs; note: 4*20*model_params = 2.4B tokens
 cooldown_frac: 0.6
 learning_rate_schedule: cosine_decay
 training_sequence_length: 65536        #  N * 1024; must be divisible by window_block_size
