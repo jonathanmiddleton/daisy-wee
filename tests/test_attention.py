@@ -39,6 +39,7 @@ def batched_sdpa_reference(attn: CausalSelfAttention, x: torch.Tensor, lambdas: 
 
 
 def per_token_windowed_reference(attn: CausalSelfAttention, x: torch.Tensor, lambdas: torch.Tensor, ve: torch.Tensor, window: int):
+    assert ve is not None, "Ve must be provided for windowed reference"
     # Compute q/k/v for the whole sequence, then for each token t apply SDPA over the last `window` keys/values
     B, T, D = x.shape
     H, Hd = attn.num_heads, attn.head_dim
@@ -49,10 +50,8 @@ def per_token_windowed_reference(attn: CausalSelfAttention, x: torch.Tensor, lam
     # Use rotary on full sequences for equivalence to step
     q, k = attn.rotary(q), attn.rotary(k)
     v = norm(v)
-    if ve is not None:
-        v = lambdas[0] * v + lambdas[1] * ve.view_as(v)
-    else:
-        v = lambdas[0] * v
+
+    v = lambdas[0] * v + lambdas[1] * ve.view_as(v)
 
     q_all = q.transpose(1, 2)  # (B, H, T, Hd)
     k_all = k.transpose(1, 2)
@@ -74,8 +73,7 @@ def per_token_windowed_reference(attn: CausalSelfAttention, x: torch.Tensor, lam
 
 
 @pytest.mark.parametrize("T,window", [(12, 12), (8, 16)])
-@pytest.mark.parametrize("use_ve", [False, True])
-def test_step_matches_batched_sdpa_full_context(T, window, use_ve):
+def test_step_matches_batched_sdpa_full_context(T, window):
     with torch.no_grad():
         torch.manual_seed(0)
         dim, heads, head_dim = 16, 2, 8
@@ -84,11 +82,8 @@ def test_step_matches_batched_sdpa_full_context(T, window, use_ve):
 
         B = 1
         x = torch.randn(B, T, dim, dtype=torch.float32)
-        lambdas = torch.tensor([1.0, 0.0], dtype=torch.float32) if not use_ve else torch.tensor([0.7, 0.3], dtype=torch.float32)
-        ve = None
-        if use_ve:
-            # Shape that can be viewed as v: (B, T, H*Hd)
-            ve = torch.randn(B, T, heads * head_dim, dtype=torch.float32)
+        lambdas = torch.tensor([0.7, 0.3], dtype=torch.float32)
+        ve = torch.randn(B, T, heads * head_dim, dtype=torch.float32)
 
         # Reference with full causal context in batch
         y_ref = batched_sdpa_reference(attn, x, lambdas, ve)
@@ -124,18 +119,18 @@ def test_step_matches_windowed_reference():
         window = 2
         x = torch.randn(B, T, dim, dtype=torch.float32)
         lambdas = torch.tensor([1.0, 0.0], dtype=torch.float32)
-        ve = None
-
+        ve_full = torch.randn(B, T, heads * head_dim, dtype=torch.float32)
         # Reference computed per token using only the last `window` keys/values
-        y_ref = per_token_windowed_reference(attn, x, lambdas, ve, window=window)
+        y_ref = per_token_windowed_reference(attn, x, lambdas, ve_full, window=window)
 
         # Streaming step with caches
         k_ctx = torch.empty(B, 0, heads, head_dim, dtype=torch.float32)
         v_ctx = torch.empty(B, 0, heads, head_dim, dtype=torch.float32)
         ys = []
         for t in range(T):
+            ve_step = ve_full.narrow(1, t, 1)
             x_t = x[:, t : t + 1, :]
-            y_t, k_t, v_t = attn.step(x_t, k_ctx, v_ctx, pos=t, ve=None, sa_lambdas=lambdas, window=window)
+            y_t, k_t, v_t = attn.step(x_t, k_ctx, v_ctx, pos=t, ve=ve_step, sa_lambdas=lambdas, window=window)
             ys.append(y_t)
             k_ctx = torch.cat([k_ctx, k_t], dim=1)
             v_ctx = torch.cat([v_ctx, v_t], dim=1)

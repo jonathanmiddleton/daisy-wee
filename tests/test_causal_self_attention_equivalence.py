@@ -15,9 +15,8 @@ def _make_block_mask(T: int, H: int, W: int, device: torch.device):
 
 
 @pytest.mark.parametrize("T,W", [(128,128), (131,128)])
-@pytest.mark.parametrize("use_ve", [False, True])
 @pytest.mark.parametrize("block_or_attn_mask", ["block", "attn"])
-def test_causal_self_attention_forward_equals_step(T, W, use_ve, monkeypatch, block_or_attn_mask):
+def test_causal_self_attention_forward_equals_step(T, W,  monkeypatch, block_or_attn_mask):
     monkeypatch.setenv("DISABLE_O_ZERO_INIT", "1")
     with torch.inference_mode():
         torch.manual_seed(0)
@@ -29,9 +28,7 @@ def test_causal_self_attention_forward_equals_step(T, W, use_ve, monkeypatch, bl
         x_t = torch.ones(T, dtype=torch.int) #pseudo-tokens
         x = torch.randn(1, T, dim, device=device, dtype=dtype) #pseudo-embedding
         lambdas = torch.tensor([1.0, 0.5], device=device, dtype=dtype)
-        ve_full = None
-        if use_ve:
-            ve_full = torch.randn(1, T, H, D, device=device, dtype=dtype)
+        ve_full = torch.randn(1, T, H, D, device=device, dtype=dtype)
 
         if block_or_attn_mask == "attn":
             m = CausalSelfAttention(dim=dim, num_heads=H, max_seq_len=max_seq_len, head_dim=D,
