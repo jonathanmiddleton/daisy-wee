@@ -4,7 +4,7 @@ wandb_log: true
 wandb_project: 'daisy-wee'
 wandb_run_name: 'pico_tied_overfit'
 # Torch config
-torch.coordinate_descent_tuning: true
+torch.coordinate_descent_tuning: false
 # Pretraining configuration
 train_shards: "data/overfit/edu_fineweb_overfit_1M.bin" #attempting overfit on 100000000 tokens
 target_tokens: 52_428_800  # = 100 steps, 52 epochs; note: 4*20*model_params = 2.4B tokens
