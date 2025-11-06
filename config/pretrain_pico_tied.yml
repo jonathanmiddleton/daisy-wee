@@ -1,3 +1,4 @@
+# test config, attempts overfit on 100000000 tokens
 # config assumes 8xh100; for different CUDA devices/counts try adjusting token volumes/grad_acc_steps proportionally
 wandb_log: true
 wandb_project: 'daisy-wee'
@@ -5,8 +6,8 @@ wandb_run_name: 'pico'
 # Torch config
 torch.coordinate_descent_tuning: true
 # Pretraining configuration
-train_shards: "data/fineweb-edu/edu_fineweb_val_000000.bin"
-target_tokens: 2424832000  #20xmodel_params
+train_shards: "data/fineweb-edu/edu_fineweb_val_000000.bin" #attempting overfit on 100000000 tokens
+target_tokens: 9699328000  #4*20*model_params = 96 epochs
 cooldown_frac: 0.5
 learning_rate_schedule: linear_decay
 training_sequence_length: 65536        #  N * 1024; must be divisible by window_block_size

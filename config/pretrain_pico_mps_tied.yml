@@ -1,4 +1,4 @@
-# ~2MM param test config
+# test config, attempts overfit on 100000000 tokens
 wandb_log: true
 wandb_project: 'daisy-wee'
 wandb_run_name: 'pico_tied'

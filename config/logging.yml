@@ -15,7 +15,15 @@ handlers:
     class: logging.FileHandler
     formatter: standard
     filename: logs/app.log
+    mode: 'a'
 
 root:
   level: INFO
   handlers: [console, file]
+  propagate: false
+
+loggers:
+  tools.master_logger:
+    level: INFO
+    handlers: [console, file]
+    propagate: false
