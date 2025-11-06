@@ -6,10 +6,10 @@ wandb_run_name: 'pico_tied'
 torch.coordinate_descent_tuning: true
 # Pretraining configuration
 train_shards: "data/overfit/edu_fineweb_overfit_1M.bin"
-target_tokens: 200000000
-cooldown_frac: 0.2
-learning_rate_schedule: linear_decay
-training_sequence_length: 4096        #  N * 1024; must be divisible by window_block_size
+target_tokens: 1048576000 # 8,000 steps w/ microbatch 8192 & grad acc 16; 10 epochs; note: 4*20*model_params = 2.4B tokens
+cooldown_frac: 0.8
+learning_rate_schedule: constant_with_cosine_decay
+training_sequence_length: 8192        #  N * 1024; must be divisible by window_block_size
 train_attention_window_len: 128        # largest sliding attention window used during training; must be divisible by window_block_size
 # Optimizers configuration
 optimizers:
@@ -23,7 +23,6 @@ optimizers:
         lr: 0.002
       - group: scalar_params
         lr: 0.0015
-
   - type: Muon
     momentum: 0.95
     weight_decay: 0.0
@@ -32,17 +31,18 @@ optimizers:
         lr: 0.02
 full_windows: false
 # Gradient accumulation
-grad_acc_steps: 8
+grad_acc_steps: 16
 # Evaluations
+# NOTE: we don't care about val loss since we're overfitting on the training data
 val_shards:
   - type: "fineweb-edu"
     path: "data/overfit/edu_fineweb_overfit_1M.bin"
-val_loss_every_tokens:     3276800
-val_seq_len: 4096
-tot_val_tokens: 4096
+val_loss_every_tokens: 999999999999
+val_seq_len: 1
+tot_val_tokens: 1
 # Checkpoints
-checkpoint_warmup_tokens: 0           # token warmup before checkpoints
-checkpoint_per_n_tokens: 0            # checkpoint interval by tokens
-save_checkpoint: true
+save_checkpoint: false
+checkpoint_warmup_tokens:     1
+checkpoint_per_n_tokens:      1
 # Model Definition
 model_spec: daisy_pico_tied

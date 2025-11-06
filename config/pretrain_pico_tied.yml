@@ -37,12 +37,13 @@ grad_acc_steps: 1
 val_shards:
   - type: "fineweb-edu"
     path: "data/overfit/edu_fineweb_overfit_1M.bin"
-val_loss_every_tokens:     104857600  # 200 steps
-val_seq_len: 65536       # 4 * 8192
-tot_val_tokens: 1048576 # 2 steps, slightly more than one epoch so it's divisible by global batch size
+# we don't care about val loss since we're overfitting on the training data
+val_loss_every_tokens: 999999999999
+val_seq_len: 1
+tot_val_tokens: 1
 # Checkpoints
-checkpoint_warmup_tokens:     209715200           # token warmup before checkpoints
-checkpoint_per_n_tokens:      52428800           # checkpoint interval by tokens
-save_checkpoint: true
+checkpoint_warmup_tokens:     1           # token warmup before checkpoints
+checkpoint_per_n_tokens:      1           # checkpoint interval by tokens
+save_checkpoint: false
 # Model Definition
 model_spec: daisy_pico_tied
