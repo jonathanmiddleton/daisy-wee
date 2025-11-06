@@ -4,7 +4,7 @@ eos_token_id: 50256
 vocab_size: 50257
 num_layers: 6
 num_heads: 4
-head_dim: 64
+head_dim: 128
 model_dim: 768
 window_block_size: 128
 attention_window_len: 1024
