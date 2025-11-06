@@ -201,22 +201,16 @@ class DaisyCore(nn.Module):
     def step(self, token_id: Tensor, k_ctxs, v_ctxs, pos: int, window: int):
         assert token_id.ndim == 0
         B = T = 1
-        x0 = norm(self.embed(token_id)[None, None, :])
-        h = None
-        d = None
-        for b in self.blocks:
-            if getattr(b, "attn", None) is not None:
-                h = b.attn.num_heads
-                d = b.attn.head_dim
-                break
+        token_id = token_id.view(B,T)
+        x0 = norm(self.embed(token_id))
         L = len(self.blocks)
 
         if self.value_embeds is None:
             ve = [self.zero_embedding(token_id)] * L
         else:
-            ve0 = self.value_embeds[0](token_id).view(B, T, h, d)
-            ve1 = self.value_embeds[1](token_id).view(B, T, h, d)
-            ve2 = self.value_embeds[2](token_id).view(B, T, h, d)
+            ve0 = self.value_embeds[0](token_id)
+            ve1 = self.value_embeds[1](token_id)
+            ve2 = self.value_embeds[2](token_id)
             ve = [ve0, ve1, ve2] + [self.zero_embedding(token_id)] * (L - 6) + [ve0, ve1, ve2]
 
         skip_map = self.skip_map
@@ -231,9 +225,7 @@ class DaisyCore(nn.Module):
         for i in range(L):
             if i in skip_map:
                 x = x + skip_weights[skip_map[i]] * skip_connections[skip_map[i]]
-            y, k_new, v_new = self.blocks[i].step(
-                x, ve[i], x0, k_ctxs[i], v_ctxs[i], pos, lambdas[i], sa_lambdas[i], window
-            )
+            y, k_new, v_new = self.blocks[i].step(x, ve[i], x0, k_ctxs[i], v_ctxs[i], pos, lambdas[i], sa_lambdas[i], window)
             x = y
             skip_connections.append(x)
             k_new_list.append(k_new)
