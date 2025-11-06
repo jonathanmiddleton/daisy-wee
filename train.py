@@ -92,31 +92,8 @@ def get_max_memory_allocated() -> Optional[int]:
 ########################################
 #        Logging                       #
 ########################################
-import logging.config
-import yaml
-
-class MasterLogger:
-    def __init__(self, master_process: bool):
-        if master_process:
-            with open("config/logging.yml", "r") as f:
-                config = yaml.safe_load(f.read())
-                logging.config.dictConfig(config)
-        self.logger = logging.getLogger(__name__)
-
-    def debug(self, st):
-        if is_master:
-            self.logger.debug(st)
-    def info(self, st):
-        if is_master:
-            self.logger.info(st)
-    def warning(self, st):
-        if is_master:
-            self.logger.warning(st)
-    def error(self, st):
-        if is_master:
-            self.logger.error(st)
-
-logger = MasterLogger(is_master)
+from tools.master_logger import MasterLogger
+logger = MasterLogger
 ### End Logging ###
 
 

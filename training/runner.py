@@ -15,13 +15,14 @@ import shlex
 import subprocess
 import sys
 from datetime import datetime
+from io import TextIOBase
 from pathlib import Path
 from typing import List, Tuple
-from io import TextIOBase
-import platform, sys as _sys
+from tools.master_logger import MasterLogger
 
 from tools.helpers import is_mac_os
 
+logger = MasterLogger
 
 def _timestamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -32,7 +33,7 @@ def _setup_log_file() -> Tuple[Path, "TextIOBase"]:
     logs_dir.mkdir(parents=True, exist_ok=True)
     log_path = logs_dir / f"{_timestamp()}.log"
     f = open(log_path, "a", buffering=1, encoding="utf-8")
-    print(f"Logging to {log_path}")
+    logger.info(f"Logging to {log_path}")
     return log_path, f
 
 
@@ -106,7 +107,7 @@ def _stream_subprocess(cmd: List[str], log_fp) -> int:
     ) as p:
         assert p.stdout is not None
         for line in p.stdout:
-            print(line, end="", flush=True)
+            logger.info(line, end="", flush=True)
             # noinspection PyBroadException
             try:
                 log_fp.write(line)
@@ -191,15 +192,15 @@ def main(argv: List[str] | None = None) -> int:
     nproc = 1 if is_mac_os() else args.nproc
 
     try:
-        print(f"Config: {config}")
-        print(f"nproc: {nproc}")
+        logger.info(f"Config: {config}")
+        logger.info(f"nproc: {nproc}")
         if checkpoint:
-            print(f"checkpoint: {checkpoint}")
+            logger.info(f"checkpoint: {checkpoint}")
         if begin_shard:
-            print(f"BEGIN_SHARD: {begin_shard}")
-        print(f"RUN_ID base: {base_run_id}")
-        print(f"Extra opts: {' '.join(passthrough_long_opts) if passthrough_long_opts else '(none)'}")
-        print(f"Override dimensions: {len(combos[0]) if combos and len(combos[0])>0 else 0}; total runs: {len(combos)}")
+            logger.info(f"BEGIN_SHARD: {begin_shard}")
+        logger.info(f"RUN_ID base: {base_run_id}")
+        logger.info(f"Extra opts: {' '.join(passthrough_long_opts) if passthrough_long_opts else '(none)'}")
+        logger.info(f"Override dimensions: {len(combos[0]) if combos and len(combos[0])>0 else 0}; total runs: {len(combos)}")
         # Execute each combination
         for idx, combo in enumerate(combos, start=1):
             # Update RUN_ID for each run: if numeric base, use base + (idx-1)
@@ -215,10 +216,10 @@ def main(argv: List[str] | None = None) -> int:
                 extra_long_opts=passthrough_long_opts,
                 overrides=combo,
             )
-            print("\n=== Running (" + str(idx) + f"/{len(combos)}): " + shlex.join(cmd))
+            logger.info("\n=== Running (" + str(idx) + f"/{len(combos)}): " + shlex.join(cmd))
             rc = _stream_subprocess(cmd, log_fp)
             if rc != 0:
-                print(f"Run {idx} failed with exit code {rc}. Aborting remaining runs.")
+                logger.error(f"Run {idx} failed with exit code {rc}. Aborting remaining runs.")
                 return rc
         return 0
     finally:
