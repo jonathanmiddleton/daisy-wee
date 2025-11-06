@@ -7,6 +7,7 @@ from torch.nn.attention.flex_attention import BlockMask
 
 import math
 
+
 def pick_attention_layers(total_layers, d_model=None, num_heads=None):
     """
     Sparse Attention Layer Selection
@@ -51,14 +52,16 @@ class Block(nn.Module):
         super().__init__()
 
         attn_layers = pick_attention_layers(total_layers=total_layers, d_model=dim, num_heads=num_heads)
-        self.attn: CausalSelfAttention  = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim, use_flex_attn=is_flex_available() ) if layer_idx in attn_layers else None
+        self.attn: CausalSelfAttention = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim,
+                                                             use_flex_attn=is_flex_available()) if layer_idx in attn_layers else None
         self.mlp = MLP(dim)
 
     def reset_history(self):
         if self.attn is not None:
             self.attn.reset_history()
 
-    def forward(self, x: Tensor, ve: Tensor | None, x0: Tensor, lambdas: Tensor, sa_lambdas: Tensor, block_mask: BlockMask = None, attn_mask: Tensor | None = None,):
+    def forward(self, x: Tensor, ve: Tensor | None, x0: Tensor, lambdas: Tensor, sa_lambdas: Tensor,
+                block_mask: BlockMask = None, attn_mask: Tensor | None = None, ):
         x = lambdas[0] * x + lambdas[1] * x0
         if self.attn is not None:
             x = x.to(self.attn.qkvo_w.dtype)

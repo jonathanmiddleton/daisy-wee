@@ -1,5 +1,3 @@
-
-
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -10,10 +8,10 @@ from torch.nn import Module
 from models import model_from_spec
 
 STANDARD_KEYS = {
-    "model",         # state_dict of the model
-    "hparams",       # dict of hyperparameters used to build the model
-    "step",          # int: global step when saved
-    "best_val",      # float: best validation loss so far
+    "model",  # state_dict of the model
+    "hparams",  # dict of hyperparameters used to build the model
+    "step",  # int: global step when saved
+    "best_val",  # float: best validation loss so far
 }
 
 UNWANTED_PREFIX = "_orig_mod."
@@ -60,7 +58,8 @@ def _normalize(obj: Any) -> LoadedCheckpoint:
                 model_sd = model_sd.state_dict()  # type: ignore[attr-defined]
             except Exception:
                 raise TypeError("Unsupported checkpoint format: 'model' field is not a state_dict or module")
-        return LoadedCheckpoint(model=model_sd, hparams=hparams, step=step, best_val=best_val, tokens_per_step=tokens_per_step, progress_state=progress_state)
+        return LoadedCheckpoint(model=model_sd, hparams=hparams, step=step, best_val=best_val,
+                                tokens_per_step=tokens_per_step, progress_state=progress_state)
 
     # Fallback: treat as a raw state_dict
     if isinstance(obj, dict):
@@ -83,13 +82,13 @@ def load_checkpoint(path: str, map_location: Any | None = None, strip_prefix: bo
 
 
 def save_checkpoint(
-    path: str,
-    model: nn.Module | Dict[str, Any],
-    step: Optional[int] = None,
-    best_val: Optional[float] = None,
-    hparams: Optional[Dict[str, Any]] = None,
-    tokens_per_step: Optional[int] = None,
-    progress_state: Optional[Dict[str, Any]] = None,
+        path: str,
+        model: nn.Module | Dict[str, Any],
+        step: Optional[int] = None,
+        best_val: Optional[float] = None,
+        hparams: Optional[Dict[str, Any]] = None,
+        tokens_per_step: Optional[int] = None,
+        progress_state: Optional[Dict[str, Any]] = None,
 ) -> None:
     # Accept either a module or a state_dict for model
     if isinstance(model, nn.Module):
@@ -112,7 +111,8 @@ def save_checkpoint(
     torch.save(payload, path)
 
 
-def apply_model_state(model: nn.Module, state_dict: Dict[str, Any], strict: bool = True, assign: bool = True) -> Tuple[List[str], List[str]]:
+def apply_model_state(model: nn.Module, state_dict: Dict[str, Any], strict: bool = True, assign: bool = True) -> Tuple[
+    List[str], List[str]]:
     # Convenience to load with common prefix stripping already handled by load_checkpoint
     missing, unexpected = model.load_state_dict(state_dict, strict=strict, assign=assign)
     return list(missing), list(unexpected)
@@ -122,6 +122,7 @@ def peek_hparams(path: str, map_location: Any | None = None) -> Dict[str, Any]:
     obj = torch.load(path, map_location=map_location)
     ckpt = _normalize(obj)
     return ckpt.hparams or {}
+
 
 def model_from_checkpoint(path: str, device: torch.device | str) -> tuple[Module, dict[str, Any]]:
     ckpt = load_checkpoint(path, map_location=device)

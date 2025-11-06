@@ -6,18 +6,22 @@ from torch.nn.attention.flex_attention import BlockMask, flex_attention
 from torch.nn import functional as F
 from models.daisy.functional import norm, init_linear
 
+
 def is_flex_available(enable_for_cpu: bool = False):
     # FlexAttention is supported only on cuda (limited on CPU)
     return torch.cuda.is_available() or enable_for_cpu
 
-def _apply_rope(x_BTHD , cos, sin):
+
+def _apply_rope(x_BTHD, cos, sin):
     x1, x2 = x_BTHD.to(dtype=torch.float32).chunk(2, dim=-1)
     y1 = x1 * cos + x2 * sin
     y2 = x1 * (-sin) + x2 * cos
     return torch.cat((y1, y2), dim=-1).type_as(x_BTHD)
 
+
 def _flex_call(q, k, v, block_mask, scale):
     return flex_attention(q, k, v, block_mask=block_mask, scale=scale)
+
 
 class Rotary(nn.Module):
     def __init__(self, dim: int, max_seq_len: int):
@@ -61,23 +65,23 @@ class Rotary(nn.Module):
         # Use preallocated tables and select a single position
         torch._assert(x_BTHD.size(1) == 1, "step() requires single position only")
         cos, sin = self._get_cos_sin(pos + 1)
-        cos = cos.unsqueeze(0).narrow(1,pos,1).unsqueeze(2)
-        sin = sin.unsqueeze(0).narrow(1,pos,1).unsqueeze(2)
+        cos = cos.unsqueeze(0).narrow(1, pos, 1).unsqueeze(2)
+        sin = sin.unsqueeze(0).narrow(1, pos, 1).unsqueeze(2)
         return _apply_rope(x_BTHD, cos, sin)
 
 
 class CausalSelfAttention(nn.Module):
-    def __init__(self, dim: int, num_heads: int, max_seq_len: int, head_dim, use_flex_attn: bool = False,):
+    def __init__(self, dim: int, num_heads: int, max_seq_len: int, head_dim, use_flex_attn: bool = False, ):
         super().__init__()
         torch._assert(dim % num_heads == 0, "dim must be divisible by num_heads")
         self.num_heads = num_heads
-        self.head_dim =  head_dim
+        self.head_dim = head_dim
         self.m_dim = dim
         # merged QKV weights: suggested by many, implemented by @fernbear.bsky.social, and further improved by @YouJiacheng
         # https://x.com/hi_tysam/status/1879699187107033311
         self.qkvo_w = nn.Parameter(init_linear(torch.empty(4, self.m_dim, self.m_dim)).bfloat16())
-        if os.getenv("DISABLE_O_ZERO_INIT", "") != "1": # 1 for unittests
-            self.qkvo_w.detach()[3].zero_() # zero-out init suggested by @Grad62304977
+        if os.getenv("DISABLE_O_ZERO_INIT", "") != "1":  # 1 for unittests
+            self.qkvo_w.detach()[3].zero_()  # zero-out init suggested by @Grad62304977
         self.rotary = Rotary(head_dim, max_seq_len)
         # scale the attention logits by given constant, instead of the default head_dim**-0.5, by @leloykun
         # inspired by learnable scalars used by @brendanh0gan https://x.com/hi_tysam/status/1879693583898591283
@@ -100,7 +104,7 @@ class CausalSelfAttention(nn.Module):
         qkv = self.qkvo_w[:3].flatten(end_dim=1)
         q, k, v = F.linear(x, qkv).view(B, T, 3 * self.num_heads, self.head_dim).chunk(3, dim=-2)
         q, k, v = norm(q), norm(k), norm(v)
-        q, k = self.rotary.step(q,pos), self.rotary.step(k,pos)
+        q, k = self.rotary.step(q, pos), self.rotary.step(k, pos)
 
         return q, k, v
 
@@ -126,7 +130,8 @@ class CausalSelfAttention(nn.Module):
         y, _, _, _ = self._sdpa_common(x, ve, sa_lambdas, attn_mask)
         return y
 
-    def prefill(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, attn_mask: torch.Tensor, debug: bool = False):
+    def prefill(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, attn_mask: torch.Tensor,
+                debug: bool = False):
         y, k, v, q = self._sdpa_common(x, ve, sa_lambdas, attn_mask)
 
         if debug:
@@ -152,7 +157,7 @@ class CausalSelfAttention(nn.Module):
         y = torch.nn.functional.scaled_dot_product_attention(q_, k_, v_, attn_mask=attn_mask, scale=self.attn_scale)
         y = y.transpose(1, 2).contiguous().view(B, T, self.m_dim)
         y = torch.nn.functional.linear(y, self.qkvo_w[3])
-        return y, k_.transpose(1,2), v_.transpose(1,2), q_.transpose(1,2)
+        return y, k_.transpose(1, 2), v_.transpose(1, 2), q_.transpose(1, 2)
 
     def step(self, x, k_ctx: Tensor, v_ctx: Tensor, pos: int, ve: Tensor, sa_lambdas: Tensor, window: int):
         B, T = x.size(0), 1

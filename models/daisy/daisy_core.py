@@ -10,13 +10,15 @@ from models.daisy.block import Block
 from models.daisy.functional import norm
 from torch.nn.attention.flex_attention import BlockMask
 
+
 def next_multiple_of_n(v: float | int, *, n: int):
     return next(x for x in range(n, int(v) + 1 + n, n) if x >= v)
 
+
 def build_attn_mask(input_seq: Tensor, window_size: int):
     T = input_seq.size(-1)
-    q = torch.arange(T, device=input_seq.device )[:, None]  # (T, 1)
-    k = torch.arange(T, device=input_seq.device )[None, :]  # (1, T)
+    q = torch.arange(T, device=input_seq.device)[:, None]  # (T, 1)
+    k = torch.arange(T, device=input_seq.device)[None, :]  # (1, T)
     d = q - k  # d[q, k] = q - k
 
     m = torch.zeros(T, T, device=input_seq.device, dtype=torch.float32)
@@ -27,16 +29,17 @@ def build_attn_mask(input_seq: Tensor, window_size: int):
 
 
 class ZeroEmbedding(nn.Module):
-    def __init__(self, end_dim: int, device: torch.device, dtype: torch.dtype = torch.int64,  *args: Any, **kwargs: Any):
+    def __init__(self, end_dim: int, device: torch.device, dtype: torch.dtype = torch.int64, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
         self.end_dim = end_dim
-        self.zero = nn.Buffer(torch.zeros(1, dtype=dtype, device=device), persistent=False) # anchor for device/dtype so that we're moved when .to is called
+        self.zero = nn.Buffer(torch.zeros(1, dtype=dtype, device=device),
+                              persistent=False)  # anchor for device/dtype so that we're moved when .to is called
 
     @lru_cache(maxsize=1, typed=True)
     def __call__(self, x: Tensor):
         # Return a zero tensor shaped like an embedding(x)
         out_shape = (*x.shape, self.end_dim)
-        return torch.zeros(out_shape, dtype=self.zero.dtype, device = self.zero.device, requires_grad=False)
+        return torch.zeros(out_shape, dtype=self.zero.dtype, device=self.zero.device, requires_grad=False)
 
     def _apply(self, fn, recurse=True):
         super()._apply(fn, recurse)
@@ -50,7 +53,8 @@ class ZeroEmbedding(nn.Module):
 
 
 class DaisyCore(nn.Module):
-    def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int, head_dim: int, window_size: int = 1024,
+    def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int,
+                 head_dim: int, window_size: int = 1024,
                  window_block_size: int = 128, eos_token_id: int | None = None, desc: dict | None = None,
                  value_embeddings: bool = True, tied_embeddings: bool = False, ):
         super().__init__()
@@ -81,8 +85,10 @@ class DaisyCore(nn.Module):
         self.embed = nn.Embedding(vocab_size, model_dim)
         num_ve = 3 if value_embeddings else 0
         self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(num_ve)])
-        self.zero_embedding = ZeroEmbedding(end_dim=self.embed.weight.size(1), device=self.embed.weight.device, dtype=self.embed.weight.dtype)
-        self.blocks = nn.ModuleList([Block(model_dim, num_heads, max_seq_len, i, head_dim, num_layers) for i in range(num_layers)])
+        self.zero_embedding = ZeroEmbedding(end_dim=self.embed.weight.size(1), device=self.embed.weight.device,
+                                            dtype=self.embed.weight.dtype)
+        self.blocks = nn.ModuleList(
+            [Block(model_dim, num_heads, max_seq_len, i, head_dim, num_layers) for i in range(num_layers)])
         if tied_embeddings:
             nn.init.normal_(self.embed.weight, mean=0.0, std=0.02)
             # nn.init.uniform_(self.embed.weight, a=-0.01, b=0.01)
@@ -99,11 +105,11 @@ class DaisyCore(nn.Module):
         self.window_block_size = int(window_block_size)
         assert num_layers % 2 == 0
         self.scalars = nn.Parameter(torch.cat([
-            torch.ones(num_layers),                                     # skip_weights
-            *[torch.tensor([1.0, 0.0]) for _ in range(num_layers)],     # residual mixing
-            *[torch.tensor([0.5, 0.5]) for _ in range(num_layers)],     # value embedding mixing
+            torch.ones(num_layers),  # skip_weights
+            *[torch.tensor([1.0, 0.0]) for _ in range(num_layers)],  # residual mixing
+            *[torch.tensor([0.5, 0.5]) for _ in range(num_layers)],  # value embedding mixing
         ]))
-        self.desc = desc # non-functional, self-describing metadata
+        self.desc = desc  # non-functional, self-describing metadata
 
     def reset_history(self):
         for b in self.blocks:
@@ -161,7 +167,7 @@ class DaisyCore(nn.Module):
         L = len(self.blocks)
 
         ve = [value_embed(input_seq) for value_embed in self.value_embeds]
-        ve = ve + [self.zero_embedding(input_seq)] * (L - (2*len(ve))) + ve
+        ve = ve + [self.zero_embedding(input_seq)] * (L - (2 * len(ve))) + ve
 
         x = x0 = norm(self.embed(input_seq)[None])
 
@@ -199,7 +205,7 @@ class DaisyCore(nn.Module):
     def step(self, token_id: Tensor, k_ctxs, v_ctxs, pos: int, window: int):
         assert token_id.ndim == 0
         B = T = 1
-        token_id = token_id.view(B,T)
+        token_id = token_id.view(B, T)
         x0 = norm(self.embed(token_id))
         L = len(self.blocks)
 
@@ -223,7 +229,8 @@ class DaisyCore(nn.Module):
         for i in range(L):
             if i in skip_map:
                 x = x + skip_weights[skip_map[i]] * skip_connections[skip_map[i]]
-            y, k_new, v_new = self.blocks[i].step(x, ve[i], x0, k_ctxs[i], v_ctxs[i], pos, lambdas[i], sa_lambdas[i], window)
+            y, k_new, v_new = self.blocks[i].step(x, ve[i], x0, k_ctxs[i], v_ctxs[i], pos, lambdas[i], sa_lambdas[i],
+                                                  window)
             x = y
             skip_connections.append(x)
             k_new_list.append(k_new)

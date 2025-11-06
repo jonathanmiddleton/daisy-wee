@@ -23,18 +23,18 @@ def derive_named_param_groups(model: nn.Module) -> dict[str, list[nn.Parameter]]
         reverse=True,
     )
     # Embedding parameters
-    embed_params = [*model.embed.parameters(), *model.value_embeds.parameters()] if model.value_embeds is not None else [*model.embed.parameters()]
+    embed_params = [*model.embed.parameters(),
+                    *model.value_embeds.parameters()] if model.value_embeds is not None else [*model.embed.parameters()]
     # Learned scalar gates
     scalar_params = [model.scalars]
     # Output head weights
     a = model.embed.weight
-    b =  model.lm_head_w
+    b = model.lm_head_w
     if model.embed.weight is model.lm_head_w:
         # tied embeddings
         head_params = None
     else:
         head_params: list[nn.Parameter] = [model.lm_head_w]
-
 
     # Sanity: ensure exact partitioning of all model parameters
     params_collections = [hidden_matrix_params, embed_params, scalar_params, head_params]
@@ -55,6 +55,7 @@ def derive_named_param_groups(model: nn.Module) -> dict[str, list[nn.Parameter]]
 
     return p_dict
 
+
 # -----------------------------------------------------------------------------
 # Muon optimizer
 
@@ -68,7 +69,7 @@ def zeropower_via_newtonschulz5(G: Tensor) -> Tensor:
     where S' is diagonal with S_{ii}' ∈ [1 - l, 1 + r], which turns out not to hurt model
     performance at all relative to UV^T, where USV^T = G is the SVD.
     """
-    assert G.ndim >= 2 # batched Muon implementation by @scottjmaddox, and put into practice in the record by @YouJiacheng
+    assert G.ndim >= 2  # batched Muon implementation by @scottjmaddox, and put into practice in the record by @YouJiacheng
     X = G.bfloat16()
     if G.size(-2) > G.size(-1):
         X = X.mT
@@ -84,15 +85,17 @@ def zeropower_via_newtonschulz5(G: Tensor) -> Tensor:
         (2.8366, -3.0525, 1.2012),
     ]:
         A = X @ X.mT
-        B = b * A + c * A @ A # quintic computation strategy adapted from suggestion by @jxbz, @leloykun, and @YouJiacheng
+        B = b * A + c * A @ A  # quintic computation strategy adapted from suggestion by @jxbz, @leloykun, and @YouJiacheng
         X = a * X + B @ X
 
     if G.size(-2) > G.size(-1):
         X = X.mT
     return X
 
+
 @torch.compile
-def update_faster(acc_bf16_view_u16: Tensor, mantissa: Tensor, momentum_buffer: Tensor, grad: Tensor, momentum: Tensor, eff_lr: Tensor, eff_weight_decay: Tensor):
+def update_faster(acc_bf16_view_u16: Tensor, mantissa: Tensor, momentum_buffer: Tensor, grad: Tensor, momentum: Tensor,
+                  eff_lr: Tensor, eff_weight_decay: Tensor):
     """
     Mixed precision with full precision math.
     """
@@ -107,8 +110,10 @@ def update_faster(acc_bf16_view_u16: Tensor, mantissa: Tensor, momentum_buffer: 
     acc_bf16_view_u16.copy_((acc_m_u32 >> 16).to(torch.uint16))
     mantissa.copy_(acc_m_u32.to(torch.uint16))
 
+
 @torch.compile
-def update_slower(acc: Tensor, momentum_buffer: Tensor, grad: Tensor, momentum: Tensor, eff_lr: Tensor, eff_weight_decay: Tensor):
+def update_slower(acc: Tensor, momentum_buffer: Tensor, grad: Tensor, momentum: Tensor, eff_lr: Tensor,
+                  eff_weight_decay: Tensor):
     """
     Full precision alternative to update_fast for platforms that don't support uint* ops.
     """
@@ -132,6 +137,7 @@ class Muon(torch.optim.Optimizer):
     Warning: This optimizer should not be used for the embedding layer, the final fully connected layer,
     or any {0,1}-D parameters; those should all be optimized by a standard method (e.g., AdamW).
     """
+
     def __init__(self, params, lr=0.02, weight_decay=0.01, momentum=0.95, rank=0, world_size=1):
         self.rank = rank
         self.world_size = world_size
@@ -163,7 +169,8 @@ class Muon(torch.optim.Optimizer):
                             p.view(torch.uint16), state["mantissa"], state["momentum_buffer"],
                             p.grad, momentum,
                             eff_lr=torch._as_tensor_fullprec(group["lr"] * max(1, p.size(-2) / p.size(-1)) ** 0.5),
-                            eff_weight_decay=torch._as_tensor_fullprec(group["lr"] * group["weight_decay"] * getattr(p, "wd_mul", 1.0)),
+                            eff_weight_decay=torch._as_tensor_fullprec(
+                                group["lr"] * group["weight_decay"] * getattr(p, "wd_mul", 1.0)),
                         )
                     else:
                         if len(state) == 0:
@@ -172,7 +179,8 @@ class Muon(torch.optim.Optimizer):
                             p, state["momentum_buffer"],
                             p.grad, momentum,
                             eff_lr=torch._as_tensor_fullprec(group["lr"] * max(1, p.size(-2) / p.size(-1)) ** 0.5),
-                            eff_weight_decay=torch._as_tensor_fullprec(group["lr"] * group["weight_decay"] * getattr(p, "wd_mul", 1.0)),
+                            eff_weight_decay=torch._as_tensor_fullprec(
+                                group["lr"] * group["weight_decay"] * getattr(p, "wd_mul", 1.0)),
                         )
                 if self.world_size > 1 and dist.is_available() and dist.is_initialized():
                     futures.append(
@@ -187,6 +195,7 @@ class Muon(torch.optim.Optimizer):
 
 
 import math
+
 
 class AdaptiveLR:
     def __init__(self,
@@ -204,8 +213,8 @@ class AdaptiveLR:
                  m_min: float = 0.1,
                  cosine_frac: float = 1.0,
                  eps: float = 1e-12):
-        self.beta = 2**(-1.0 / H)
-        self.beta_tail = 2**(-1.0 / H_tail)
+        self.beta = 2 ** (-1.0 / H)
+        self.beta_tail = 2 ** (-1.0 / H_tail)
         self.H_eval = H_eval
         self.H_guard = H_guard
         self.H_stable = H_stable
@@ -246,7 +255,7 @@ class AdaptiveLR:
         z = r / math.sqrt(self.v + self.eps)
         self.tau = (1.0 - bt) * (abs(z) > 3.0) + bt * self.tau
         self.c1 = (1.0 - b) * (r * self.r_prev) + b * self.c1
-        self.s  = (1.0 - b) * (r * r) + b * self.s
+        self.s = (1.0 - b) * (r * r) + b * self.s
         rho1 = self.c1 / (self.s + self.eps)
         dmu = abs(self.mu - self.mu_prev)
         self.mu_prev = self.mu
@@ -362,12 +371,14 @@ def get_constant_with_cosine_decay_lr_s(s: float, cooldown_frac: float) -> float
     t = (x - (1.0 - c)) / max(c, 1e-8)  # normalized to [0,1]
     return 0.5 * (1.0 + math.cos(math.pi * t))
 
+
 # Dispatch table for LR schedules
 LEARNING_RATE_SCHEDULES: dict[str, callable] = {
     "linear_decay": get_linear_decay_lr_s,
     "linear_warmup_cosine_decay": get_lincos_lr_s,
     "constant_with_cosine_decay": get_constant_with_cosine_decay_lr_s,
 }
+
 
 def get_lr_scale(schedule_name: str, s: float, cooldown_frac: float) -> float:
     """Resolve a schedule by name and compute the LR scale for progress s.
@@ -376,19 +387,24 @@ def get_lr_scale(schedule_name: str, s: float, cooldown_frac: float) -> float:
     """
     fn = LEARNING_RATE_SCHEDULES.get(schedule_name)
     if fn is None:
-        raise ValueError(f"Unknown learning_rate_schedule '{schedule_name}'. Valid options: {sorted(LEARNING_RATE_SCHEDULES.keys())}")
+        raise ValueError(
+            f"Unknown learning_rate_schedule '{schedule_name}'. Valid options: {sorted(LEARNING_RATE_SCHEDULES.keys())}")
     return fn(s, cooldown_frac)
+
 
 # Global flag to force full-sized attention windows regardless of training progress
 _force_full_windows: bool = False
+
 
 def set_full_windows(flag: bool):
     global _force_full_windows
     _force_full_windows = bool(flag)
 
+
 # attention window size schedule: linearly increase
 def next_multiple_of_n(v: float | int, *, n: int):
     return next(x for x in range(n, int(v) + 1 + n, n) if x >= v)
+
 
 @lru_cache(1)
 def get_window_size_blocks_helper(window_size_tokens: int, window_block_size: int):
@@ -399,6 +415,7 @@ def get_window_size_blocks_helper(window_size_tokens: int, window_block_size: in
         raise ValueError("window_block_size must be > 0")
     blocks = int(window_size_tokens) // int(window_block_size)
     return torch.tensor(blocks, dtype=torch.int32)
+
 
 def get_num_window_blocks(schedule: float, *, attention_window_len: int, window_block_size: int) -> torch.Tensor:
     """Attention window schedule driven by normalized progress schedule s∈[0,1].
@@ -412,6 +429,7 @@ def get_num_window_blocks(schedule: float, *, attention_window_len: int, window_
     factor = 4 * x ** 3 - 6 * x ** 2 + 3 * x
     window_tokens = next_multiple_of_n(attention_window_len * factor, n=window_block_size)
     return get_window_size_blocks_helper(window_tokens, window_block_size)
+
 
 def resolve_optimizer_class(opt_type: str):
     """Resolve optimizer type name to a class.
@@ -427,6 +445,7 @@ def resolve_optimizer_class(opt_type: str):
         return getattr(torch.optim, opt_type)
     raise ValueError(f"Unknown optimizer type: {opt_type}")
 
+
 def get_referenced_groups(cfg_list: list[dict[str, Any]]) -> list[str]:
     referenced_group_names: set[str] = set()
     for idx, opt_cfg in enumerate(cfg_list):
@@ -437,12 +456,12 @@ def get_referenced_groups(cfg_list: list[dict[str, Any]]) -> list[str]:
 
 
 def build_optimizers_from_cfg(
-    *,
-    cfg_list: list[dict[str, Any]],
-    model: nn.Module,
-    rank: int,
-    world_size: int,
-    frozen_groups: list[str] | None = None,
+        *,
+        cfg_list: list[dict[str, Any]],
+        model: nn.Module,
+        rank: int,
+        world_size: int,
+        frozen_groups: list[str] | None = None,
 ) -> list[torch.optim.Optimizer]:
     """Build optimizers from configuration list and sets no_grad on frozen groups.
 
@@ -511,7 +530,8 @@ def build_optimizers_from_cfg(
         if OptClass is Muon:
             # Enforce explicit weight_decay in config for Muon (breaking change)
             if "weight_decay" not in opt_kwargs:
-                raise ValueError("Muon optimizer now requires 'weight_decay' to be set explicitly in the training config")
+                raise ValueError(
+                    "Muon optimizer now requires 'weight_decay' to be set explicitly in the training config")
             opt_kwargs.setdefault("rank", rank)
             opt_kwargs.setdefault("world_size", world_size)
 
