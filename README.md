@@ -710,7 +710,7 @@ Daisy-Wee embodies several key design principles:
 
 ## Acknowledgements
 
-Originally launched as a fork of **modded-nanogpt** (Keller Jordan & contributors) and inspired by **nanoGPT** (Andrej Karpathy). This project currently reproduces substantial portions of optimized model training path code from **modded-nanogpt** for training efficiency.
+Originally launched as a fork of **modded-nanogpt** (Keller Jordan & contributors) and inspired by **nanoGPT** (Andrej Karpathy), this project reproduced a substantial portion of optimized training code.
 
 ---
 
