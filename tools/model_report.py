@@ -253,7 +253,7 @@ def format_report_text(report: Dict[str, Any]) -> str:
         if sc.get("layers_with_skip_near_zero"):
             lines.append(f"layers with near-zero skip weight: {sc['layers_with_skip_near_zero']}")
         # Per-layer compact print
-        lines.append("\nPer-layer (i: skip | lambda -> sa_lambda):")
+        lines.append("\nPer-layer (i: skip | lambda | sa_lambda):")
         for li in sc.get("per_layer", []):
             i = li["layer"]
             def mark(val, is_nz):
@@ -261,7 +261,7 @@ def format_report_text(report: Dict[str, Any]) -> str:
             skip_s = mark(li["skip_w"], li["skip_w_near_zero"])
             lam_s = ", ".join(mark(v, nz) for v, nz in zip(li["lambda"], li["lambda_near_zero"]))
             sal_s = ", ".join(mark(v, nz) for v, nz in zip(li["sa_lambda"], li["sa_lambda_near_zero"]))
-            lines.append(f"  {i:02d}: {skip_s} | [{lam_s}] -> [{sal_s}]")
+            lines.append(f"  {i:02d}: {skip_s} | [{lam_s}] | [{sal_s}]")
         if sc.get("any_near_zero"):
             lines.append("\nNote: values marked with * are near zero and may indicate unused pathways.")
 
