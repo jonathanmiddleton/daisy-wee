@@ -1,4 +1,4 @@
-# overfit test config, attempts overfit on 100000000 tokens. takes about 1.5min
+# overfit test config, attempts overfit on 100000000 tokens. ~= 6 seconds (train), 30 seconds (compile)
 # config assumes 8xh100; for different CUDA devices/counts try adjusting token volumes/grad_acc_steps proportionally
 wandb_log: true
 wandb_project: 'daisy-wee'

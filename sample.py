@@ -5,7 +5,7 @@ import tiktoken
 import torch
 from torch import nn, tensor
 
-from helpers import log_level_from_env
+from tools.master_logger import log_level_from_env
 from inference.generate import Generator
 from tools.checkpoint import model_from_checkpoint
 import logging

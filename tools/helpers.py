@@ -75,16 +75,6 @@ def _as_bool(value: Any, default: bool = False) -> bool:
             return False
     return default
 
-def log_level_from_env():
-    import os, logging
-    levels = {
-        "CRITICAL": logging.CRITICAL,
-        "ERROR": logging.ERROR,
-        "WARNING": logging.WARNING,
-        "INFO": logging.INFO,
-        "DEBUG": logging.DEBUG,
-    }
-    return levels.get(os.environ.get("DAISY_LOG_LEVEL", "INFO").upper(), logging.INFO)
 
 def torch_get_guards_from_callable(fn: Callable, *args, **kwargs):
     """

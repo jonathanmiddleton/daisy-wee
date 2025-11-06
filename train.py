@@ -395,6 +395,7 @@ while progress.tokens_processed < progress.target_tokens:
         inputs, targets = next(_train_ddg)
         n_blocks = get_num_window_blocks(progress.s, attention_window_len=args.train_attention_window_len, window_block_size=args.window_block_size)
         with torch.autocast(device.type, dtype=torch.bfloat16):
+            logger.debug(f"inputs.shape={inputs.shape} inputs.device.type={inputs.device.type} targets.shape={targets.shape} targets.device.type={targets.device.type} n_blocks={n_blocks}")
             loss = model(inputs, n_blocks, targets)
             # scale loss so that gradients are averaged across micro-steps
             loss_to_backward = loss / ga_steps
