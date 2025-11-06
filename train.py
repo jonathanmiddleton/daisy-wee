@@ -70,7 +70,7 @@ def maybe_compile(model: nn.Module, dynamic: bool = False) -> nn.Module:
         logger.info(f"Compiling disabled: TORCH_COMPILE_OFF={TORCH_COMPILE_OFF}")
         return model
     else:
-        logger.info(f"Compiling model (dynamic={dynamic}).")
+        logger.info(f"Compiling model (dynamic={dynamic}). This may take several minutes...")
         model: nn.Module = torch.compile(model, dynamic=dynamic)
         return model
 
