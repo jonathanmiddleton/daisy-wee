@@ -6,9 +6,9 @@ wandb_run_name: 'pico_tied'
 torch.coordinate_descent_tuning: false
 # Pretraining configuration
 train_shards: "data/overfit/edu_fineweb_overfit_1M.bin"
-target_tokens: 1_048_576_000 # 8,000 steps w/ microbatch 8192 & grad acc 16; 10 epochs; note: 4*20*model_params = 2.4B tokens
-cooldown_frac: 0.8
-learning_rate_schedule: cosine_decay
+target_tokens: 10_485_760
+cooldown_frac: 0.0
+learning_rate_schedule: linear_decay
 training_sequence_length: 8192        #  N * 1024; must be divisible by window_block_size
 train_attention_window_len: 128        # largest sliding attention window used during training; must be divisible by window_block_size
 # Optimizers configuration
@@ -20,15 +20,15 @@ optimizers:
     fused: true
     params:
       - group: embed_params
-        lr: 0.002
+        lr: 0.003
       - group: scalar_params
-        lr: 0.0015
+        lr: 0.002
   - type: Muon
     momentum: 0.95
     weight_decay: 0.0
     params:
       - group: hidden_matrix_params
-        lr: 0.02
+        lr: 0.025
 full_windows: false
 # Gradient accumulation
 grad_acc_steps: 16
