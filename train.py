@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from dataclasses import asdict
 from typing import Optional
 
-from checkpoint import model_from_checkpoint
+from tools.checkpoint import model_from_checkpoint
 from tools.model_report import build_report, format_report_text
 from models import get_model_class, model_from_spec
 from data.data_gen_stream import DistributedDataGenerator
