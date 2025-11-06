@@ -59,10 +59,10 @@ class Rotary(nn.Module):
 
     def step(self, x_BTHD: Tensor, pos: int):
         # Use preallocated tables and select a single position
-        torch._assert(x_BTHD.shape[1] == 1, "step() requires single position only")
+        torch._assert(x_BTHD.size(1) == 1, "step() requires single position only")
         cos, sin = self._get_cos_sin(pos + 1)
-        cos = cos.unsqueeze(0).unsqueeze(2)
-        sin = sin.unsqueeze(0).unsqueeze(2)
+        cos = cos.unsqueeze(0).narrow(1,pos,1).unsqueeze(2)
+        sin = sin.unsqueeze(0).narrow(1,pos,1).unsqueeze(2)
         return _apply_rope(x_BTHD, cos, sin)
 
 
@@ -181,7 +181,7 @@ class CausalSelfAttention(nn.Module):
 
 
     def step(self, x, k_ctx: Tensor, v_ctx: Tensor, pos: int, ve: Tensor, sa_lambdas: Tensor, window: int):
-        B, T = x.size(0), k_ctx.size(1)+1
+        B, T = x.size(0), 1
         q, k, v = self.calc_qkv(x, pos)
         dtype = q.dtype
 
