@@ -8,6 +8,30 @@ from torch.nn.attention.flex_attention import BlockMask
 import math
 
 def pick_attention_layers(total_layers, d_model=None, num_heads=None):
+    """
+    Sparse Attention Layer Selection
+
+    For non-degenerate cases:
+    - L: total number of layers (int >= 1)
+    - d_model: model width (optional)
+    - n_heads: number of attention heads (optional; constant across attention layers)
+    - d_head: per-head width; if d_model and n_heads are provided, d_head = d_model / n_heads; otherwise d_head = 64
+
+    1) Choose stride s (maximum gap between attention layers) from d_head:
+       s = clip(round(8 * sqrt(d_head / 64)), 4, 12)
+       Interpretation: if d_head = 64 then s ≈ 8. Wider heads allow slightly larger s,
+       but s is always clamped to [4, 12].
+
+    2) Target count K of attention layers:
+       K = min(L, max(ceil(L / s), 2 + ceil(log2(L))))
+       This ensures at least logarithmically many attention layers and bounds the
+       maximum gap between attention layers.
+
+    3) Index placement: pick K indices uniformly on [0, L-1] (inclusive), then deduplicate and sort:
+       for i in {0, 1, ..., K-1}:
+           idx_i = round(i * (L - 1) / (K - 1))
+       By construction, idx_0 = 0 and idx_{K-1} = L - 1.
+    """
     if total_layers <= 0: return []
     if total_layers == 1: return [0]
     if total_layers == 2: return [0, 1]

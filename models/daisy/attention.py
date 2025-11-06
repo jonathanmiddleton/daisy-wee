@@ -94,33 +94,30 @@ class CausalSelfAttention(nn.Module):
         self.last_q = None
         self.last_k = None
 
-    def calc_qkv(self, x: Tensor, pos: int | None = None):
+    def _calc_qkv_pos(self, x: Tensor, pos: int):
         B, T = x.size(0), x.size(1)
         x = x.to(self.qkvo_w.dtype)
         qkv = self.qkvo_w[:3].flatten(end_dim=1)
         q, k, v = F.linear(x, qkv).view(B, T, 3 * self.num_heads, self.head_dim).chunk(3, dim=-2)
         q, k, v = norm(q), norm(k), norm(v)
-        if pos:
-            q, k = self.rotary.step(q,pos), self.rotary.step(k,pos)
-        else:
-            q, k = self.rotary(q), self.rotary(k)
+        q, k = self.rotary.step(q,pos), self.rotary.step(k,pos)
+
+        return q, k, v
+
+    def _calc_qkv(self, x: Tensor):
+        B, T = x.size(0), x.size(1)
+        x = x.to(self.qkvo_w.dtype)
+        qkv = self.qkvo_w[:3].flatten(end_dim=1)
+        q, k, v = F.linear(x, qkv).view(B, T, 3 * self.num_heads, self.head_dim).chunk(3, dim=-2)
+        q, k, v = norm(q), norm(k), norm(v)
+        q, k = self.rotary(q), self.rotary(k)
         return q, k, v
 
     def forward_flex(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, block_mask: BlockMask):
         B, T = x.size(0), x.size(1)
-        q, k, v = self.calc_qkv(x)
-        dtype = q.dtype
-
-        sa_lambdas = sa_lambdas.to(dtype=dtype)
-        ve = ve.to(dtype=dtype)
-        v = sa_lambdas[0] * v + sa_lambdas[1] * ve.view_as(v)
-
-        q_ = q.transpose(1, 2)
-        k_ = k.transpose(1, 2)
-        v_ = v.transpose(1, 2)
+        q_, k_, v_ = self._qkv_common(x, ve, sa_lambdas)
 
         y = _flex_call(q_, k_, v_, block_mask=block_mask, scale=self.attn_scale)
-
         y = y.transpose(1, 2).contiguous().view(B, T, self.m_dim)
         y = torch.nn.functional.linear(y, self.qkvo_w[3])
         return y
@@ -137,28 +134,29 @@ class CausalSelfAttention(nn.Module):
             self.last_k = k
         return y, k.transpose(1, 2), v.transpose(1, 2)
 
-    def _sdpa_common(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, attn_mask: torch.Tensor):
-        B, T = x.size(0), x.size(1)
-        q, k, v = self.calc_qkv(x)
+    def _qkv_common(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor):
+        q, k, v = self._calc_qkv(x)
         dtype = q.dtype
-
         sa_lambdas = sa_lambdas.to(dtype)
         ve = ve.to(dtype)
         v = sa_lambdas[0] * v + sa_lambdas[1] * ve.view_as(v)
-
         q_ = q.transpose(1, 2)
         k_ = k.transpose(1, 2)
         v_ = v.transpose(1, 2)
+        return q_, k_, v_
 
-        attn_mask = attn_mask.to(dtype)
+    def _sdpa_common(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, attn_mask: torch.Tensor):
+        B, T = x.size(0), x.size(1)
+        q_, k_, v_ = self._qkv_common(x, ve, sa_lambdas)
+        attn_mask = attn_mask.to(q_.dtype)
         y = torch.nn.functional.scaled_dot_product_attention(q_, k_, v_, attn_mask=attn_mask, scale=self.attn_scale)
         y = y.transpose(1, 2).contiguous().view(B, T, self.m_dim)
         y = torch.nn.functional.linear(y, self.qkvo_w[3])
-        return y, k, v, q
+        return y, k_.transpose(1,2), v_.transpose(1,2), q_.transpose(1,2)
 
     def step(self, x, k_ctx: Tensor, v_ctx: Tensor, pos: int, ve: Tensor, sa_lambdas: Tensor, window: int):
         B, T = x.size(0), 1
-        q, k, v = self.calc_qkv(x, pos)
+        q, k, v = self._calc_qkv_pos(x, pos)
         dtype = q.dtype
 
         ve = ve.to(dtype)
