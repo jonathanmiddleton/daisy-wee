@@ -7,7 +7,7 @@ wandb_run_name: 'pico_tied_overfit'
 torch.coordinate_descent_tuning: true
 # Pretraining configuration
 train_shards: "data/overfit/edu_fineweb_overfit_1M.bin" #attempting overfit on 100000000 tokens
-target_tokens: 1048576000  # = 2,000 steps, 10 epochs; note: 4*20*model_params = 2.4B tokens
+target_tokens: 1_048_576_000  # = 2,000 steps, 10 epochs; note: 4*20*model_params = 2.4B tokens
 cooldown_frac: 0.8
 learning_rate_schedule: constant_with_cosine_decay
 training_sequence_length: 65536        #  N * 1024; must be divisible by window_block_size
@@ -38,7 +38,7 @@ val_shards:
   - type: "fineweb-edu"
     path: "data/overfit/edu_fineweb_overfit_1M.bin"
 # we don't care about val loss since we're overfitting on the training data
-val_loss_every_tokens: 999999999999
+val_loss_every_tokens: 888_888_888_888
 val_seq_len: 1
 tot_val_tokens: 1
 # Checkpoints
