@@ -21,7 +21,7 @@ optimizers:
     fused: true
     params:
       - group: embed_params
-        lr: 0.2
+        lr: 0.002
       - group: scalar_params
         lr: 0.015
   - type: Muon
