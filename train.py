@@ -217,12 +217,10 @@ resume_from_step = None
 _resume_tokens_per_step: int | None = None
 _ckpt_obj = None
 if args.init_checkpoint:
+    # TODO diff args/hparams/modelspec from checkpoint
     model, hparams = model_from_checkpoint(args.init_checkpoint, device=device)
-    # TODO diff args/hparams
     logger.info("Rehydrated model from checkpoint.")
 else:
-    # TODO override model spec from args
-
     model = model_from_spec(args.model_spec, device=device.type, overrides=asdict(args))
     hparams = _build_hparams_from_args(args)
 
