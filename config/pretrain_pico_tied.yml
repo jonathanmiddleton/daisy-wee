@@ -7,7 +7,7 @@ wandb_run_name: 'pico'
 torch.coordinate_descent_tuning: true
 # Pretraining configuration
 train_shards: "data/fineweb-edu/edu_fineweb_val_000000.bin" #attempting overfit on 100000000 tokens
-target_tokens: 9699328000  #4*20*model_params = 96 epochs
+target_tokens: 1048576000  # = 2,000 steps, 10 epochs; note: 4*20*model_params = 2.4B tokens
 cooldown_frac: 0.8
 learning_rate_schedule: linear_decay
 training_sequence_length: 65536        #  N * 1024; must be divisible by window_block_size
