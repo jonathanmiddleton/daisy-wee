@@ -5,9 +5,9 @@ vocab_size: 50257
 num_layers: 6
 num_heads: 4
 head_dim: 64
-model_dim: 256
+model_dim: 768
 window_block_size: 128
 attention_window_len: 128
 max_seq_len: 4096
-value_embeddings: false
+value_embeddings: true
 tied_embeddings: true

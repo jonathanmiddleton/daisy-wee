@@ -20,7 +20,7 @@ from typing import List, Tuple
 from io import TextIOBase
 import platform, sys as _sys
 
-from helpers import is_mac_os
+from tools.helpers import is_mac_os
 
 
 def _timestamp() -> str:
