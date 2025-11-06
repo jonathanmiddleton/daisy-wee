@@ -47,13 +47,13 @@ python data/cached_fineweb100B.py
 ### Train a Model
 Model training requires a CUDA device. (8xA100/H100 with BFloat16 support is recommended.)
 ```bash
-./run.sh config/pretrain_450m.yml -n 8
+./run.sh config/pretrain_420m.yml -n 8
 ```
 
 The `-n` flag specifies the number of GPUs. Any configuration parameter can be overridden on the command line:
 
 ```bash
-./run.sh config/pretrain_450m.yml -n 8 target_tokens=3000000000 learning_rate_schedule=linear_decay
+./run.sh config/pretrain_420m.yml -n 8 target_tokens=3000000000 learning_rate_schedule=linear_decay
 ```
 
 ### Generate Text
@@ -322,7 +322,7 @@ daisy-wee/
 The simplest way to start training is with the `run.sh` wrapper:
 
 ```bash
-./run.sh config/pretrain_450m.yml -n 8
+./run.sh config/pretrain_420m.yml -n 8
 ```
 
 This launches training on 8 GPUs using the 450M model configuration. The script automatically:
@@ -395,7 +395,7 @@ save_checkpoint: true
 #### Pretraining from Scratch
 
 ```bash
-./run.sh config/pretrain_450m.yml -n 8 \
+./run.sh config/pretrain_420m.yml -n 8 \
     target_tokens=8000000000 \
     wandb_log=true \
     wandb_project=my-project \
@@ -423,7 +423,7 @@ The `-p` flag loads model weights from the checkpoint but resets the optimizer a
 #### Adjusting Learning Rates
 
 ```bash
-./run.sh config/pretrain_450m.yml -n 8 \
+./run.sh config/pretrain_420m.yml -n 8 \
     optimizers[0].params[0].lr=0.005 \
     optimizers[1].params[0].lr=0.03
 ```
@@ -433,7 +433,7 @@ The `-p` flag loads model weights from the checkpoint but resets the optimizer a
 By default, attention windows expand progressively during training. To use full windows throughout:
 
 ```bash
-./run.sh config/pretrain_450m.yml -n 8 --full_windows
+./run.sh config/pretrain_420m.yml -n 8 --full_windows
 ```
 
 ### Direct Training (Without Wrapper)
@@ -441,7 +441,7 @@ By default, attention windows expand progressively during training. To use full 
 For more control, invoke `train.py` directly:
 
 ```bash
-torchrun --nproc_per_node=8 train.py config/pretrain_450m.yml target_tokens=8000000000
+torchrun --nproc_per_node=8 train.py config/pretrain_420m.yml target_tokens=8000000000
 ```
 
 ### Multi-Node Training
@@ -499,7 +499,7 @@ This differential learning rate strategy is crucial for training stability and c
 Enable experiment tracking with W&B:
 
 ```bash
-./run.sh config/pretrain_450m.yml -n 8 \
+./run.sh config/pretrain_420m.yml -n 8 \
     wandb_log=true \
     wandb_project=daisy-experiments \
     wandb_run_name=450m-baseline
@@ -543,7 +543,7 @@ Find optimal learning rates for a parameter group:
 
 ```bash
 python -m tools.lr_sweep \
-    --config config/pretrain_450m.yml \
+    --config config/pretrain_420m.yml \
     --group head_params \
     --num_scales 200 \
     --scale_min 0.01 \
