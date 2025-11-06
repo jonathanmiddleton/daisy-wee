@@ -107,7 +107,7 @@ def _stream_subprocess(cmd: List[str], log_fp) -> int:
     ) as p:
         assert p.stdout is not None
         for line in p.stdout:
-            logger.info(line)
+            logger.info(line.rstrip('\n\r'))
             # noinspection PyBroadException
             try:
                 log_fp.write(line)
