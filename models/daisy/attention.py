@@ -81,7 +81,7 @@ class CausalSelfAttention(nn.Module):
         # https://x.com/hi_tysam/status/1879699187107033311
         self.qkvo_w = nn.Parameter(init_linear(torch.empty(4, self.m_dim, self.m_dim)).bfloat16())
         if os.getenv("DISABLE_O_ZERO_INIT", "") != "1":  # 1 for unittests
-            self.qkvo_w.detach()[3].zero_()  # zero-out init suggested by @Grad62304977
+            self.qkvo_w.detach()[3].zero_()
         self.rotary = Rotary(head_dim, max_seq_len)
         # scale the attention logits by given constant, instead of the default head_dim**-0.5, by @leloykun
         # inspired by learnable scalars used by @brendanh0gan https://x.com/hi_tysam/status/1879693583898591283
@@ -117,7 +117,6 @@ class CausalSelfAttention(nn.Module):
         q, k = self.rotary(q), self.rotary(k)
         return q, k, v
 
-    @torch.compile()
     def forward_flex(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, block_mask: BlockMask):
         B, T = x.size(0), x.size(1)
         q_, k_, v_ = self._qkv_common(x, ve, sa_lambdas)
