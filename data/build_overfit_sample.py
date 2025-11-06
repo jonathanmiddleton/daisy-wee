@@ -5,25 +5,24 @@ import os, sys
 from huggingface_hub import hf_hub_download
 
 
-def create_overfit_sample(input_file: str, output_file: str, num_tokens: int = 1_000_000):
+def create_overfit_sample( output_file: str, num_tokens: int = 1_000_000):
     """
     Create a smaller bin file with the specified number of tokens from an existing bin file with the Karpathy quasi-standard file format.
 
     Args:
-        input_file: Path to the input bin file (e.g., "data/fineweb-edu/edu_fineweb_train_000001.bin")
         output_file: Path to the output bin file (e.g., "data/overfit/edu_fineweb_overfit_1M.bin")
         num_tokens: Number of tokens to extract (default: 1M)
     """
-
+    file_name = "edu_fineweb_train_000001.bin"
+    local_dir = os.path.join(os.path.dirname(__file__), 'fineweb-edu-overfit')
     def get(fname):
-        local_dir = os.path.join(os.path.dirname(__file__), 'fineweb-edu-overfit')
         if not os.path.exists(os.path.join(local_dir, fname)):
             hf_hub_download(repo_id="karpathy/fineweb-edu-100B-gpt2-token-shards", filename=fname,
                             repo_type="dataset", local_dir=local_dir)
 
-    get("edu_fineweb_train_000001.bin")
+    get(file_name)
 
-    input_path = Path(input_file)
+    input_path = Path(local_dir) / file_name
     output_path = Path(output_file)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -59,7 +58,6 @@ def create_overfit_sample(input_file: str, output_file: str, num_tokens: int = 1
 
 if __name__ == "__main__":
     create_overfit_sample(
-        input_file="data/fineweb-edu/edu_fineweb_train_000001.bin",
         output_file="data/overfit/edu_fineweb_overfit_1M.bin",
         num_tokens=1_000_000
     )
