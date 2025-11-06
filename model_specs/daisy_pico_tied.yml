@@ -1,4 +1,4 @@
-# ~30M params test model
+# ~120M params test model
 model_class: models.daisy.daisy_core.DaisyCore
 eos_token_id: 50256
 vocab_size: 50257

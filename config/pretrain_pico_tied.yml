@@ -6,7 +6,7 @@ wandb_run_name: 'pico'
 torch.coordinate_descent_tuning: true
 # Pretraining configuration
 train_shards: "data/fineweb-edu/edu_fineweb_val_000000.bin"
-target_tokens: 4055040
+target_tokens: 2424832000  #20xmodel_params
 cooldown_frac: 0.5
 learning_rate_schedule: linear_decay
 training_sequence_length: 65536        #  N * 1024; must be divisible by window_block_size
