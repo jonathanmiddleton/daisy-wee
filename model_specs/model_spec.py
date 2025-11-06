@@ -5,6 +5,7 @@ from typing import Any
 
 import yaml
 
+@dataclass
 class ModelSpec:
     """
     Strict schema for model_specs/*.yml files.
@@ -24,6 +25,19 @@ class ModelSpec:
     value_embeddings: bool = True
     tied_embeddings: bool = False
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ModelSpec":
+        """
+        Construct a ModelSpec from a dict, enforcing the same rules as YAML loading.
+        """
+        if not isinstance(data, dict):
+            raise ValueError("ModelSpec.from_dict expects a dict")
+
+        validated = build_model_dict(dict(data))
+        # Only pass recognized fields (defensive, though build_model_dict already enforces keys)
+        allowed = {f.name for f in dataclass_fields(cls)}
+        kwargs = {k: v for k, v in validated.items() if k in allowed}
+        return cls(**kwargs)
 
 def _strict_keys(obj: dict[str, Any], allowed: set[str], ctx: str) -> None:
     unknown = set(obj) - allowed
@@ -66,43 +80,28 @@ def _as_float(name: str, value: Any, ctx: str, min_value: float | None = None, m
         raise ValueError(f"{ctx}.{name} must be <= {max_value}; got {fv}")
     return fv
 
-def load_model_spec(name_or_path: str) -> dict[str, Any]:
-    """
-    Load a model spec YAML by name (model_specs/<name>.yml) or explicit file path.
-    Enforces a strict schema (no extra keys, required keys present, type/value checks).
-    Returns a dict (to be merged into training config where relevant).
-    """
-    # Resolve path
-    from . import resolve_model_spec_path
-    p = resolve_model_spec_path(name_or_path)
-
-    with open(p, "r") as f:
-        spec = yaml.safe_load(f) or {}
-
-    if not isinstance(spec, dict):
-        raise ValueError(f"Model spec must be a mapping/dict. File: {p}")
-
+def build_model_dict(spec_dict: dict, ctx: str | None) -> dict[str, Any]:
+    ctx = ctx or "model_spec"
     allowed = {f.name for f in dataclass_fields(ModelSpec)}
     required = {f.name for f in dataclass_fields(ModelSpec) if f.default is dataclasses.MISSING}
-    _strict_keys(spec, allowed, f"model_spec:{p.name}")
-    _require_keys(spec, required, f"model_spec:{p.name}")
+    _strict_keys(spec_dict, allowed, f"model_spec:{ctx}")
+    _require_keys(spec_dict, required, f"model_spec:{ctx}")
 
-    # Type and value checks
-    ctx = f"model_spec:{p.name}"
     # ints
     for k in ("vocab_size", "num_layers", "num_heads", "model_dim", "head_dim", "eos_token_id", "window_block_size", "attention_window_len", "max_seq_len"):
-        spec[k] = _as_int(k, spec[k], ctx, min_value=1)
+        spec_dict[k] = _as_int(k, spec_dict[k], ctx, min_value=1)
     # strings
-    if not isinstance(spec["model_class"], str) or not spec["model_class"]:
+    if not isinstance(spec_dict["model_class"], str) or not spec_dict["model_class"]:
         raise ValueError(f"{ctx}.model_class must be a non-empty string")
 
     # Cross-field constraints
-    if spec["attention_window_len"] % spec["window_block_size"] != 0:
-        raise ValueError(f"{ctx}: attention_window_len ({spec['attention_window_len']}) must be divisible by window_block_size ({spec['window_block_size']})")
-    if spec["max_seq_len"] < spec["attention_window_len"]:
-        raise ValueError(f"{ctx}: max_seq_len ({spec['max_seq_len']}) must be >= attention_window_len ({spec['attention_window_len']})")
+    if spec_dict["attention_window_len"] % spec_dict["window_block_size"] != 0:
+        raise ValueError(f"{ctx}: attention_window_len ({spec_dict['attention_window_len']}) must be divisible by window_block_size ({spec_dict['window_block_size']})")
+    if spec_dict["max_seq_len"] < spec_dict["attention_window_len"]:
+        raise ValueError(f"{ctx}: max_seq_len ({spec_dict['max_seq_len']}) must be >= attention_window_len ({spec_dict['attention_window_len']})")
 
-    return spec
+    return spec_dict
+
 
 def _validate_optimizers_schema(cfg_list: Any, ctx: str = "optimizers") -> list[dict[str, Any]]:
     if not isinstance(cfg_list, list) or not cfg_list:

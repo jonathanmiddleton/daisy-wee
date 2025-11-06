@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from typing import Any, Dict
-from .model_spec import ModelSpec
+from .model_spec import ModelSpec, build_model_dict
 
 import yaml
 
@@ -48,8 +48,13 @@ def resolve_model_spec_path(name_or_path: str) -> Path:
         f"Model spec '{name_or_path}' not found under {base} or as a file path"
     )
 
+def override_model_spec(spec:ModelSpec, overrides: dict):
+    for k,v in overrides.items():
+        if hasattr(spec,k):
+            setattr(spec,k,v)
+    return spec
 
-def load_model_spec(name_or_path: str) -> ModelSpec:
+def load_model_spec(name_or_path: str, overrides: dict | None = None) -> ModelSpec:
     """
     Load and parse a model spec YAML into a ModelSpec dataclass.
     Raises FileNotFoundError if the spec cannot be resolved.
@@ -60,7 +65,10 @@ def load_model_spec(name_or_path: str) -> ModelSpec:
     if not isinstance(data, dict):
         raise ValueError(f"Model spec '{name_or_path}' must be a mapping, got {type(data).__name__}")
     # Construct a ModelSpec (this will raise if required fields are missing or unknown keys are present)
-    return ModelSpec(**data)
+    spec_dict = build_model_dict(data, ctx=str(name_or_path))
+    spec = ModelSpec(**spec_dict)
+    spec = override_model_spec(spec, overrides) if overrides else spec
+    return spec
 
 
 __all__ = [

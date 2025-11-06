@@ -4,7 +4,8 @@ from typing import Any, Dict, Type
 from importlib import import_module
 from dataclasses import is_dataclass, asdict as dc_asdict, fields as dc_fields, asdict
 from torch import nn
-from model_specs import load_model_spec, ModelSpec
+from model_specs import load_model_spec, ModelSpec, override_model_spec
+
 
 def _coerce_module_path(path: str):
     if path == "models.gpt2.gpt_core":
@@ -31,11 +32,7 @@ def get_model_class(model_class: str) -> Type[nn.Module]:
         raise ImportError(f"Class '{cls_name}' not found in module '{module_path}' for model_class '{model_class}'")
     return cls
 
-def override_model_spec(spec:ModelSpec, overrides:dict):
-    for k,v in overrides.items():
-        if hasattr(spec,k):
-            setattr(spec,k,v)
-    return spec
+
 
 def model_from_spec(spec_or_cfg: str | dict | ModelSpec | Any, device: str, overrides: dict = None) -> nn.Module:
     # Normalize to ModelSpec for validation of architecture fields
