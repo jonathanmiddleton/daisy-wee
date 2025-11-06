@@ -233,7 +233,9 @@ class Generator:
             k_ctxs.append(kc); v_ctxs.append(vc)
         logits, k_new, v_new = self.model.step(token, k_ctxs, v_ctxs, self.cache.t, self.window)
         logits = logits.to(self.dtype)
-        k_new, v_new = [x.to(self.dtype) for x in k_new], [x.to(self.dtype) for x in v_new]
+        # some layers may not have attention but we can assume the first layer does
+        k_new = [x.to(self.dtype) if x is not None else torch.zeros_like(k_new[0]) for x in k_new]
+        v_new = [x.to(self.dtype) if x is not None else torch.zeros_like(v_new[0]) for x in v_new]
         logits = logits[..., :self.vocab_size]
         for i in range(len(self.model.blocks)):
             assert(k_new[i] is not None); assert(v_new[i] is not None)

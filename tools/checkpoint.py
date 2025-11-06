@@ -129,6 +129,6 @@ def model_from_checkpoint(path: str, device: torch.device | str) -> tuple[Module
     hparams = ckpt.hparams
 
     model = model_from_spec(hparams, device=device)
-    apply_model_state(model, state_dict, strict=True, assign=True)
+    apply_model_state(model, state_dict, strict=False, assign=True)
 
     return model, hparams

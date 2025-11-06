@@ -126,45 +126,35 @@ class CausalSelfAttention(nn.Module):
         return y
 
     def forward_sdpa(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, attn_mask: torch.Tensor):
+        y, _, _, _ = self._sdpa_common(x, ve, sa_lambdas, attn_mask)
+        return y
+
+    def prefill(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, attn_mask: torch.Tensor, debug: bool = False):
+        y, k, v, q = self._sdpa_common(x, ve, sa_lambdas, attn_mask)
+
+        if debug:
+            self.last_q = q
+            self.last_k = k
+        return y, k.transpose(1, 2), v.transpose(1, 2)
+
+    def _sdpa_common(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, attn_mask: torch.Tensor):
         B, T = x.size(0), x.size(1)
         q, k, v = self.calc_qkv(x)
-        dtype  = q.dtype
+        dtype = q.dtype
 
-        sa_lambdas = sa_lambdas.to(dtype=dtype)
-        ve = ve.to(dtype=dtype)
+        sa_lambdas = sa_lambdas.to(dtype)
+        ve = ve.to(dtype)
         v = sa_lambdas[0] * v + sa_lambdas[1] * ve.view_as(v)
 
         q_ = q.transpose(1, 2)
         k_ = k.transpose(1, 2)
         v_ = v.transpose(1, 2)
 
-        attn_mask = attn_mask.to(dtype=dtype)
-        y = torch.nn.functional.scaled_dot_product_attention(
-            q_, k_, v_, scale=self.attn_scale, attn_mask=attn_mask
-        )
-
-        y = y.transpose(1, 2).contiguous().view(B, T, self.m_dim)
-        y = torch.nn.functional.linear(y, self.qkvo_w[3])
-        return y
-
-    def prefill(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, attn_mask: torch.Tensor, debug: bool = False):
-        B, T = x.size(0), x.size(1)
-        q, k, v = self.calc_qkv(x)
-        dtype = q.dtype
-
-        ve = ve.to(dtype).view(B, T, self.num_heads, self.head_dim)
-        sa_lambdas = sa_lambdas.to(dtype)
-        v = sa_lambdas[0] * v + sa_lambdas[1] * ve
-
         attn_mask = attn_mask.to(dtype)
-        y = torch.nn.functional.scaled_dot_product_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), attn_mask=attn_mask, scale=self.attn_scale)
+        y = torch.nn.functional.scaled_dot_product_attention(q_, k_, v_, attn_mask=attn_mask, scale=self.attn_scale)
         y = y.transpose(1, 2).contiguous().view(B, T, self.m_dim)
         y = torch.nn.functional.linear(y, self.qkvo_w[3])
-
-        if debug:
-            self.last_q = q
-            self.last_k = k
-        return y, k.transpose(1, 2), v.transpose(1, 2)
+        return y, k, v, q
 
     def step(self, x, k_ctx: Tensor, v_ctx: Tensor, pos: int, ve: Tensor, sa_lambdas: Tensor, window: int):
         B, T = x.size(0), 1
