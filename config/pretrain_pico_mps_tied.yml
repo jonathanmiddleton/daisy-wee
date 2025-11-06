@@ -5,7 +5,7 @@ wandb_run_name: 'pico_tied'
 # Torch config
 torch.coordinate_descent_tuning: true
 # Pretraining configuration
-train_shards: "data/fineweb-edu/edu_fineweb_val_000000.bin"
+train_shards: "data/overfit/edu_fineweb_overfit_1M.bin"
 target_tokens: 200000000
 cooldown_frac: 0.2
 learning_rate_schedule: linear_decay
@@ -36,7 +36,7 @@ grad_acc_steps: 8
 # Evaluations
 val_shards:
   - type: "fineweb-edu"
-    path: "data/fineweb-edu/edu_fineweb_val_000000.bin"
+    path: "data/overfit/edu_fineweb_overfit_1M.bin"
 val_loss_every_tokens:     3276800
 val_seq_len: 4096
 tot_val_tokens: 4096

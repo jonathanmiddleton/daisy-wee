@@ -1,12 +1,12 @@
-# test config, attempts overfit on 100000000 tokens
+# overfit test config, attempts overfit on 100000000 tokens. takes about 3.5min
 # config assumes 8xh100; for different CUDA devices/counts try adjusting token volumes/grad_acc_steps proportionally
 wandb_log: true
 wandb_project: 'daisy-wee'
-wandb_run_name: 'pico'
+wandb_run_name: 'pico_tied_overfit'
 # Torch config
 torch.coordinate_descent_tuning: true
 # Pretraining configuration
-train_shards: "data/fineweb-edu/edu_fineweb_val_000000.bin" #attempting overfit on 100000000 tokens
+train_shards: "data/overfit/edu_fineweb_overfit_1M.bin" #attempting overfit on 100000000 tokens
 target_tokens: 1048576000  # = 2,000 steps, 10 epochs; note: 4*20*model_params = 2.4B tokens
 cooldown_frac: 0.8
 learning_rate_schedule: constant_with_cosine_decay
@@ -36,10 +36,10 @@ grad_acc_steps: 1
 # Evaluations
 val_shards:
   - type: "fineweb-edu"
-    path: "data/fineweb-edu/edu_fineweb_val_000000.bin"
-val_loss_every_tokens:     104857600  #200 steps
+    path: "data/overfit/edu_fineweb_overfit_1M.bin"
+val_loss_every_tokens:     104857600  # 200 steps
 val_seq_len: 65536       # 4 * 8192
-tot_val_tokens: 10485760
+tot_val_tokens: 1048576 # 2 steps, slightly more than one epoch so it's divisible by global batch size
 # Checkpoints
 checkpoint_warmup_tokens:     209715200           # token warmup before checkpoints
 checkpoint_per_n_tokens:      52428800           # checkpoint interval by tokens
