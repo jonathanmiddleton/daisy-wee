@@ -2,7 +2,9 @@ import itertools
 
 import torch
 from pathlib import Path
-import numpy as np
+from tools.master_logger import MasterLogger
+
+logger = MasterLogger
 
 def _load_data_shard(file: Path):
     header = torch.from_file(str(file), False, 256, dtype=torch.int32, device='cpu') # header is 256 int32
@@ -64,7 +66,7 @@ class DistributedDataGenerator:
 
     def __next__(self):
         if self._pos + self.batch_size + 1 >= len(self._tokens):
-            print(f"Current file: {self._current_file}")
+            logger.debug(f"Current file: {self._current_file}")
             self._current_file = next(self._file_iter)
             self._tokens = _load_data_shard(self._current_file)
             self._pos = 0
