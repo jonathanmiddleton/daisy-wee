@@ -19,8 +19,6 @@ optimizers:
     weight_decay: 0.0
     fused: true
     params:
-      - group: head_params
-        lr: 0.004
       - group: embed_params
         lr: 0.2
       - group: scalar_params
