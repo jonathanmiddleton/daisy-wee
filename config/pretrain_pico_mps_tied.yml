@@ -1,12 +1,12 @@
-# test config, attempts overfit on 100000000 tokens
-wandb_log: true
+# test config, attempts overfit
+wandb_log: false
 wandb_project: 'daisy-wee'
-wandb_run_name: 'pico_tied'
+wandb_run_name: 'pico_tied_overfit'
 # Torch config
 torch.coordinate_descent_tuning: false
 # Pretraining configuration
 train_shards: "data/overfit/edu_fineweb_overfit_1M.bin"
-target_tokens: 10_485_760
+target_tokens: 20_971_520
 cooldown_frac: 0.0
 learning_rate_schedule: linear_decay
 training_sequence_length: 8192        #  N * 1024; must be divisible by window_block_size
@@ -20,15 +20,15 @@ optimizers:
     fused: true
     params:
       - group: embed_params
-        lr: 0.003
-      - group: scalar_params
         lr: 0.002
+      - group: scalar_params
+        lr: 0.0015
   - type: Muon
     momentum: 0.95
     weight_decay: 0.0
     params:
       - group: hidden_matrix_params
-        lr: 0.025
+        lr: 0.02
 full_windows: false
 # Gradient accumulation
 grad_acc_steps: 16

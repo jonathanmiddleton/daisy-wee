@@ -7,8 +7,8 @@ num_heads: 4
 head_dim: 64
 model_dim: 256
 window_block_size: 128
-attention_window_len: 4096
-max_seq_len: 4096
+attention_window_len: 8192
+max_seq_len: 8192
 value_embeddings: true
 tied_embeddings: false
 

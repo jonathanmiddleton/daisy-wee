@@ -1,6 +1,6 @@
 # overfit test config, attempts overfit on 100000000 tokens. ~= few seconds (train), 30 seconds (device setup/compile)
 # config assumes 8xh100; for different CUDA devices/counts try adjusting token volumes/grad_acc_steps proportionally
-wandb_log: true
+wandb_log: false
 wandb_project: 'pico_tied_overfit_batch'
 wandb_run_name: 'pico_tied_overfit'
 # Torch config
