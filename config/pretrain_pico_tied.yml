@@ -8,8 +8,8 @@ torch.coordinate_descent_tuning: false
 # Pretraining configuration
 train_shards: "data/overfit/edu_fineweb_overfit_1M.bin" #attempting overfit on 100000000 tokens
 target_tokens: 10_485_760  # = 20 steps, 10 epochs; note: 4*20*model_params = 2.4B tokens
-cooldown_frac: 0.6
-learning_rate_schedule: cosine_decay
+cooldown_frac: 0.0
+learning_rate_schedule: linear_decay
 training_sequence_length: 65536        #  N * 1024; must be divisible by window_block_size
 train_attention_window_len: 1024        # largest sliding attention window used during training; must be divisible by window_block_size
 # Optimizers configuration
@@ -21,7 +21,7 @@ optimizers:
     fused: true
     params:
       - group: embed_params
-        lr: 0.002
+        lr: 0.02
       - group: scalar_params
         lr: 0.015
   - type: Muon
