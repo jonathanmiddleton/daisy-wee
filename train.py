@@ -70,7 +70,8 @@ def maybe_compile(model: nn.Module, dynamic: bool = False) -> nn.Module:
         logger.info(f"Compiling disabled: TORCH_COMPILE_OFF={TORCH_COMPILE_OFF}")
         return model
     else:
-        logger.info(f"Compiling model (dynamic={dynamic}). This may take several minutes...")
+        logger.info(f"Compiling model (dynamic={dynamic}). This may take several minutes.")
+        logger.info("Note: on CUDA you may see a torch internal warning (per-device) about the use of a deprecated API. This is normal and can be ignored.")
         model: nn.Module = torch.compile(model, dynamic=dynamic)
         return model
 
