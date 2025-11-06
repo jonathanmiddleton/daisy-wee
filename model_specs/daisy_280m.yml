@@ -9,3 +9,4 @@ window_block_size: 128
 attention_window_len: 1792
 max_seq_len: 65536
 value_embeddings: true
+tied_embeddings: false
