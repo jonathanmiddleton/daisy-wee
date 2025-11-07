@@ -8,7 +8,7 @@ torch.coordinate_descent_tuning: true
 init_checkpoint: ""
 # Instruct SFT training configuration
 train_shards: "data/fineweb/fineweb_train_*.bin"
-target_tokens: 4000000000
+target_tokens: 4_000_000_000
 cooldown_frac: 0.7
 learning_rate_schedule: linear_decay
 training_sequence_length: 65536        #  N * 1024; must be divisible by window_block_size

@@ -1,7 +1,7 @@
 # Logging
 wandb_log: true
-wandb_project: 'daisy-wee'
-wandb_run_name: '420m-instruct'
+wandb_project: 'daisy-470m-instruct'
+wandb_run_name: '470m-instruct'
 # Torch config
 torch.coordinate_descent_tuning: false
 # Pretraining checkpoint path
@@ -22,17 +22,17 @@ optimizers:
     fused: true
     params:
       - group: head_params
-        lr: .00006928
+        lr: 6.928e-5
       - group: embed_params
-        lr: .003464
+        lr: 3.464e-5
       - group: scalar_params
-        lr: .0002598
+        lr: 2.598e-4
   - type: Muon
     momentum: .95
     weight_decay: 0.0
     params:
       - group: hidden_matrix_params
-        lr: .0004
+        lr: 4e-4
 full_windows: true
 # Gradient accumulation
 grad_acc_steps: 1 # assumes world_size=8
@@ -50,4 +50,4 @@ checkpoint_warmup_tokens:     162201600     # token warmup before checkpoints
 checkpoint_per_n_tokens:     1         # checkpoint interval by tokens
 save_checkpoint: true
 # Model Definition
-model_spec: daisy_420m
+model_spec: daisy_470m
