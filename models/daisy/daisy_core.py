@@ -1,6 +1,6 @@
 import os
 from functools import lru_cache
-from math import floor, log2
+from math import floor, log2, ceil
 from typing import Any
 
 import torch
@@ -52,11 +52,67 @@ class ZeroEmbedding(nn.Module):
         return self
 
 
+def pick_value_embedding_layers(attn_layers, M=None):
+    K = len(attn_layers)
+    if K == 0:
+        return []
+    if K == 1:
+        return attn_layers[:]  # trivial case
+
+    if M is None:
+        M = min(K, max(4, min(10, round(0.6 * K))))
+
+    if M >= K:
+        return attn_layers[:]
+
+    idx = [int(round(i * (K - 1) / (M - 1))) for i in range(M)]
+    return [attn_layers[i] for i in sorted(set(idx))]
+
+
+def pick_attention_layers(total_layers, d_model=None, num_heads=None):
+    """
+    Sparse Attention Layer Selection
+
+    For non-degenerate cases:
+    - L: total number of layers (int >= 1)
+    - d_model: model width (optional)
+    - n_heads: number of attention heads (optional; constant across attention layers)
+    - d_head: per-head width; if d_model and n_heads are provided, d_head = d_model / n_heads; otherwise d_head = 64
+
+    1) Choose stride s (maximum gap between attention layers) from d_head:
+       s = clip(round(8 * sqrt(d_head / 64)), 4, 12)
+       Interpretation: if d_head = 64 then s ≈ 8. Wider heads allow slightly larger s,
+       but s is always clamped to [4, 12].
+
+    2) Target count K of attention layers:
+       K = min(L, max(ceil(L / s), 2 + ceil(log2(L))))
+       This ensures at least logarithmically many attention layers and bounds the
+       maximum gap between attention layers.
+
+    3) Index placement: pick K indices uniformly on [0, L-1] (inclusive), then deduplicate and sort:
+       for i in {0, 1, ..., K-1}:
+           idx_i = round(i * (L - 1) / (K - 1))
+       By construction, idx_0 = 0 and idx_{K-1} = L - 1.
+    """
+    if total_layers <= 0: return []
+    if total_layers == 1: return [0]
+    if total_layers == 2: return [0, 1]
+    if total_layers == 3: return [0, 2]
+    if total_layers == 4: return [0, 1, 3]
+    if total_layers == 5: return [0, 2, 4]
+    if total_layers == 6: return [0, 1, 3, 5]
+    d_head = (d_model // num_heads) if (d_model and num_heads) else 64
+    s = max(4, min(12, round(8 * (d_head / 64) ** 0.5)))
+    K = min(total_layers, max(ceil(total_layers / s), ceil(2 + log2(total_layers))))
+    idx = [int(round(i * (total_layers - 1) / (K - 1))) for i in range(K)]
+    return sorted(set(idx))
+
+
 class DaisyCore(nn.Module):
     def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int,
                  head_dim: int, window_size: int = 1024,
                  window_block_size: int = 128, eos_token_id: int | None = None, desc: dict | None = None,
-                 value_embeddings: bool = True, tied_embeddings: bool = False, sparse_attention: bool = False):
+                 value_embeddings: bool = True, tied_embeddings: bool = False):
         super().__init__()
         if eos_token_id is None:
             raise ValueError("eos_token_id is required.")
@@ -83,15 +139,19 @@ class DaisyCore(nn.Module):
         self.skip_map = _get_skip_map(num_layers)
         self.eos_token_id = int(eos_token_id)
         self.embed = nn.Embedding(vocab_size, model_dim)
-        num_ve = 3 if value_embeddings else 0
-        self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(num_ve)])
+        self.attn_layers = pick_attention_layers(num_layers)
+        self.ve_layers = pick_value_embedding_layers(self.attn_layers)
         self.zero_embedding = ZeroEmbedding(end_dim=self.embed.weight.size(1), device=self.embed.weight.device,
                                             dtype=self.embed.weight.dtype)
+        self.value_embeds = nn.ModuleList([
+            nn.Embedding(vocab_size, model_dim) if i in self.ve_layers else self.zero_embedding for i in range(num_layers)
+        ])
+        # self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(len(self.ve_layers))])
+
         self.blocks = nn.ModuleList(
-            [Block(model_dim, num_heads, max_seq_len, i, head_dim, num_layers, sparse_attention) for i in range(num_layers)])
+            [Block(model_dim, num_heads, max_seq_len, i, head_dim, i in self.attn_layers) for i in range(num_layers)])
         if tied_embeddings:
             nn.init.normal_(self.embed.weight, mean=0.0, std=0.02)
-            # nn.init.uniform_(self.embed.weight, a=-0.01, b=0.01)
             self.lm_head_w = self.embed.weight
         else:
             if os.getenv("DISABLE_O_ZERO_INIT", "") != "1":
@@ -164,9 +224,7 @@ class DaisyCore(nn.Module):
         return block_masks
 
     def compute_value_embeddings(self, input_seq: Tensor) -> list[Tensor]:
-        L = len(self.blocks)
         ve = [value_embed(input_seq) for value_embed in self.value_embeds]
-        ve = ve + [self.zero_embedding(input_seq)] * (L - (2 * len(ve))) + ve
         return ve
 
     def forward(self, input_seq: Tensor, sliding_window_num_blocks: Tensor, target_seq: Tensor = None):
