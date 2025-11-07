@@ -414,7 +414,9 @@ while progress.tokens_processed < progress.target_tokens:
     # set optimization hyperparameters based on s
     s = progress.s
     # Compute LR scale by selected schedule via dispatch in training.optim
-    lr_scale = get_lr_scale(args.learning_rate_schedule, s, args.cooldown_frac)
+    lr_scale_base = get_lr_scale(args.learning_rate_schedule, s, args.cooldown_frac)
+    # Apply optional learning rate floor (as a fraction of the initial LR)
+    lr_scale = max(lr_scale_base, float(getattr(args, "learning_rate_floor", 0.0)))
 
     for opt in optimizers:
         if isinstance(opt, Muon):
@@ -446,13 +448,15 @@ while progress.tokens_processed < progress.target_tokens:
         warmup_end = approx_training_time_ms
     avg_step = f"avg_step:{(approx_training_time_ms - warmup_end) / max(step - 9, 1):.2f}ms" if step >= 10 else "avg_step: (warmup to step 10)"
     logger.info(
-        f"step:{step} train_loss:{train_loss_est:.4f} tokens:{progress.tokens_processed:,}/{progress.target_tokens:,} (s={progress.s:.4f}) train_time:{approx_training_time_ms:,.0f}ms {avg_step} lr_scale:{lr_scale:.4f}")
+        f"step:{step} train_loss:{train_loss_est:.4f} tokens:{progress.tokens_processed:,}/{progress.target_tokens:,} (s={progress.s:.4f}) train_time:{approx_training_time_ms:,.0f}ms {avg_step} lr_scale:{lr_scale:.4f} (base:{lr_scale_base:.4f} floor:{float(getattr(args, 'learning_rate_floor', 0.0)):.4f})")
     log_wandb({
                 "train/loss": train_loss_est,
                 "train/ppl": math.exp(train_loss_est) if train_loss_est < 20 else float("inf"),
                 "tokens": progress.tokens_processed,
                 "s": progress.s,
                 "lr_scale": lr_scale,
+                "lr_scale_base": lr_scale_base,
+                "learning_rate_floor": float(getattr(args, "learning_rate_floor", 0.0)),
                 "train/time_ms": approx_training_time_ms,})
 
 # End of training: save final checkpoint

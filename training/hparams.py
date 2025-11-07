@@ -52,6 +52,8 @@ class Hyperparameters:
     wandb_log: bool = False
     wandb_project: str = ""
     wandb_run_name: str = ""
+    # Optional minimum LR as a fraction of the initial LR (0..1). When 0.5, LR won't go below 50% of initial.
+    learning_rate_floor: float = 0.0
     init_checkpoint: str | None = None
     value_embeddings: bool = True
     tied_embeddings: bool = False
@@ -161,6 +163,13 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
         raise ValueError(f"grad_acc_steps must be >= 1, got {gas}")
     if not (0.0 <= cdf <= 1.0):
         raise ValueError(f"cooldown_frac must be in [0,1], got {cdf}")
+    # Optional: learning rate floor in [0,1]
+    try:
+        lrf = float(args.learning_rate_floor)
+    except Exception as e:
+        raise ValueError(f"learning_rate_floor must be a number in [0,1], got {args.learning_rate_floor}")
+    if not (0.0 <= lrf <= 1.0):
+        raise ValueError(f"learning_rate_floor must be in [0,1], got {lrf}")
     if vlet < 0:
         raise ValueError(f"val_loss_every_tokens must be >= 0, got {vlet}")
     if spnt < 0:

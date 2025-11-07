@@ -322,7 +322,11 @@ class AdaptiveLR:
         tau, rho1, dnr = self._update_stats(loss, delta)
         self._maybe_adapt(tau, rho1, dnr, delta)
         base = self._lr_scale_base(s, cooldown_frac, self.cosine_frac)
-        return base * self.m
+        scale = base * self.m
+        # Apply optional floor to the scale (fraction of initial LR)
+        if scale < self.lr_floor:
+            scale = self.lr_floor
+        return scale
 
 
 def get_linear_decay_lr_s(s: float, cooldown_frac: float) -> float:
