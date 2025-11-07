@@ -1,4 +1,9 @@
-fineweb10B/
+fineweb/
+fineweb-edu/
+fineweb-edu-overfit/
+instruct_tasks/
+overfit/
 pylog124M/
 __pycache__/
 logs/
+tmp/
