@@ -163,12 +163,17 @@ class DaisyCore(nn.Module):
         block_masks = (cycle * ((L + 3) // 4))[:L - 1] + [long_bm]
         return block_masks
 
+    def compute_value_embeddings(self, input_seq: Tensor) -> list[Tensor]:
+        L = len(self.blocks)
+        ve = [value_embed(input_seq) for value_embed in self.value_embeds]
+        ve = ve + [self.zero_embedding(input_seq)] * (L - (2 * len(ve))) + ve
+        return ve
+
     def forward(self, input_seq: Tensor, sliding_window_num_blocks: Tensor, target_seq: Tensor = None):
         assert input_seq.ndim == 1
         L = len(self.blocks)
 
-        ve = [value_embed(input_seq) for value_embed in self.value_embeds]
-        ve = ve + [self.zero_embedding(input_seq)] * (L - (2 * len(ve))) + ve
+        ve = self.compute_value_embeddings(input_seq)
 
         x = x0 = norm(self.embed(input_seq)[None])
 
@@ -210,13 +215,7 @@ class DaisyCore(nn.Module):
         x0 = norm(self.embed(token_id))
         L = len(self.blocks)
 
-        if self.value_embeds is None:
-            ve = [self.zero_embedding(token_id)] * L
-        else:
-            ve0 = self.value_embeds[0](token_id)
-            ve1 = self.value_embeds[1](token_id)
-            ve2 = self.value_embeds[2](token_id)
-            ve = [ve0, ve1, ve2] + [self.zero_embedding(token_id)] * (L - 6) + [ve0, ve1, ve2]
+        ve = self.compute_value_embeddings(token_id)
 
         skip_map = self.skip_map
         scalars = self.scalars
@@ -255,11 +254,7 @@ class DaisyCore(nn.Module):
         x = norm(self.embed(input_seq))
         x0 = x
 
-        if self.value_embeds is not None:
-            ve = [value_embed(input_seq) for value_embed in self.value_embeds]
-            ve = [ve[0], ve[1], ve[2]] + [self.zero_embedding(input_seq)] * (L - 6) + [ve[0], ve[1], ve[2]]
-        else:
-            ve = [self.zero_embedding(input_seq)] * L
+        ve = self.compute_value_embeddings(input_seq)
 
         skip_map = self.skip_map
         skip_weights = self.scalars[:L]
