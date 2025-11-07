@@ -1,16 +1,16 @@
-# ~2MM param test config
+# test config, attempts overfit
 wandb_log: true
 wandb_project: 'daisy'
-wandb_run_name: 'pico'
+wandb_run_name: 'pico-overfit-cuda'
 # Torch config
 torch.coordinate_descent_tuning: true
 # Pretraining configuration
-train_shards: "data/fineweb-edu/edu_fineweb_val_000000.bin"
-target_tokens: 40550400
-cooldown_frac: 0.2
+train_shards: "data/overfit/edu_fineweb_overfit_1M.bin"
+target_tokens: 20_971_520
+cooldown_frac: 0.0
 learning_rate_schedule: linear_decay
-training_sequence_length: 16384        #  N * 1024; must be divisible by window_block_size
-train_attention_window_len: 1024        # largest sliding attention window used during training; must be divisible by window_block_size
+training_sequence_length: 65536        #  N * 1024; must be divisible by window_block_size
+train_attention_window_len: 3456        # largest sliding attention window used during training; must be divisible by window_block_size
 # Optimizers configuration
 optimizers:
   - type: AdamW
@@ -25,7 +25,6 @@ optimizers:
         lr: 0.2
       - group: scalar_params
         lr: 0.015
-
   - type: Muon
     momentum: 0.95
     weight_decay: 0.0
@@ -34,17 +33,17 @@ optimizers:
         lr: 0.02
 full_windows: false
 # Gradient accumulation
-grad_acc_steps: 4
-# Evaluations
+grad_acc_steps: 1
+# NOTE: we don't care about val loss since we're overfitting on the training data
 val_shards:
-  - type: "fineweb-edu"
-    path: "data/fineweb-edu/edu_fineweb_val_000000.bin"
-val_loss_every_tokens:     1310720
-val_seq_len: 16384       # 4 * 8192
-tot_val_tokens: 65536
+  - type: "fineweb-edu-overfit"
+    path: "data/overfit/edu_fineweb_overfit_1M.bin"
+val_loss_every_tokens: 999_999_999_999
+val_seq_len: 1
+tot_val_tokens: 1
 # Checkpoints
 checkpoint_warmup_tokens:     1           # token warmup before checkpoints
 checkpoint_per_n_tokens:      1           # checkpoint interval by tokens
-save_checkpoint: true
+save_checkpoint: false
 # Model Definition
-model_spec: daisy_pico
+model_spec: daisy_pico_256
