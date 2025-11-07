@@ -394,14 +394,14 @@ while progress.tokens_processed < progress.target_tokens:
     for micro_step in range(ga_steps):
         inputs, targets = next(_train_ddg)
         n_blocks = get_num_window_blocks(progress.s, attention_window_len=args.train_attention_window_len, window_block_size=args.window_block_size).to(device.type)
+        logger.debug(f"Pre-autocast: inputs.shape={inputs.shape} inputs.device.type={inputs.device.type} targets.shape={targets.shape} targets.device.type={targets.device.type} n_blocks={n_blocks}")
         with torch.autocast(device.type, dtype=torch.bfloat16):
-            logger.debug(f"inputs.shape={inputs.shape} inputs.device.type={inputs.device.type} targets.shape={targets.shape} targets.device.type={targets.device.type} n_blocks={n_blocks}")
             loss = model(inputs, n_blocks, targets)
             # scale loss so that gradients are averaged across micro-steps
-            loss_to_backward = loss / ga_steps
-            if use_distributed:
-                model.require_backward_grad_sync = (micro_step == ga_steps - 1) # no_sync()
-            loss_to_backward.backward()
+        loss_to_backward = loss / ga_steps
+        if use_distributed:
+            model.require_backward_grad_sync = (micro_step == ga_steps - 1) # no_sync()
+        loss_to_backward.backward()
         total_train_loss += float(loss.item())
 
     # collect the futures for all the optimizers (do distributed grad average once after accumulation)

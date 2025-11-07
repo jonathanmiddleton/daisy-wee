@@ -5,6 +5,7 @@ from typing import Optional, Dict
 import torch
 import torch.distributed as dist
 from torch import nn
+from torch.accelerator import device_index
 
 from data.data_gen_stream import DistributedDataGenerator
 from training.optim import get_num_window_blocks
@@ -97,7 +98,8 @@ class Evaluator:
                 if n_tg != cut:
                     targets = targets[:cut]
                 # Match training eval: use window schedule with s=1.0 (full windows) for stability
-                loss_acc = loss_acc + model(inputs, get_num_window_blocks(1.0, attention_window_len=self._tawt, window_block_size=self._wbs), targets)
+                with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+                    loss_acc = loss_acc + model(inputs, get_num_window_blocks(1.0, attention_window_len=self._tawt, window_block_size=self._wbs), targets)
             loss_acc = loss_acc / steps
 
             if self._use_dist:
