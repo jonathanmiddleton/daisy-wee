@@ -140,7 +140,7 @@ class DaisyCore(nn.Module):
         self.eos_token_id = int(eos_token_id)
         self.embed = nn.Embedding(vocab_size, model_dim)
         self.attn_layers = pick_attention_layers(num_layers)
-        self.ve_layers = pick_value_embedding_layers(self.attn_layers)
+        self.ve_layers = pick_value_embedding_layers(self.attn_layers) if value_embeddings else []
         self.zero_embedding = ZeroEmbedding(end_dim=self.embed.weight.size(1), device=self.embed.weight.device,
                                             dtype=self.embed.weight.dtype)
         self.value_embeds = nn.ModuleList([
