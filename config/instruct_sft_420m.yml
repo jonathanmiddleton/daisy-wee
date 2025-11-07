@@ -1,11 +1,11 @@
 # Logging
 wandb_log: true
 wandb_project: 'daisy-wee'
-wandb_run_name: '450m-instruct'
+wandb_run_name: '420m-instruct'
 # Torch config
 torch.coordinate_descent_tuning: false
 # Pretraining checkpoint path
-init_checkpoint: "checkpoints/20251020T1936-val2.670-step013000-run1-best.pt"
+init_checkpoint: "checkpoints/20251106T2345-val2.710-step019074-run1-final.pt"
 # Instruct SFT training configuration
 train_shards: "data/instruct_mix/instruct_train_*.bin"
 target_tokens: 6055526400
@@ -50,4 +50,4 @@ checkpoint_warmup_tokens:     162201600     # token warmup before checkpoints
 checkpoint_per_n_tokens:     1         # checkpoint interval by tokens
 save_checkpoint: true
 # Model Definition
-model_spec: daisy_450m
+model_spec: daisy_420m

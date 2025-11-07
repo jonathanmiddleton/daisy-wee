@@ -48,10 +48,13 @@ def pick_attention_layers(total_layers, d_model=None, num_heads=None):
 
 
 class Block(nn.Module):
-    def __init__(self, dim: int, num_heads: int, max_seq_len: int, layer_idx: int, head_dim: int, total_layers: int):
+    def __init__(self, dim: int, num_heads: int, max_seq_len: int, layer_idx: int, head_dim: int, total_layers: int, sparse_attention: bool = False):
         super().__init__()
 
-        attn_layers = pick_attention_layers(total_layers=total_layers, d_model=dim, num_heads=num_heads)
+        if sparse_attention:
+            attn_layers = pick_attention_layers(total_layers=total_layers, d_model=dim, num_heads=num_heads)
+        else:
+            attn_layers = [i for i in range(total_layers)]
         self.attn: CausalSelfAttention = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim,
                                                              use_flex_attn=is_flex_available()) if layer_idx in attn_layers else None
         self.mlp = MLP(dim)

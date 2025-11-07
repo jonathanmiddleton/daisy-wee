@@ -24,6 +24,7 @@ class ModelSpec:
     max_seq_len: int  # maximum context size supported by the model
     value_embeddings: bool = True
     tied_embeddings: bool = False
+    sparse_attention: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ModelSpec":
