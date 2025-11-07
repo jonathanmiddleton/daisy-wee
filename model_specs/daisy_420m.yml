@@ -1,4 +1,3 @@
-
 model_class: models.daisy.daisy_core.DaisyCore
 eos_token_id: 50256
 vocab_size: 50257
