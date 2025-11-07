@@ -12,7 +12,7 @@ target_tokens: 6055526400
 cooldown_frac: 0.999
 learning_rate_schedule: linear_decay
 training_sequence_length: 65536        #  N * 1024; must be divisible by window_block_size
-train_attention_window_len: 3456        # largest sliding attention window used during training; must be divisible by window_block_size
+train_attention_window_len: 2304        # largest sliding attention window used during training; must be divisible by window_block_size
 # Optimizers configuration
 optimizers:
   - type: AdamW
