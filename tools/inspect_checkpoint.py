@@ -15,7 +15,7 @@ from tools.model_report import build_report, format_report_text
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Inspect a daisy-wee checkpoint and print model details.")
+    parser = argparse.ArgumentParser(description="Inspect a daisy checkpoint and print model details.")
     parser.add_argument("path", help="Path to checkpoint .pt file")
     parser.add_argument("--device", default="cpu", help="Device to load the model on (default: cpu)")
     parser.add_argument("--zero-threshold", type=float, default=1e-3, help="Absolute value threshold to consider a scalar 'near zero'")

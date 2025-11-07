@@ -9,7 +9,7 @@ PASS = os.getenv("BASIC_AUTH_PASS", "pass")
 def non_stream_example():
     url = f"{BASE}/v1/responses"
     payload = {
-        "model": "daisy-wee",
+        "model": "daisy",
         "input": [
             {"role":"system","content":[{"type":"input_text","text":"You are a helpful assistant."}]},
             {"role":"user","content":[{"type":"input_text","text":"List three prime numbers greater than 10."}]}
@@ -24,7 +24,7 @@ def non_stream_example():
 def stream_example():
     url = f"{BASE}/v1/responses"
     payload = {
-        "model": "daisy-wee",
+        "model": "daisy",
         "input": [
             {"role":"user","content":[{"type":"input_text","text":"Write a short haiku about the Hudson River."}]}
         ],

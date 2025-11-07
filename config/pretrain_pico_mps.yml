@@ -1,6 +1,6 @@
 # test config, attempts overfit
 wandb_log: false
-wandb_project: 'daisy-wee'
+wandb_project: 'daisy'
 wandb_run_name: 'pico_tied_overfit'
 # Torch config
 torch.coordinate_descent_tuning: false

@@ -1,10 +1,10 @@
-# Daisy-Wee
+# Daisy
 
 **A compact, high-efficiency GPT training stack for small-to-mid-scale language models**
 
-Daisy-Wee is designed for researchers and engineers who want to train decoder-only transformer models (150M–1.6B parameters) with limited computational resources while maintaining production-grade performance. The framework emphasizes clarity, efficiency, and pragmatic design choices that make training accessible without sacrificing quality.
+Daisy is designed for engineers who want to train decoder-only transformer models (150M–1.6B parameters) with limited computational resources while maintaining production-grade performance. The framework emphasizes clarity, efficiency, and pragmatic design choices that make training accessible without sacrificing quality.
 
-Whether you're pretraining on billions of tokens, fine-tuning for domain adaptation, or building instruction-following models, Daisy-Wee provides the tools and optimizations you need to get results quickly.
+Whether you're pretraining on billions of tokens, fine-tuning for domain adaptation, or building instruction-following models, Daisy provides the tools and optimizations you need to get results quickly.
 
 <table border="0" style="border: 0 !important; border-collapse: collapse;">
   <tr style="border: 0 !important;">
@@ -19,7 +19,7 @@ Whether you're pretraining on billions of tokens, fine-tuning for domain adaptat
         </ul>
     </td>
     <td style="border: 0 !important;">
-      <img src="assets/daisy-wee.png" alt="Daisy-Wee" width="160">
+      <img src="assets/daisy.png" alt="Daisy" width="160">
     </td>
   </tr>
 </table>
@@ -32,7 +32,7 @@ Whether you're pretraining on billions of tokens, fine-tuning for domain adaptat
 
 ```bash
 conda env create -f environment.yml
-conda activate daisy-wee
+conda activate daisy
 # or: pip install -r requirements.txt
 ```
 
@@ -101,7 +101,7 @@ curl -u user:pass \
   -X POST http://localhost:8000/v1/responses \
   -H 'content-type: application/json' \
   -d '{
-    "model":"daisy-wee",
+    "model":"daisy",
     "input":[
       {"role":"system","content":[{"type":"input_text","text":"You are concise."}]},
       {"role":"user","content":[{"type":"input_text","text":"Name two prime numbers > 10."}]}
@@ -113,7 +113,7 @@ curl -u user:pass \
 #### Example Request
 ```json
 {
-  "model": "daisy-wee",
+  "model": "daisy",
   "input": [
     {"role":"system","content":[{"type":"input_text","text":"..."}]},
     {"role":"user","content":[{"type":"input_text","text":"..."}]},
@@ -134,7 +134,7 @@ curl -u user:pass \
   "id": "resp_...",
   "object": "response",
   "created": 1730...,
-  "model": "daisy-wee",
+  "model": "daisy",
   "output": [{"type":"message","role":"assistant","content":[{"type":"output_text","text":"..."}]}],
   "usage": {"prompt_tokens":N,"completion_tokens":M,"total_tokens":N+M},
   "meta": {"prefill_ms":..., "gen_ms":...},
@@ -146,7 +146,7 @@ curl -u user:pass \
 
 ## Model Architecture
 
-Daisy-Wee implements a decoder-only transformer architecture with several key optimizations for efficiency and performance. The design philosophy prioritizes memory efficiency, training stability, and long-context capability while maintaining simplicity.
+Daisy implements a decoder-only transformer architecture with several key optimizations for efficiency and performance. The design philosophy prioritizes memory efficiency, training stability, and long-context capability while maintaining simplicity.
 
 ### Core Components
 
@@ -215,7 +215,7 @@ The feedforward network uses a gated activation design:
 
 ### Precision Strategy
 
-Daisy-Wee follows a "BFloat16-first" design philosophy:
+Daisy follows a "BFloat16-first" design philosophy:
 
 - **Embeddings and Projections**: Stored and computed in BF16
 - **Normalization**: RMS norm computed in the input dtype (typically BF16)
@@ -253,7 +253,7 @@ Long-context capability is achieved through sliding window attention with docume
 ## Repository Layout
 
 ```
-daisy-wee/
+daisy/
 ├── config/                      # Training configurations (YAML)
 │   ├── pretrain_450m.yml       # 450M pretraining config
 │   ├── pretrain_1.6B.yml       # 1.6B pretraining config
@@ -334,7 +334,7 @@ This launches training on 8 GPUs using the 450M model configuration. The script 
 
 ### Configuration System
 
-Daisy-Wee uses a two-layer YAML configuration system:
+Daisy uses a two-layer YAML configuration system:
 
 **Model Specs** (`model_specs/*.yml`) define the architecture:
 ```yaml
@@ -485,7 +485,7 @@ Note: Schedules apply to AdamW optimizers. Muon optimizers use linear momentum w
 
 ### Per-Group Learning Rates
 
-Daisy-Wee uses different learning rates for different parameter groups:
+Daisy uses different learning rates for different parameter groups:
 
 - **embed_params**: Token embeddings (typically 50-100× higher than head)
 - **head_params**: Output projection (base LR)
@@ -688,7 +688,7 @@ This penalizes recent tokens more strongly than distant ones, with a half-life o
 
 ## Design Philosophy
 
-Daisy-Wee embodies several key design principles:
+Daisy embodies several key design principles:
 
 **BFloat16-First**: Default to BF16 for speed, selectively upcast for stability. Modern accelerators (A100, H100) provide 2× speedup for BF16 over FP32, and BF16's larger dynamic range handles transformer training better than FP16.
 

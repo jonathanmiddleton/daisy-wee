@@ -1,6 +1,6 @@
 # Logging
 wandb_log: true
-wandb_project: 'daisy-wee'
+wandb_project: 'daisy'
 wandb_run_name: '420m-instruct'
 # Torch config
 torch.coordinate_descent_tuning: false

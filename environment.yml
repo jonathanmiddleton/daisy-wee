@@ -1,4 +1,4 @@
-name: daisy-wee
+name: daisy
 channels:
   - conda-forge
   - defaults

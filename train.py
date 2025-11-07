@@ -113,7 +113,7 @@ if is_master and args.wandb_log:
     try:
         import wandb as _wandb
 
-        _project = args.wandb_project or "daisy-wee"
+        _project = args.wandb_project or "daisy"
         _name = args.wandb_run_name or f"{run_start_minute}-run{run_id}"
         _wandb.init(project=_project, name=_name, config=asdict(args))
         _wandb_enabled = True

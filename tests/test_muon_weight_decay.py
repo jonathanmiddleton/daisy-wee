@@ -16,7 +16,7 @@ def test_muon_weight_decay_override_from_yaml(tmp_path: Path):
     yml = f"""
 # Logging
 wandb_log: false
-wandb_project: 'daisy-wee'
+wandb_project: 'daisy'
 wandb_run_name: 'test-tiny'
 # Pretraining configuration
 train_shards: "data/fineweb/fineweb_train_*.bin"
@@ -89,7 +89,7 @@ def test_muon_requires_weight_decay_in_yaml(tmp_path: Path):
     yml = f"""
 # Logging
 wandb_log: false
-wandb_project: 'daisy-wee'
+wandb_project: 'daisy'
 wandb_run_name: 'test-tiny'
 # Pretraining configuration
 train_shards: "data/fineweb/fineweb_train_*.bin"

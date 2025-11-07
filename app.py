@@ -18,12 +18,12 @@ if str(ROOT) not in sys.path:
 try:
     from tools.checkpoint import model_from_checkpoint
 except Exception as e:
-    raise RuntimeError("Unable to import tools.checkpoint.model_from_checkpoint. Run this server from the Daisy-Wee repo root or ensure it is on PYTHONPATH.") from e
+    raise RuntimeError("Unable to import tools.checkpoint.model_from_checkpoint. Run this server from the Daisy repo root or ensure it is on PYTHONPATH.") from e
 
 try:
     from inference.generate import Generator
 except Exception as e:
-    raise RuntimeError("Unable to import inference.generate.Generator. Run this server from the Daisy-Wee repo root or ensure it is on PYTHONPATH.") from e
+    raise RuntimeError("Unable to import inference.generate.Generator. Run this server from the Daisy repo root or ensure it is on PYTHONPATH.") from e
 
 try:
     import tiktoken
@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
     MS = ModelState()
     yield
 
-app = FastAPI(title="Daisy-Wee Responses-Compatible API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Daisy Responses-Compatible API", version="0.1.0", lifespan=lifespan)
 
 # ---------- Auth ----------
 
@@ -68,7 +68,7 @@ class Message(BaseModel):
     content: List[InputText]
 
 class ResponsesRequest(BaseModel):
-    model: Optional[str] = "daisy-wee"
+    model: Optional[str] = "daisy"
     input: List[Message]
     session_id: Optional[str] = None
     max_output_tokens: int = Field(256, alias="max_output_tokens")
@@ -301,7 +301,7 @@ def list_completion_models(_: str = Depends(check_basic_auth)):
     global MS
     if MS is None:
         raise HTTPException(status_code=503, detail="model not initialized")
-    model_id = os.getenv("MODEL_ID", "daisy-wee")
+    model_id = os.getenv("MODEL_ID", "daisy")
     ctx = int(
         (MS.hparams.get("train_attention_window_len")
          or MS.hparams.get("attention_window_len")
