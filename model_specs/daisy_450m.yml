@@ -11,4 +11,3 @@ attention_window_len: 2304
 max_seq_len: 262144
 value_embeddings: true
 tied_embeddings: false
-sparse_attention: false
