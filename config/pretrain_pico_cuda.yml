@@ -6,7 +6,7 @@ wandb_run_name: 'pico-overfit-cuda'
 torch.coordinate_descent_tuning: true
 # Pretraining configuration
 train_shards: "data/overfit/edu_fineweb_overfit_1M.bin"
-target_tokens: 20_971_520
+target_tokens: 7_000_000_000
 cooldown_frac: 0.0
 learning_rate_schedule: linear_decay
 training_sequence_length: 65536        #  N * 1024; must be divisible by window_block_size

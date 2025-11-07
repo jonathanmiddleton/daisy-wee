@@ -225,6 +225,9 @@ class AdaptiveLR:
         self.cosine_frac = cosine_frac
         self.eps = eps
 
+        # Optional learning rate floor applied to the returned scale (fraction of initial LR)
+        self.lr_floor: float = 0.0
+
         self.mu = None
         self.v = 0.0
         self.tau = 0.0
