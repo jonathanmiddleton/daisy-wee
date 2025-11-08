@@ -224,7 +224,7 @@ class DaisyCore(nn.Module):
         return block_masks
 
     def compute_value_embeddings(self, input_seq: Tensor) -> list[Tensor]:
-        ve = [value_embed(input_seq) for value_embed in self.value_embeds]
+        ve = [norm(value_embed(input_seq)) for value_embed in self.value_embeds]
         return ve
 
     def forward(self, input_seq: Tensor, sliding_window_num_blocks: Tensor, target_seq: Tensor = None):
