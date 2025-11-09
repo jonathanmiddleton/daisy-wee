@@ -1,4 +1,3 @@
-
 import torch
 from torch import nn, Tensor
 from einops import rearrange, repeat
@@ -50,7 +49,9 @@ class KimiLinearSelfAttention(nn.Module):
             self.v_conv1d = ShortConvolution(self.value_dim, conv_size, activation="silu", bias=conv_bias)
         self.f_proj = nn.Sequential(nn.Linear(dim, self.head_v_dim, bias=False), nn.Linear(self.head_v_dim, self.key_dim, bias=False))
         self.b_proj = nn.Linear(dim, self.num_heads, bias=False)
-        self.A_log = nn.Parameter(torch.log(torch.empty(self.num_heads, dtype=torch.float32).uniform_(1, 16)))
+        self.A_log = nn.Parameter(
+            torch.log(torch.empty(self.num_heads, dtype=torch.float32).uniform_(1, 16)).view(1, 1, -1, 1)
+        )
         self.A_log._no_weight_decay = True
         self.dt_bias = nn.Parameter(torch.zeros(self.key_dim, dtype=torch.float32))
         self.dt_bias._no_weight_decay = True
@@ -111,7 +112,7 @@ class KimiLinearSelfAttention(nn.Module):
             conv_state = None
         g = self.f_proj(x)
         g = fused_kda_gate(g, self.A_log, self.head_k_dim, g_bias=self.dt_bias)
-        beta = self.b_proj(x).sigmoid()
+        beta = self.b_proj(x).float().sigmoid()
         q, k = (rearrange(t, "... (h d) -> ... h d", d=self.head_k_dim) for t in (q, k))
         v = rearrange(v, "... (h d) -> ... h d", d=self.head_v_dim)
         if sa_lambdas is not None and ve is not None:
