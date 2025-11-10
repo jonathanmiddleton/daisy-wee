@@ -7,7 +7,7 @@ torch.coordinate_descent_tuning: false
 # Pretraining configuration
 train_shards: "data/overfit/edu_fineweb_overfit_1M.bin"
 target_tokens: 20_971_520
-cooldown_frac: 0.0
+cooldown_frac: 0.95
 learning_rate_schedule: linear_decay
 learning_rate_floor: 0.5
 training_sequence_length: 8192        #  N * 1024; must be divisible by window_block_size
