@@ -1,13 +1,6 @@
-import torch
 import pytest
-if not torch.cuda.is_available():
-    pytest.skip("requires CUDA device", allow_module_level=True)
-
-import math
-from torch import nn
+import torch
 from einops import rearrange
-
-
 
 # adjust this import if your file/module name is different
 from models.daisy.attention_kimi import KimiLinearSelfAttention
