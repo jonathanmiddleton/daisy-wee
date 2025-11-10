@@ -250,3 +250,28 @@ def test_whitebox_against_direct_kernel_path():
 
     tt = tol(dt)
     assert torch.allclose(o_kernel, y, **tt), (o_kernel - y).abs().max().item()
+
+@pytest.mark.skipif(not (CUDA_AVAILABLE and FLA_AVAILABLE), reason="requires CUDA + FLA")
+def test_ve_mixing_identity_headshaped():
+    dev = device()
+    dt = torch.float32
+    B, T, H, Dh = 2, 16, 8, 32
+    D = H * Dh
+    x = rand_inputs(B, T, D, dev, dt)
+
+    m = make_model(dim=D, heads=H, head_dim=Dh).to(dev).eval()
+    # build head-shaped ve with last dim = head_v_dim
+    with torch.no_grad():
+        v_proj = m.v_proj(x)
+        if m.use_short_conv:
+            v_proj, _ = m.v_conv1d(x=v_proj, cache=None, output_final_state=False, cu_seqlens=None)
+    ve_head = rearrange(v_proj, "b t (h d) -> b t h d", h=H)
+
+    l0 = torch.tensor([1.0, 0.0], device=dev, dtype=dt)
+    l1 = torch.tensor([0.0, 1.0], device=dev, dtype=dt)
+
+    y_from_v  = m.forward(x, ve=None,     sa_lambdas=l0, attn_mask=None)
+    y_from_ve = m.forward(x, ve=ve_head,  sa_lambdas=l1, attn_mask=None)
+
+    tt = tol(dt)
+    assert torch.allclose(y_from_v, y_from_ve, **tt)
