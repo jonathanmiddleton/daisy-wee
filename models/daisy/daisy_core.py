@@ -6,9 +6,12 @@ from typing import Any, Optional
 import torch
 from torch import nn, Tensor, SymInt
 import torch.nn.functional as F
+from torch.nn.attention.flex_attention import BlockMask
+
 from models.daisy.block import Block
 from models.daisy.functional import norm
 
+WINDOW_BLOCK_SIZE = 128
 
 def next_multiple_of_n(v: float | int, *, n: int):
     return next(x for x in range(n, int(v) + 1 + n, n) if x >= v)
@@ -92,6 +95,17 @@ def pick_attention_layers(total_layers, d_model=None, num_heads=None):
     idx = [int(round(i * (total_layers - 1) / (K - 1))) for i in range(K)]
     return sorted(set(idx))
 
+def build_attn_mask(input_seq: Tensor, window_size: int):
+    T = input_seq.size(-1)
+    q = torch.arange(T, device=input_seq.device)[:, None]  # (T, 1)
+    k = torch.arange(T, device=input_seq.device)[None, :]  # (1, T)
+    d = q - k  # d[q, k] = q - k
+
+    m = torch.zeros(T, T, device=input_seq.device, dtype=torch.float32)
+    m[d < 0] = float("-inf")  # forbid future (k > q)
+    m[d >= window_size] = float("-inf")  # forbid too-far past
+    attn_mask = m[None, None, :, :]
+    return attn_mask
 
 class DaisyCore(nn.Module):
     def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int,
@@ -159,6 +173,54 @@ class DaisyCore(nn.Module):
         for b in self.blocks:
             b.reset_history()
 
+    def create_blockmasks(self, input_seq: Tensor, sliding_window_num_blocks: Tensor, L: int):
+        global WINDOW_BLOCK_SIZE
+        BLOCK_SIZE = WINDOW_BLOCK_SIZE
+        torch._assert(len(input_seq) % BLOCK_SIZE == 0, "input_seq must be divisible by BLOCK_SIZE")
+        device = input_seq.device
+        docs = (input_seq == self.eos_token_id).cumsum(0)
+
+        def document_causal(b, h, q_idx, kv_idx):
+            causal_mask = q_idx >= kv_idx
+            document_mask = docs[q_idx] == docs[kv_idx]
+            return causal_mask & document_mask
+
+        def dense_to_ordered(dense_blockmask: Tensor):
+            num_blocks = dense_blockmask.sum(dim=-1, dtype=torch.int32)
+            indices = dense_blockmask.argsort(dim=-1, descending=False, stable=True).flip(-1).to(torch.int32)
+            return num_blocks[None, None].contiguous(), indices[None, None].contiguous()
+
+        assert len(input_seq) % BLOCK_SIZE == 0
+        NUM_BLOCKS = len(input_seq) // BLOCK_SIZE
+        block_idx = torch.arange(NUM_BLOCKS, dtype=torch.int32, device=device)
+        causal_blockmask_any = block_idx[:, None] >= block_idx
+        causal_blockmask_all = block_idx[:, None] > block_idx
+        docs_low = docs.view(-1, BLOCK_SIZE)[:, 0].contiguous()
+        docs_high = docs.view(-1, BLOCK_SIZE)[:, -1].contiguous()
+        document_blockmask_any = (docs_low[:, None] <= docs_high) & (docs_high[:, None] >= docs_low)
+        document_blockmask_all = (docs_low[:, None] == docs_high) & (docs_high[:, None] == docs_low)
+        blockmask_any = causal_blockmask_any & document_blockmask_any
+        blockmask_all = causal_blockmask_all & document_blockmask_all
+        partial_kv_num_blocks, partial_kv_indices = dense_to_ordered(blockmask_any & ~blockmask_all)
+        full_kv_num_blocks, full_kv_indices = dense_to_ordered(blockmask_all)
+
+        def build_bm(window_size_blocks: Tensor) -> BlockMask:
+            # print(f"partial_kv_num_blocks.device={partial_kv_num_blocks.device.type} window_size_blocks.device={window_size_blocks.device} full_kv_num_blocks.device={full_kv_num_blocks.device.type}")
+            return BlockMask.from_kv_blocks(
+                torch.clamp_max(partial_kv_num_blocks, torch.clamp_min(window_size_blocks - full_kv_num_blocks, 1)),
+                partial_kv_indices,
+                torch.clamp_max(full_kv_num_blocks, window_size_blocks - 1),
+                full_kv_indices,
+                BLOCK_SIZE=BLOCK_SIZE,
+                mask_mod=document_causal,
+            )
+
+        # Long-short SWA block masks by @leloykun & @YouJiacheng, adapated from suggestion by @Grad62304977, following Gemma 2 paper
+        long_bm, short_bm = build_bm(sliding_window_num_blocks), build_bm(sliding_window_num_blocks // 2)
+
+        cycle = [long_bm] + [short_bm] * 3
+        block_masks = (cycle * ((L + 3) // 4))[:L - 1] + [long_bm]
+        return block_masks
 
     def compute_value_embeddings(self, input_seq: Tensor) -> list[Tensor]:
         ve = [norm(value_embed(input_seq)) for value_embed in self.value_embeds]
@@ -179,10 +241,15 @@ class DaisyCore(nn.Module):
 
         skip_connections = []
 
+        if input_seq.device.type == "cuda":
+            block_masks = self.create_blockmasks(input_seq, sliding_window_num_blocks, L=L)
+        else:
+            block_masks = [None] * L
+
         for i in range(L):
             if i in skip_map:
                 x = x + skip_weights[skip_map[i]] * skip_connections[skip_map[i]]
-            x = self.blocks[i](x, ve[i], x0, lambdas[i], sa_lambdas[i], sliding_window_num_blocks)
+            x = self.blocks[i](x, ve[i], x0, lambdas[i], sa_lambdas[i], block_mask=block_masks[i])
             skip_connections.append(x)
 
         x = norm(x)

@@ -1,6 +1,7 @@
 from typing import Optional
 
 import torch.nn as nn
+from torch.nn.attention.flex_attention import BlockMask
 
 from models.daisy.attention_protocol import AttentionProtocol
 from models.daisy.attention_kimi import KimiLinearSelfAttention
@@ -31,10 +32,10 @@ class Block(nn.Module):
         if self.attn is not None:
             self.attn.reset_history()
 
-    def forward(self, x: Tensor, ve: Tensor, x0: Tensor, lambdas: Tensor, sa_lambdas: Tensor, sliding_window_num_blocks: Tensor):
+    def forward(self, x: Tensor, ve: Tensor, x0: Tensor, lambdas: Tensor, sa_lambdas: Tensor, block_mask: Optional[BlockMask] = None):
         x = lambdas[0] * x + lambdas[1] * x0
         if self.attn is not None:
-            x = x + self.attn(x, ve, sa_lambdas, sliding_window_num_blocks)
+            x = x + self.attn(x, ve, sa_lambdas, block_mask=block_mask)
         x = x + self.mlp(norm(x))
         return x
 
