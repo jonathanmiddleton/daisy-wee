@@ -81,17 +81,6 @@ class KimiLinearSelfAttention(nn.Module):
     def _mix_v_with_ve(self, v, ve, sa_lambdas):
         if ve is None:
             return v
-        # if ve.ndim == 3 and ve.size(-1) == self.hidden_size:
-        #     ve_v = self.v_proj(ve)
-        #     if self.use_short_conv:
-        #         ve_v, _ = self.v_conv1d(x=ve_v, cache=None, output_final_state=False, cu_seqlens=None)
-        #     ve_v = rearrange(ve_v, "... (h d) -> ... h d", d=self.head_v_dim)
-        # elif ve.ndim == 4 and ve.size(-2) == self.num_v_heads and ve.size(-1) in (self.head_dim, self.head_v_dim):
-        #     if ve.size(-1) == self.head_dim:
-        #         torch._assert(self.head_v_dim == self.head_dim, "expand_v must be 1.0 to accept ve in head_dim")
-        #     ve_v = ve
-        # else:
-        #     raise RuntimeError("ve shape mismatch")
         lam0 = sa_lambdas[0].to(v.dtype)
         lam1 = sa_lambdas[1].to(v.dtype)
         return lam0 * v + lam1 * ve.view_as(v)

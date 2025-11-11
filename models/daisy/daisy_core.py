@@ -20,8 +20,7 @@ class ZeroEmbedding(nn.Module):
     def __init__(self, end_dim: int, device: torch.device, dtype: torch.dtype = torch.int64, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
         self.end_dim = end_dim
-        self.zero = nn.Buffer(torch.zeros(1, dtype=dtype, device=device),
-                              persistent=False)  # anchor for device/dtype so that we're moved when .to is called
+        self.zero = nn.Buffer(torch.zeros(1, dtype=dtype, device=device), persistent=False)  # anchor for device/dtype so that we're moved when .to is called
 
     @lru_cache(maxsize=1, typed=True)
     def __call__(self, x: Tensor):
