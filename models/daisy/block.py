@@ -1,5 +1,8 @@
 import torch.nn as nn
-from models.daisy.attention import CausalSelfAttention, is_flex_available
+
+from daisy import AttentionProtocol, KimiLinearSelfAttention
+from daisy.attention_kimi import KimiLinearSelfAttention
+from models.daisy.attention import CausalSelfAttention
 from models.daisy.mlp import MLP
 from models.daisy.functional import norm
 from torch import Tensor
@@ -10,9 +13,13 @@ class Block(nn.Module):
     def __init__(self, dim: int, num_heads: int, max_seq_len: int, layer_idx: int, head_dim: int, has_attn: bool,):
         super().__init__()
 
-        self.attn: CausalSelfAttention = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim,
-                                                             use_flex_attn=is_flex_available()) if has_attn else None
-        self.mlp = MLP(dim)
+        self.attn: AttentionProtocol | None = None
+        if has_attn:
+            if layer_idx % 4 == 0:
+                self.attn  = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim)
+            else:
+                self.attn  = KimiLinearSelfAttention(dim, num_heads, max_seq_len, head_dim)
+            self.mlp = MLP(dim)
 
     def reset_history(self):
         if self.attn is not None:
@@ -22,7 +29,7 @@ class Block(nn.Module):
                 block_mask: BlockMask = None, attn_mask: Tensor = None, ):
         x = lambdas[0] * x + lambdas[1] * x0
         if self.attn is not None:
-            x = x.to(self.attn.qkvo_w.dtype)
+            # x = x.to(self.attn.qkvo_w.dtype)
             if x.device.type == "cuda":
                 x = x + self.attn(x, ve, sa_lambdas, block_mask=block_mask)
             else:

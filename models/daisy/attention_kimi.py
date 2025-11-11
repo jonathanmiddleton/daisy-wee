@@ -1,9 +1,12 @@
+from typing import Optional
+
 import torch
 from torch import nn, Tensor
-from einops import rearrange, repeat
+from einops import rearrange
 from fla.ops.kda import chunk_kda, fused_recurrent_kda
 from fla.ops.kda.gate import fused_kda_gate
 from fla.modules import FusedRMSNormGated, ShortConvolution
+#noinspection PyBroadException
 try:
     from fla.layers.utils import get_unpad_data, index_first_axis, pad_input
 except Exception:
@@ -13,17 +16,21 @@ except Exception:
         B, S = mask.shape if mask is not None else (0, 0)
         idx = torch.arange(B*S, device=mask.device) if mask is not None else None
         return idx, None, S
+    # noinspection PyUnusedLocal
     def index_first_axis(x, idx):
         return x
+    # noinspection PyUnusedLocal
     def pad_input(x, indices, batch_size, q_len):
         return x.squeeze(0)
 
+#noinspection PyBroadException
 try:
     from fla.models.utils import Cache
 except Exception:
     Cache = None
 
 class KimiLinearSelfAttention(nn.Module):
+    # noinspection PyUnusedLocal
     def __init__(self, dim: int, num_heads: int, max_seq_len: int, head_dim: int, expand_v: float = 1.0, mode: str = "chunk", use_short_conv: bool = True, allow_neg_eigval: bool = False, conv_size: int = 4, conv_bias: bool = False, layer_idx: int = 0):
         super().__init__()
         self.mode = mode
@@ -88,7 +95,7 @@ class KimiLinearSelfAttention(nn.Module):
         lam1 = sa_lambdas[1].to(v.dtype)
         return lam0 * v + lam1 * ve_v.to(v.dtype)
 
-    def _forward_core(self, x: Tensor, ve: Tensor | None, sa_lambdas: Tensor | None, attn_mask: Tensor | None, use_cache: bool):
+    def _forward_core(self, x: Tensor, ve: Optional[Tensor], sa_lambdas: Optional[Tensor], attn_mask: Optional[Tensor], use_cache: bool):
         b, s, _ = x.shape
         mode = "fused_recurrent" if s <= 64 and not self.training else self.mode
         last_state = None
@@ -140,10 +147,12 @@ class KimiLinearSelfAttention(nn.Module):
     def forward(self, x: Tensor, ve: Tensor, sa_lambdas: Tensor, attn_mask: Tensor):
         return self._forward_core(x, ve, sa_lambdas, attn_mask, use_cache=False)
 
+    # noinspection PyUnusedLocal
     def prefill(self, x: Tensor, ve: Tensor, sa_lambdas: Tensor, attn_mask: Tensor, debug: bool = False):
         y = self._forward_core(x, ve, sa_lambdas, attn_mask, use_cache=True)
         return y, None, None
 
-    def step(self, x: Tensor, k_ctx: Tensor | None, v_ctx: Tensor | None, pos: int, ve: Tensor, sa_lambdas: Tensor, window: int | None):
+    # noinspection PyUnusedLocal
+    def step(self, x: Tensor, k_ctx: Optional[Tensor], v_ctx: Optional[Tensor], pos: int, ve: Tensor, sa_lambdas: Tensor, window: int | None):
         y = self._forward_core(x, ve, sa_lambdas, attn_mask=None, use_cache=True)
         return y, None, None

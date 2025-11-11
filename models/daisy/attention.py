@@ -22,6 +22,17 @@ def _apply_rope(x_BTHD, cos, sin):
 def _flex_call(q, k, v, block_mask, scale):
     return flex_attention(q, k, v, block_mask=block_mask, scale=scale)
 
+def build_attn_mask(input_seq: Tensor, window_size: int):
+    T = input_seq.size(-1)
+    q = torch.arange(T, device=input_seq.device)[:, None]  # (T, 1)
+    k = torch.arange(T, device=input_seq.device)[None, :]  # (1, T)
+    d = q - k  # d[q, k] = q - k
+
+    m = torch.zeros(T, T, device=input_seq.device, dtype=torch.float32)
+    m[d < 0] = float("-inf")  # forbid future (k > q)
+    m[d >= window_size] = float("-inf")  # forbid too-far past
+    attn_mask = m[None, None, :, :]
+    return attn_mask
 
 class Rotary(nn.Module):
     def __init__(self, dim: int, max_seq_len: int):
@@ -71,7 +82,7 @@ class Rotary(nn.Module):
 
 
 class CausalSelfAttention(nn.Module):
-    def __init__(self, dim: int, num_heads: int, max_seq_len: int, head_dim, use_flex_attn: bool = False, ):
+    def __init__(self, dim: int, num_heads: int, max_seq_len: int, head_dim): #TODO automatically extend Rotary cache to avoid need for max_seq_len param
         super().__init__()
         torch._assert(dim % num_heads == 0, "dim must be divisible by num_heads")
         self.num_heads = num_heads
@@ -89,10 +100,60 @@ class CausalSelfAttention(nn.Module):
         self.last_q = None
         self.last_k = None
 
-        if use_flex_attn:
+        if is_flex_available():
             self.forward = self.forward_flex
         else:
             self.forward = self.forward_sdpa
+
+
+    def create_blockmasks(self, input_seq: Tensor):
+        BLOCK_SIZE = 128
+        torch._assert(len(input_seq) % BLOCK_SIZE == 0, "input_seq must be divisible by BLOCK_SIZE")
+        device = input_seq.device
+        docs = (input_seq == self.eos_token_id).cumsum(0)
+
+        def document_causal(b, h, q_idx, kv_idx):
+            causal_mask = q_idx >= kv_idx
+            document_mask = docs[q_idx] == docs[kv_idx]
+            return causal_mask & document_mask
+
+        def dense_to_ordered(dense_blockmask: Tensor):
+            num_blocks = dense_blockmask.sum(dim=-1, dtype=torch.int32)
+            indices = dense_blockmask.argsort(dim=-1, descending=False, stable=True).flip(-1).to(torch.int32)
+            return num_blocks[None, None].contiguous(), indices[None, None].contiguous()
+
+        assert len(input_seq) % BLOCK_SIZE == 0
+        NUM_BLOCKS = len(input_seq) // BLOCK_SIZE
+        block_idx = torch.arange(NUM_BLOCKS, dtype=torch.int32, device=device)
+        causal_blockmask_any = block_idx[:, None] >= block_idx
+        causal_blockmask_all = block_idx[:, None] > block_idx
+        docs_low = docs.view(-1, BLOCK_SIZE)[:, 0].contiguous()
+        docs_high = docs.view(-1, BLOCK_SIZE)[:, -1].contiguous()
+        document_blockmask_any = (docs_low[:, None] <= docs_high) & (docs_high[:, None] >= docs_low)
+        document_blockmask_all = (docs_low[:, None] == docs_high) & (docs_high[:, None] == docs_low)
+        blockmask_any = causal_blockmask_any & document_blockmask_any
+        blockmask_all = causal_blockmask_all & document_blockmask_all
+        partial_kv_num_blocks, partial_kv_indices = dense_to_ordered(blockmask_any & ~blockmask_all)
+        full_kv_num_blocks, full_kv_indices = dense_to_ordered(blockmask_all)
+
+        def build_bm(window_size_blocks: Tensor) -> BlockMask:
+            # print(f"partial_kv_num_blocks.device={partial_kv_num_blocks.device.type} window_size_blocks.device={window_size_blocks.device} full_kv_num_blocks.device={full_kv_num_blocks.device.type}")
+            return BlockMask.from_kv_blocks(
+                torch.clamp_max(partial_kv_num_blocks, torch.clamp_min(window_size_blocks - full_kv_num_blocks, 1)),
+                partial_kv_indices,
+                torch.clamp_max(full_kv_num_blocks, window_size_blocks - 1),
+                full_kv_indices,
+                BLOCK_SIZE=BLOCK_SIZE,
+                mask_mod=document_causal,
+            )
+
+        # Long-short SWA block masks by @leloykun & @YouJiacheng, adapated from suggestion by @Grad62304977, following Gemma 2 paper
+        # long_bm, short_bm = build_bm(sliding_window_num_blocks), build_bm(sliding_window_num_blocks // 2)
+        #
+        # cycle = [long_bm] + [short_bm] * 3
+        # block_masks = (cycle * ((L + 3) // 4))[:L - 1] + [long_bm]
+        # return block_masks
+        return build_bm(sliding_window_num_blocks)
 
     def reset_history(self):
         self.last_q = None
@@ -120,7 +181,7 @@ class CausalSelfAttention(nn.Module):
     def forward_flex(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, block_mask: BlockMask):
         B, T = x.size(0), x.size(1)
         q_, k_, v_ = self._qkv_common(x, ve, sa_lambdas)
-
+        block_mask = self.create_blockmasks(x)
         y = _flex_call(q_, k_, v_, block_mask=block_mask, scale=self.attn_scale)
         y = y.transpose(1, 2).contiguous().view(B, T, self.m_dim)
         y = torch.nn.functional.linear(y, self.qkvo_w[3])

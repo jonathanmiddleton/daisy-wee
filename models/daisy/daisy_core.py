@@ -14,20 +14,6 @@ from torch.nn.attention.flex_attention import BlockMask
 def next_multiple_of_n(v: float | int, *, n: int):
     return next(x for x in range(n, int(v) + 1 + n, n) if x >= v)
 
-
-def build_attn_mask(input_seq: Tensor, window_size: int):
-    T = input_seq.size(-1)
-    q = torch.arange(T, device=input_seq.device)[:, None]  # (T, 1)
-    k = torch.arange(T, device=input_seq.device)[None, :]  # (1, T)
-    d = q - k  # d[q, k] = q - k
-
-    m = torch.zeros(T, T, device=input_seq.device, dtype=torch.float32)
-    m[d < 0] = float("-inf")  # forbid future (k > q)
-    m[d >= window_size] = float("-inf")  # forbid too-far past
-    attn_mask = m[None, None, :, :]
-    return attn_mask
-
-
 class ZeroEmbedding(nn.Module):
     def __init__(self, end_dim: int, device: torch.device, dtype: torch.dtype = torch.int64, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
@@ -110,8 +96,7 @@ def pick_attention_layers(total_layers, d_model=None, num_heads=None):
 
 class DaisyCore(nn.Module):
     def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int,
-                 head_dim: int, window_size: int = 1024,
-                 window_block_size: int = 128, eos_token_id: int | None = None, desc: dict | None = None,
+                 head_dim: int, window_size: int = 1024, eos_token_id: int | None = None, desc: dict | None = None,
                  value_embeddings: bool = True, tied_embeddings: bool = False):
         super().__init__()
         if eos_token_id is None:
@@ -162,7 +147,6 @@ class DaisyCore(nn.Module):
                 self.lm_head_w = nn.Parameter(torch.empty(next_multiple_of_n(vocab_size, n=128), model_dim))
                 nn.init.normal_(self.lm_head_w, mean=0.0, std=0.02)
         self.window_size = window_size
-        self.window_block_size = int(window_block_size)
         assert num_layers % 2 == 0
         self.scalars = nn.Parameter(torch.cat([
             torch.ones(num_layers),  # skip_weights
@@ -175,59 +159,12 @@ class DaisyCore(nn.Module):
         for b in self.blocks:
             b.reset_history()
 
-    def create_blockmasks(self, input_seq: Tensor, sliding_window_num_blocks: Tensor, L: int):
-        BLOCK_SIZE = self.window_block_size
-        torch._assert(len(input_seq) % BLOCK_SIZE == 0, "input_seq must be divisible by BLOCK_SIZE")
-        device = input_seq.device
-        docs = (input_seq == self.eos_token_id).cumsum(0)
-
-        def document_causal(b, h, q_idx, kv_idx):
-            causal_mask = q_idx >= kv_idx
-            document_mask = docs[q_idx] == docs[kv_idx]
-            return causal_mask & document_mask
-
-        def dense_to_ordered(dense_blockmask: Tensor):
-            num_blocks = dense_blockmask.sum(dim=-1, dtype=torch.int32)
-            indices = dense_blockmask.argsort(dim=-1, descending=False, stable=True).flip(-1).to(torch.int32)
-            return num_blocks[None, None].contiguous(), indices[None, None].contiguous()
-
-        assert len(input_seq) % BLOCK_SIZE == 0
-        NUM_BLOCKS = len(input_seq) // BLOCK_SIZE
-        block_idx = torch.arange(NUM_BLOCKS, dtype=torch.int32, device=device)
-        causal_blockmask_any = block_idx[:, None] >= block_idx
-        causal_blockmask_all = block_idx[:, None] > block_idx
-        docs_low = docs.view(-1, BLOCK_SIZE)[:, 0].contiguous()
-        docs_high = docs.view(-1, BLOCK_SIZE)[:, -1].contiguous()
-        document_blockmask_any = (docs_low[:, None] <= docs_high) & (docs_high[:, None] >= docs_low)
-        document_blockmask_all = (docs_low[:, None] == docs_high) & (docs_high[:, None] == docs_low)
-        blockmask_any = causal_blockmask_any & document_blockmask_any
-        blockmask_all = causal_blockmask_all & document_blockmask_all
-        partial_kv_num_blocks, partial_kv_indices = dense_to_ordered(blockmask_any & ~blockmask_all)
-        full_kv_num_blocks, full_kv_indices = dense_to_ordered(blockmask_all)
-
-        def build_bm(window_size_blocks: Tensor) -> BlockMask:
-            # print(f"partial_kv_num_blocks.device={partial_kv_num_blocks.device.type} window_size_blocks.device={window_size_blocks.device} full_kv_num_blocks.device={full_kv_num_blocks.device.type}")
-            return BlockMask.from_kv_blocks(
-                torch.clamp_max(partial_kv_num_blocks, torch.clamp_min(window_size_blocks - full_kv_num_blocks, 1)),
-                partial_kv_indices,
-                torch.clamp_max(full_kv_num_blocks, window_size_blocks - 1),
-                full_kv_indices,
-                BLOCK_SIZE=BLOCK_SIZE,
-                mask_mod=document_causal,
-            )
-
-        # Long-short SWA block masks by @leloykun & @YouJiacheng, adapated from suggestion by @Grad62304977, following Gemma 2 paper
-        long_bm, short_bm = build_bm(sliding_window_num_blocks), build_bm(sliding_window_num_blocks // 2)
-
-        cycle = [long_bm] + [short_bm] * 3
-        block_masks = (cycle * ((L + 3) // 4))[:L - 1] + [long_bm]
-        return block_masks
 
     def compute_value_embeddings(self, input_seq: Tensor) -> list[Tensor]:
         ve = [norm(value_embed(input_seq)) for value_embed in self.value_embeds]
         return ve
 
-    def forward(self, input_seq: Tensor, sliding_window_num_blocks: Tensor, target_seq: Tensor = None):
+    def forward(self, input_seq: Tensor, target_seq: Tensor = None):
         assert input_seq.ndim == 1
         L = len(self.blocks)
 
@@ -246,11 +183,11 @@ class DaisyCore(nn.Module):
             if i in skip_map:
                 x = x + skip_weights[skip_map[i]] * skip_connections[skip_map[i]]
             if input_seq.device.type == "cuda":
-                block_masks = self.create_blockmasks(input_seq, sliding_window_num_blocks, L=L)
-                x = self.blocks[i](x, ve[i], x0, lambdas[i], sa_lambdas[i], block_mask=block_masks[i])
+
+                x = self.blocks[i](x, ve[i], x0, lambdas[i], sa_lambdas[i])
             else:
                 attn_mask = build_attn_mask(input_seq, self.window_size)
-                x = self.blocks[i](x, ve[i], x0, lambdas[i], sa_lambdas[i], attn_mask=attn_mask)
+                x = self.blocks[i](x, ve[i], x0, lambdas[i], sa_lambdas[i] )
             skip_connections.append(x)
 
         x = norm(x)
