@@ -26,13 +26,17 @@ optimizers:
         lr: 0.2
       - group: scalar_params
         lr: 0.015
+      - group: hidden_scalar_params
+        lr: 0.015
+      - group: attn_time_constant_params
+        lr: 0.015 #possibly .5-1x hidden_scalar_params
   - type: Muon
     momentum: 0.95
     weight_decay: 0.0
     params:
       - group: hidden_matrix_params
         lr: 0.02
-full_windows: false
+full_windows: true
 # Gradient accumulation
 grad_acc_steps: 16
 # Evaluations

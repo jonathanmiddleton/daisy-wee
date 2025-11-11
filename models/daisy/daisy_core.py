@@ -1,14 +1,13 @@
 import os
 from functools import lru_cache
 from math import floor, log2, ceil
-from typing import Any
+from typing import Any, Optional
 
 import torch
 from torch import nn, Tensor, SymInt
 import torch.nn.functional as F
 from models.daisy.block import Block
 from models.daisy.functional import norm
-from torch.nn.attention.flex_attention import BlockMask
 
 
 def next_multiple_of_n(v: float | int, *, n: int):
@@ -97,7 +96,8 @@ def pick_attention_layers(total_layers, d_model=None, num_heads=None):
 class DaisyCore(nn.Module):
     def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int,
                  head_dim: int, window_size: int = 1024, eos_token_id: int | None = None, desc: dict | None = None,
-                 value_embeddings: bool = True, tied_embeddings: bool = False):
+                 value_embeddings: bool = True, tied_embeddings: bool = False, attn_all_layers: bool = False,
+                 attn_impl: str = 'standard'):
         super().__init__()
         if eos_token_id is None:
             raise ValueError("eos_token_id is required.")
@@ -124,7 +124,7 @@ class DaisyCore(nn.Module):
         self.skip_map = _get_skip_map(num_layers)
         self.eos_token_id = int(eos_token_id)
         self.embed = nn.Embedding(vocab_size, model_dim)
-        self.attn_layers = pick_attention_layers(num_layers)
+        self.attn_layers = [i for i in range(num_layers)] if attn_all_layers else pick_attention_layers(num_layers)
         self.ve_layers = pick_value_embedding_layers(self.attn_layers) if value_embeddings else []
         self.zero_embedding = ZeroEmbedding(end_dim=self.embed.weight.size(1), device=self.embed.weight.device,
                                             dtype=torch.bfloat16)
@@ -134,7 +134,7 @@ class DaisyCore(nn.Module):
         # self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(len(self.ve_layers))])
 
         self.blocks = nn.ModuleList(
-            [Block(model_dim, num_heads, max_seq_len, i, head_dim, i in self.attn_layers) for i in range(num_layers)])
+            [Block(model_dim, num_heads, max_seq_len, i, head_dim, i in self.attn_layers, attn_impl) for i in range(num_layers)])
         if tied_embeddings:
             nn.init.normal_(self.embed.weight, mean=0.0, std=0.02)
             self.lm_head_w = self.embed.weight
@@ -164,7 +164,7 @@ class DaisyCore(nn.Module):
         ve = [norm(value_embed(input_seq)) for value_embed in self.value_embeds]
         return ve
 
-    def forward(self, input_seq: Tensor, target_seq: Tensor = None):
+    def forward(self, input_seq: Tensor, sliding_window_num_blocks: Tensor, target_seq: Tensor = None):
         assert input_seq.ndim == 1
         L = len(self.blocks)
 
@@ -182,12 +182,7 @@ class DaisyCore(nn.Module):
         for i in range(L):
             if i in skip_map:
                 x = x + skip_weights[skip_map[i]] * skip_connections[skip_map[i]]
-            if input_seq.device.type == "cuda":
-
-                x = self.blocks[i](x, ve[i], x0, lambdas[i], sa_lambdas[i])
-            else:
-                attn_mask = build_attn_mask(input_seq, self.window_size)
-                x = self.blocks[i](x, ve[i], x0, lambdas[i], sa_lambdas[i] )
+            x = self.blocks[i](x, ve[i], x0, lambdas[i], sa_lambdas[i], sliding_window_num_blocks)
             skip_connections.append(x)
 
         x = norm(x)
@@ -224,8 +219,7 @@ class DaisyCore(nn.Module):
         for i in range(L):
             if i in skip_map:
                 x = x + skip_weights[skip_map[i]] * skip_connections[skip_map[i]]
-            y, k_new, v_new = self.blocks[i].step(x, ve[i], x0, k_ctxs[i], v_ctxs[i], pos, lambdas[i], sa_lambdas[i],
-                                                  window)
+            y, k_new, v_new = self.blocks[i].step(x, ve[i], x0, k_ctxs[i], v_ctxs[i], pos, lambdas[i], sa_lambdas[i], window)
             x = y
             skip_connections.append(x)
             k_new_list.append(k_new)
@@ -234,7 +228,7 @@ class DaisyCore(nn.Module):
         logits = F.linear(x.flatten(end_dim=1).bfloat16(), self.lm_head_w.bfloat16()).float()
         return logits, k_new_list, v_new_list
 
-    def prefill(self, input_seq: Tensor, window: int | None = None, debug: bool = False):
+    def prefill(self, input_seq: Tensor, window: Optional[int] = None, debug: bool = False):
         assert input_seq.ndim == 2
         B, T = input_seq.shape
         h = None
@@ -256,13 +250,11 @@ class DaisyCore(nn.Module):
         lambdas = self.scalars[1 * L:3 * L].view(-1, 2)
         sa_lambdas = self.scalars[3 * L:5 * L].view(-1, 2)
 
-        attn_mask = build_attn_mask(input_seq, window)
-
         k_list, v_list, skip_connections = [], [], []
         for i in range(L):
             if i in skip_map:
                 x = x + skip_weights[skip_map[i]] * skip_connections[skip_map[i]]
-            x, k, v = self.blocks[i].prefill(x, ve[i], x0, lambdas[i], sa_lambdas[i], attn_mask, debug=debug)
+            x, k, v = self.blocks[i].prefill(x, ve[i], x0, lambdas[i], sa_lambdas[i], debug=debug)
             skip_connections.append(x)
             k_list.append(k)
             v_list.append(v)

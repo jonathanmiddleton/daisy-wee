@@ -17,11 +17,22 @@ def derive_named_param_groups(model: nn.Module) -> dict[str, list[nn.Parameter]]
       - head_params: [model.lm_head_w]
     """
     # Hidden matrices (e.g., linear/attention weight matrices) from transformer blocks
-    hidden_matrix_params = sorted(
-        (p for p in model.blocks.parameters() if p.ndim >= 2),
-        key=lambda x: x.size(),
-        reverse=True,
-    )
+    hidden_matrix_params = []
+    hidden_scalar_params = []
+    attn_time_constant_params = []
+    for name, p in model.blocks.named_parameters():
+        if not p.requires_grad:
+            continue
+        if name.endswith("A_log") or name.endswith("dt_bias"): # kimi linear attention time constant
+            attn_time_constant_params.append(p)
+        elif p.ndim == 1:
+            hidden_scalar_params.append(p)
+        elif p.ndim >= 2:
+            # if p.dtype != torch.bfloat16:
+            #     print(name, p.dtype)
+            hidden_matrix_params.append(p)
+    hidden_matrix_params.sort(key=lambda x: x.size(), reverse=True)
+    hidden_scalar_params.sort(key=lambda x: x.size(), reverse=True)
     # Embedding parameters
     embed_params = [*model.embed.parameters(),
                     *model.value_embeds.parameters()] if model.value_embeds is not None else [*model.embed.parameters()]
@@ -37,7 +48,7 @@ def derive_named_param_groups(model: nn.Module) -> dict[str, list[nn.Parameter]]
         head_params: list[nn.Parameter] = [model.lm_head_w]
 
     # Sanity: ensure exact partitioning of all model parameters
-    params_collections = [hidden_matrix_params, embed_params, scalar_params, head_params]
+    params_collections = [hidden_matrix_params, embed_params, scalar_params, head_params, hidden_scalar_params, attn_time_constant_params]
     params_collections = [p for p in params_collections if p is not None]
     optimized_parameters_set = {p for params in params_collections if params for p in params}
     all_params = set(model.parameters())
@@ -52,6 +63,12 @@ def derive_named_param_groups(model: nn.Module) -> dict[str, list[nn.Parameter]]
 
     if head_params is not None:
         p_dict["head_params"] = head_params
+
+    if hidden_scalar_params is not None:
+        p_dict["hidden_scalar_params"] = hidden_scalar_params
+
+    if attn_time_constant_params is not None:
+        p_dict["attn_time_constant_params"] = attn_time_constant_params
 
     return p_dict
 
@@ -93,7 +110,6 @@ def zeropower_via_newtonschulz5(G: Tensor) -> Tensor:
     return X
 
 
-@torch.compile
 def update_faster(acc_bf16_view_u16: Tensor, mantissa: Tensor, momentum_buffer: Tensor, grad: Tensor, momentum: Tensor,
                   eff_lr: Tensor, eff_weight_decay: Tensor):
     """
@@ -111,7 +127,6 @@ def update_faster(acc_bf16_view_u16: Tensor, mantissa: Tensor, momentum_buffer: 
     mantissa.copy_(acc_m_u32.to(torch.uint16))
 
 
-@torch.compile
 def update_slower(acc: Tensor, momentum_buffer: Tensor, grad: Tensor, momentum: Tensor, eff_lr: Tensor,
                   eff_weight_decay: Tensor):
     """
@@ -145,6 +160,7 @@ class Muon(torch.optim.Optimizer):
 
         defaults = dict(lr=lr, weight_decay=weight_decay, momentum=momentum)
         super().__init__(params, defaults)
+        # flse = [p for group in self.param_groups for p in group["params"] if p.dtype != torch.bfloat16 ]
         assert all(p.dtype == torch.bfloat16 for group in self.param_groups for p in group["params"])
 
     @torch.no_grad()
@@ -408,8 +424,8 @@ def set_full_windows(flag: bool):
     _force_full_windows = bool(flag)
 
 
-# attention window size schedule: linearly increase
 def next_multiple_of_n(v: float | int, *, n: int):
+    """Return the smallest multiple of n greater than or equal to v."""
     return next(x for x in range(n, int(v) + 1 + n, n) if x >= v)
 
 

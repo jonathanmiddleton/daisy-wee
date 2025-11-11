@@ -31,7 +31,8 @@ except Exception:
 
 class KimiLinearSelfAttention(nn.Module):
     # noinspection PyUnusedLocal
-    def __init__(self, dim: int, num_heads: int, max_seq_len: int, head_dim: int, expand_v: float = 1.0, mode: str = "chunk", use_short_conv: bool = True, allow_neg_eigval: bool = False, conv_size: int = 4, conv_bias: bool = False, layer_idx: int = 0):
+    def __init__(self, dim: int, num_heads: int, max_seq_len: int, head_dim: int, expand_v: float = 1.0, mode: str = 'chunk',
+                 use_short_conv: bool = True, allow_neg_eigval: bool = False, conv_size: int = 4, conv_bias: bool = False, layer_idx: int = 0):
         super().__init__()
         self.mode = mode
         self.allow_neg_eigval = allow_neg_eigval
@@ -47,24 +48,24 @@ class KimiLinearSelfAttention(nn.Module):
         self.conv_size = conv_size
         self.conv_bias = conv_bias
         self.layer_idx = layer_idx
-        self.q_proj = nn.Linear(dim, self.key_dim, bias=False)
-        self.k_proj = nn.Linear(dim, self.key_dim, bias=False)
-        self.v_proj = nn.Linear(dim, self.value_dim, bias=False)
+        self.q_proj = nn.Linear(dim, self.key_dim, bias=False, dtype=torch.bfloat16)
+        self.k_proj = nn.Linear(dim, self.key_dim, bias=False, dtype=torch.bfloat16)
+        self.v_proj = nn.Linear(dim, self.value_dim, bias=False, dtype=torch.bfloat16)
         if use_short_conv:
-            self.q_conv1d = ShortConvolution(self.key_dim, conv_size, activation="silu", bias=conv_bias)
-            self.k_conv1d = ShortConvolution(self.key_dim, conv_size, activation="silu", bias=conv_bias)
-            self.v_conv1d = ShortConvolution(self.value_dim, conv_size, activation="silu", bias=conv_bias)
-        self.f_proj = nn.Sequential(nn.Linear(dim, self.head_v_dim, bias=False), nn.Linear(self.head_v_dim, self.key_dim, bias=False))
-        self.b_proj = nn.Linear(dim, self.num_heads, bias=False)
+            self.q_conv1d = ShortConvolution(self.key_dim, conv_size, activation="silu", bias=conv_bias, dtype=torch.bfloat16)
+            self.k_conv1d = ShortConvolution(self.key_dim, conv_size, activation="silu", bias=conv_bias, dtype=torch.bfloat16)
+            self.v_conv1d = ShortConvolution(self.value_dim, conv_size, activation="silu", bias=conv_bias, dtype=torch.bfloat16)
+        self.f_proj = nn.Sequential(nn.Linear(dim, self.head_v_dim, bias=False, dtype=torch.bfloat16), nn.Linear(self.head_v_dim, self.key_dim, bias=False, dtype=torch.bfloat16))
+        self.b_proj = nn.Linear(dim, self.num_heads, bias=False, dtype=torch.bfloat16)
         self.A_log = nn.Parameter(
             torch.log(torch.empty(self.num_heads, dtype=torch.float32).uniform_(1, 16)).view(1, 1, -1, 1)
         )
         self.A_log._no_weight_decay = True
         self.dt_bias = nn.Parameter(torch.zeros(self.key_dim, dtype=torch.float32))
         self.dt_bias._no_weight_decay = True
-        self.g_proj = nn.Sequential(nn.Linear(dim, self.head_v_dim, bias=False), nn.Linear(self.head_v_dim, self.value_dim, bias=True))
-        self.o_norm = FusedRMSNormGated(self.head_v_dim, activation="sigmoid", eps=1e-5)
-        self.o_proj = nn.Linear(self.value_dim, dim, bias=False)
+        self.g_proj = nn.Sequential(nn.Linear(dim, self.head_v_dim, bias=False, dtype=torch.bfloat16), nn.Linear(self.head_v_dim, self.value_dim, bias=True, dtype=torch.bfloat16) )
+        self.o_norm = FusedRMSNormGated(self.head_v_dim, activation="sigmoid", eps=1e-5, dtype=torch.bfloat16)
+        self.o_proj = nn.Linear(self.value_dim, dim, bias=False, dtype=torch.bfloat16)
         self._recurrent_state = None
         self._conv_state = None
         self._seen = 0
@@ -144,11 +145,13 @@ class KimiLinearSelfAttention(nn.Module):
             o = pad_input(o.squeeze(0), indices, b, s)
         return o
 
-    def forward(self, x: Tensor, ve: Tensor, sa_lambdas: Tensor, attn_mask: Tensor):
+    # noinspection PyUnusedLocal
+    def forward(self, x: Tensor, ve: Tensor, sa_lambdas: Tensor, attn_mask: Tensor = None, sliding_window_num_blocks: Tensor = None):
+        torch._assert(sliding_window_num_blocks is None, "sliding_window_num_blocks not supported for KimiLinearSelfAttention")
         return self._forward_core(x, ve, sa_lambdas, attn_mask, use_cache=False)
 
     # noinspection PyUnusedLocal
-    def prefill(self, x: Tensor, ve: Tensor, sa_lambdas: Tensor, attn_mask: Tensor, debug: bool = False):
+    def prefill(self, x: Tensor, ve: Tensor, sa_lambdas: Tensor, attn_mask: Tensor = None, debug: bool = False):
         y = self._forward_core(x, ve, sa_lambdas, attn_mask, use_cache=True)
         return y, None, None
 

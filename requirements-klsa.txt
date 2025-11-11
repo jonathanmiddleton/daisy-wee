@@ -1,3 +1,4 @@
 # for KimiLinearSelfAttention
 chardet
 flash-attention-linear
+triton

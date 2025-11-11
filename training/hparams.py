@@ -8,6 +8,7 @@ import yaml
 from model_specs import load_model_spec
 from tools.helpers import _coerce_value
 
+WINDOW_BLOCK_SIZE = 128
 
 @dataclass
 class Hyperparameters:
@@ -23,7 +24,6 @@ class Hyperparameters:
     learning_rate_schedule: str  # {'linear_decay','linear_warmup_cosine_decay','cosine_decay'}
     train_attention_window_len: int  # training-time sliding attention window (<= model spec max)
     attention_window_len: int  # maximum sliding attention window supported by the model # TODO merge with train_attention_window_len
-    window_block_size: int  # block granularity for sliding window/masks (from spec)
     # Common fields with defaults
     vocab_size: int
     eos_token_id: int
@@ -65,6 +65,7 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
     the named spec from model_specs/<name>.yml (or a provided file path). Training config values
     take precedence over spec values. Validates against the Hyperparameters dataclass.
     """
+    global WINDOW_BLOCK_SIZE
     cfg_dict = {}
 
     used_path = Path(config_path)
@@ -90,13 +91,11 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
     if model_spec_name:
         from dataclasses import asdict
         spec_dict = asdict(load_model_spec(str(model_spec_name))) # returns a dict
-        # Merge ModelSpec fields into cfg. For window_block_size we ALWAYS take the ModelSpec value.
+        # Merge ModelSpec fields into cfg.
         valid_names_for_merge = {f.name for f in dataclass_fields(Hyperparameters)}
         for k, v in spec_dict.items():
             if k not in valid_names_for_merge:
                 continue
-            if k == "window_block_size":
-                cfg_dict[k] = v
             elif k not in cfg_dict or cfg_dict[k] is None:
                 cfg_dict[k] = v
 
@@ -138,7 +137,6 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
     try:
         tsl = int(args.training_sequence_length)
         tawt = int(args.train_attention_window_len)
-        wbs = int(args.window_block_size)
         gas = int(args.grad_acc_steps)
         cdf = float(args.cooldown_frac)
         vlet = int(args.val_loss_every_tokens)
@@ -146,10 +144,10 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
         swt = int(args.checkpoint_warmup_tokens)
     except Exception as e:
         raise ValueError(f"Invalid types in Hyperparameters: {e}")
-    if tsl % wbs != 0:
-        raise ValueError(f"training_sequence_length ({tsl}) must be divisible by window_block_size ({wbs})")
-    if tawt % wbs != 0:
-        raise ValueError(f"train_attention_window_len ({tawt}) must be divisible by window_block_size ({wbs})")
+    if tsl % WINDOW_BLOCK_SIZE != 0:
+        raise ValueError(f"training_sequence_length ({tsl}) must be divisible by window_block_size ({WINDOW_BLOCK_SIZE})")
+    if tawt % WINDOW_BLOCK_SIZE != 0:
+        raise ValueError(f"train_attention_window_len ({tawt}) must be divisible by window_block_size ({WINDOW_BLOCK_SIZE})")
     if tsl < tawt:
         raise ValueError(f"training_sequence_length ({tsl}) must be >= train_attention_window_len ({tawt})")
     # Enforce training window <= model's supported max if spec is available

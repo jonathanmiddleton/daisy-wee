@@ -1,23 +1,24 @@
+import json
+import math
 import os
 import sys
 import time
-import json
-import math
-from datetime import datetime, timezone
-
 from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Optional
 
-from tools.checkpoint import model_from_checkpoint
-from tools.model_report import build_report, format_report_text
-from models import get_model_class, model_from_spec
 from data.data_gen_stream import DistributedDataGenerator
-from training.optim import Muon, get_lr_scale
-from training.optim import get_num_window_blocks, set_full_windows
-from training.optim import build_optimizers_from_cfg
+from models import model_from_spec
+from tools.checkpoint import model_from_checkpoint
+from tools.checkpoint import save_checkpoint
+from tools.model_report import build_report, format_report_text
 from training.eval import Evaluator
-from tools.checkpoint import load_checkpoint, save_checkpoint, apply_model_state
 from training.hparams import Hyperparameters, load_hparams_from_yaml, apply_cli_overrides
+from training.optim import Muon, get_lr_scale
+from training.optim import build_optimizers_from_cfg
+from training.optim import get_num_window_blocks, set_full_windows
+
+WINDOW_BLOCK_SIZE = 128
 
 ########################################
 #        App Config & Setup            #
@@ -40,15 +41,17 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import torch
 from torch import nn
 import torch.distributed as dist
-# Configure inductor/dynamo compile/tuning
-torch._inductor.config.coordinate_descent_tuning = bool(getattr(args, "torch_coordinate_descent_tuning", False))
-torch._dynamo.config.compiled_autograd = True
-torch._dynamo.config.error_on_nested_fx_trace = False  # temp workaround/diagnostic for dynamo error related to FlexAttention
+TORCH_COMPILE_OFF = os.environ.get("TORCH_COMPILE_OFF", "0") == "1"
+if not TORCH_COMPILE_OFF:
+    # Configure inductor/dynamo compile/tuning
+    torch._inductor.config.coordinate_descent_tuning = bool(getattr(args, "torch_coordinate_descent_tuning", False))
+    torch._dynamo.config.compiled_autograd = True
+    torch._dynamo.config.error_on_nested_fx_trace = False  # temp workaround/diagnostic for dynamo error related to FlexAttention
 # torchrun sets these env variables
 rank = int(os.environ.get("RANK", "0"))
 world_size = int(os.environ.get("WORLD_SIZE", "1"))
 local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-TORCH_COMPILE_OFF = os.environ.get("TORCH_COMPILE_OFF", "0") == "1"
+
 use_distributed = world_size > 1
 
 device = torch.device("cuda", local_rank) if torch.cuda.is_available() else torch.device('mps') if torch.mps.is_available() else torch.device('cpu')
@@ -65,6 +68,7 @@ elif device.type == 'mps':
 else:
     is_master = True
 
+# noinspection PyShadowingNames
 def maybe_compile(model: nn.Module, dynamic: bool = False) -> nn.Module:
     if TORCH_COMPILE_OFF:
         logger.info(f"Compiling disabled: TORCH_COMPILE_OFF={TORCH_COMPILE_OFF}")
@@ -75,7 +79,7 @@ def maybe_compile(model: nn.Module, dynamic: bool = False) -> nn.Module:
         model: nn.Module = torch.compile(model, dynamic=dynamic)
         return model
 
-def maybe_reset_peak_memory_stats() -> None:
+def maybe_reset_peak_memory_stats():
     if device.type == 'cuda':
         torch.cuda.reset_peak_memory_stats()
     else:
@@ -102,7 +106,7 @@ logger = MasterLogger
 _run_start_dt = datetime.now(timezone.utc).replace(second=0, microsecond=0)
 run_start_minute = _run_start_dt.strftime("%Y%m%dT%H%M")
 # Track last checkpoint file saved for this run so we can replace it
-_last_run_ckpt_path: str | None = None
+_last_run_ckpt_path: Optional[str] = None
 
 ########################################
 #       Weights & Biases (Optional)    #
@@ -139,6 +143,7 @@ def log_wandb(d: dict):
 
 def update_wandb_config(d: dict):
     if _wandb_enabled:
+        # noinspection PyShadowingNames
         try:
             _wandb.config.update(d, allow_val_change=True)
         except Exception as _e:
@@ -155,7 +160,7 @@ def _build_hparams_from_args(args: Hyperparameters) -> dict:
     return asdict(args)
 
 # noinspection PyShadowingNames
-def _get_ckpt_filename(*, val_value: float | None, step: int, run_start_minute: str, run_id: int, suffix: str | None = None, ) -> str:
+def _get_ckpt_filename(*, val_value: Optional[float], step: int, run_start_minute: str, run_id: int, suffix: Optional[str] = None, ) -> str:
     os.makedirs("checkpoints", exist_ok=True)
     _val_trunc = math.trunc(val_value * 100) / 100 if val_value is not None else float("nan")
     return f"checkpoints/{run_start_minute}-val{_val_trunc:.3f}-step{step:06d}-run{run_id}" + (f"-{suffix}" if suffix else "") + ".pt"
@@ -163,7 +168,7 @@ def _get_ckpt_filename(*, val_value: float | None, step: int, run_start_minute: 
 # noinspection PyShadowingNames
 def _save_checkpoint(
         *,
-        val_value: float | None,
+        val_value: Optional[float],
         step: int,
         run_start_minute: str,
         run_id: int,
@@ -173,7 +178,7 @@ def _save_checkpoint(
         tokens_per_step: int,
         progress,
         overwrite: bool = False,
-        suffix: str | None = None,
+        suffix: Optional[str] = None,
 ) -> str:
     """Create a run-scoped checkpoint filename, remove the previous run checkpoint if different,
     save the new checkpoint, and remember its path.
@@ -197,9 +202,9 @@ def _save_checkpoint(
     save_checkpoint(
         fname,
         model=model,
+        hparams=_build_hparams_from_args(args),
         step=step,
         best_val=best_val,
-        hparams=_build_hparams_from_args(args),
         tokens_per_step=tokens_per_step,
         progress_state=progress.state_dict(),
     )
@@ -214,7 +219,7 @@ def _save_checkpoint(
 # Rehydrate critical hyperparameters from checkpoint if available
 best_val_from_ckpt = None
 resume_from_step = None
-_resume_tokens_per_step: int | None = None
+_resume_tokens_per_step: Optional[int] = None
 _ckpt_obj = None
 if args.init_checkpoint:
     # TODO diff args/hparams/modelspec from checkpoint
@@ -281,7 +286,6 @@ for _v in args.val_shards:
         distributed_enabled=use_distributed,
         rank=rank,
         train_attention_window_len=args.train_attention_window_len,
-        window_block_size=args.window_block_size,
     )
     _val_evals.append((_label, _eval))
 
@@ -393,7 +397,7 @@ while progress.tokens_processed < progress.target_tokens:
 
     for micro_step in range(ga_steps):
         inputs, targets = next(_train_ddg)
-        n_blocks = get_num_window_blocks(progress.s, attention_window_len=args.train_attention_window_len, window_block_size=args.window_block_size).to(device.type)
+        n_blocks = get_num_window_blocks(progress.s, attention_window_len=args.train_attention_window_len, window_block_size=WINDOW_BLOCK_SIZE).to(device.type)
         logger.debug(f"Pre-autocast: inputs.shape={inputs.shape} inputs.device.type={inputs.device.type} targets.shape={targets.shape} targets.device.type={targets.device.type} n_blocks={n_blocks}")
         with torch.autocast(device.type, dtype=torch.bfloat16):
             loss = model(inputs, n_blocks, targets)

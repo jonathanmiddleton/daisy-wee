@@ -6,6 +6,7 @@ from torch.nn.attention.flex_attention import BlockMask, flex_attention
 from torch.nn import functional as F
 from models.daisy.functional import norm, init_linear
 
+WINDOW_BLOCK_SIZE = 128
 
 def is_flex_available(enable_for_cpu: bool = False):
     # FlexAttention is supported only on cuda (limited on CPU)
@@ -21,18 +22,6 @@ def _apply_rope(x_BTHD, cos, sin):
 
 def _flex_call(q, k, v, block_mask, scale):
     return flex_attention(q, k, v, block_mask=block_mask, scale=scale)
-
-def build_attn_mask(input_seq: Tensor, window_size: int):
-    T = input_seq.size(-1)
-    q = torch.arange(T, device=input_seq.device)[:, None]  # (T, 1)
-    k = torch.arange(T, device=input_seq.device)[None, :]  # (1, T)
-    d = q - k  # d[q, k] = q - k
-
-    m = torch.zeros(T, T, device=input_seq.device, dtype=torch.float32)
-    m[d < 0] = float("-inf")  # forbid future (k > q)
-    m[d >= window_size] = float("-inf")  # forbid too-far past
-    attn_mask = m[None, None, :, :]
-    return attn_mask
 
 class Rotary(nn.Module):
     def __init__(self, dim: int, max_seq_len: int):
@@ -86,7 +75,7 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         torch._assert(dim % num_heads == 0, "dim must be divisible by num_heads")
         self.num_heads = num_heads
-        self.head_dim = head_dim
+        self.head_dim: int = head_dim
         self.m_dim = dim
         # merged QKV weights: suggested by many, implemented by @fernbear.bsky.social, and further improved by @YouJiacheng
         # https://x.com/hi_tysam/status/1879699187107033311
@@ -106,12 +95,14 @@ class CausalSelfAttention(nn.Module):
             self.forward = self.forward_sdpa
 
 
-    def create_blockmasks(self, input_seq: Tensor):
-        BLOCK_SIZE = 128
+    def create_blockmasks(self, input_seq: Tensor, sliding_window_num_blocks: Tensor):
+        global WINDOW_BLOCK_SIZE
+        BLOCK_SIZE = WINDOW_BLOCK_SIZE
         torch._assert(len(input_seq) % BLOCK_SIZE == 0, "input_seq must be divisible by BLOCK_SIZE")
         device = input_seq.device
         docs = (input_seq == self.eos_token_id).cumsum(0)
 
+        #noinspect PyUnusedLocal
         def document_causal(b, h, q_idx, kv_idx):
             causal_mask = q_idx >= kv_idx
             document_mask = docs[q_idx] == docs[kv_idx]
@@ -137,7 +128,6 @@ class CausalSelfAttention(nn.Module):
         full_kv_num_blocks, full_kv_indices = dense_to_ordered(blockmask_all)
 
         def build_bm(window_size_blocks: Tensor) -> BlockMask:
-            # print(f"partial_kv_num_blocks.device={partial_kv_num_blocks.device.type} window_size_blocks.device={window_size_blocks.device} full_kv_num_blocks.device={full_kv_num_blocks.device.type}")
             return BlockMask.from_kv_blocks(
                 torch.clamp_max(partial_kv_num_blocks, torch.clamp_min(window_size_blocks - full_kv_num_blocks, 1)),
                 partial_kv_indices,
@@ -178,27 +168,6 @@ class CausalSelfAttention(nn.Module):
         q, k = self.rotary(q), self.rotary(k)
         return q, k, v
 
-    def forward_flex(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, block_mask: BlockMask):
-        B, T = x.size(0), x.size(1)
-        q_, k_, v_ = self._qkv_common(x, ve, sa_lambdas)
-        block_mask = self.create_blockmasks(x)
-        y = _flex_call(q_, k_, v_, block_mask=block_mask, scale=self.attn_scale)
-        y = y.transpose(1, 2).contiguous().view(B, T, self.m_dim)
-        y = torch.nn.functional.linear(y, self.qkvo_w[3])
-        return y
-
-    def forward_sdpa(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, attn_mask: torch.Tensor):
-        y, _, _, _ = self._sdpa_common(x, ve, sa_lambdas, attn_mask)
-        return y
-
-    def prefill(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, attn_mask: torch.Tensor,
-                debug: bool = False):
-        y, k, v, q = self._sdpa_common(x, ve, sa_lambdas, attn_mask)
-
-        if debug:
-            self.last_q = q
-            self.last_k = k
-        return y, k.transpose(1, 2), v.transpose(1, 2)
 
     def _qkv_common(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor):
         q, k, v = self._calc_qkv(x)
@@ -211,14 +180,36 @@ class CausalSelfAttention(nn.Module):
         v_ = v.transpose(1, 2)
         return q_, k_, v_
 
-    def _sdpa_common(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, attn_mask: torch.Tensor):
+    def _sdpa_common(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor):
         B, T = x.size(0), x.size(1)
         q_, k_, v_ = self._qkv_common(x, ve, sa_lambdas)
-        attn_mask = attn_mask.to(q_.dtype)
-        y = torch.nn.functional.scaled_dot_product_attention(q_, k_, v_, attn_mask=attn_mask, scale=self.attn_scale)
+        y = torch.nn.functional.scaled_dot_product_attention(q_, k_, v_, is_causal=True, scale=self.attn_scale)
         y = y.transpose(1, 2).contiguous().view(B, T, self.m_dim)
         y = torch.nn.functional.linear(y, self.qkvo_w[3])
         return y, k_.transpose(1, 2), v_.transpose(1, 2), q_.transpose(1, 2)
+
+    def forward_sdpa(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, attn_mask: Tensor = None):
+        # attn_mask: for future document-causal masking
+        y, _, _, _ = self._sdpa_common(x, ve, sa_lambdas)
+        return y
+
+    def forward_flex(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, sliding_window_num_blocks: Tensor):
+        B, T = x.size(0), x.size(1)
+        q_, k_, v_ = self._qkv_common(x, ve, sa_lambdas)
+        block_mask = self.create_blockmasks(x, sliding_window_num_blocks)
+        y = _flex_call(q_, k_, v_, block_mask=block_mask, scale=self.attn_scale)
+        y = y.transpose(1, 2).contiguous().view(B, T, self.m_dim)
+        y = torch.nn.functional.linear(y, self.qkvo_w[3])
+        return y
+
+    def prefill(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, attn_mask: Tensor = None, debug: bool = False):
+        #attn_mask: for future document-causal masking
+        y, k, v, q = self._sdpa_common(x, ve, sa_lambdas)
+
+        if debug:
+            self.last_q = q
+            self.last_k = k
+        return y, k.transpose(1, 2), v.transpose(1, 2)
 
     def step(self, x, k_ctx: Tensor, v_ctx: Tensor, pos: int, ve: Tensor, sa_lambdas: Tensor, window: int):
         B, T = x.size(0), 1
