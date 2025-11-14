@@ -1,5 +1,5 @@
 # test config, attempts overfit
-wandb_log: true
+wandb_log: false
 wandb_project: 'daisy'
 wandb_run_name: 'pico-overfit-cuda'
 # Torch config

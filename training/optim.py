@@ -61,13 +61,13 @@ def derive_named_param_groups(model: nn.Module) -> dict[str, list[nn.Parameter]]
         "scalar_params": scalar_params,
     }
 
-    if head_params is not None:
+    if head_params:
         p_dict["head_params"] = head_params
 
-    if hidden_scalar_params is not None:
+    if hidden_scalar_params:
         p_dict["hidden_scalar_params"] = hidden_scalar_params
 
-    if attn_time_constant_params is not None:
+    if attn_time_constant_params:
         p_dict["attn_time_constant_params"] = attn_time_constant_params
 
     return p_dict

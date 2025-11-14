@@ -11,7 +11,7 @@ max_seq_len: 65536
 value_embeddings: true
 tied_embeddings: false
 attn_all_layers: true
-attn_impl: 'standard' #  'standard' or `kimi_linear`
+attn_impl: 'kimi_linear' # or 'standard'
 
 
 
