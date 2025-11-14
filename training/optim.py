@@ -194,9 +194,6 @@ class Muon(torch.optim.Optimizer):
                     torch.futures.collect_all(futures).wait()
 
 
-import math
-
-
 class AdaptiveLR:
     def __init__(self,
                  H: int = 50,
