@@ -7,3 +7,4 @@ pylog124M/
 __pycache__/
 logs/
 tmp/
+.idea
