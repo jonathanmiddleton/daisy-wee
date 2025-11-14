@@ -97,7 +97,7 @@ def zeropower_via_newtonschulz5(G: Tensor) -> Tensor:
 def update_faster(acc_bf16_view_u16: Tensor, mantissa: Tensor, momentum_buffer: Tensor, grad: Tensor, momentum: Tensor,
                   eff_lr: Tensor, eff_weight_decay: Tensor):
     """
-    Mixed precision with full precision math.
+    Mixed precision with full precision math. Support for uint* ops requires torch compile
     """
     assert acc_bf16_view_u16.dtype == mantissa.dtype == torch.uint16
     grad = grad.float()
@@ -115,7 +115,7 @@ def update_faster(acc_bf16_view_u16: Tensor, mantissa: Tensor, momentum_buffer: 
 def update_slower(acc: Tensor, momentum_buffer: Tensor, grad: Tensor, momentum: Tensor, eff_lr: Tensor,
                   eff_weight_decay: Tensor):
     """
-    Full precision alternative to update_fast for platforms that don't support uint* ops.
+    Full precision alternative to update_fast for platforms that don't support uint* ops or if unable to compile
     """
     grad = grad.float()
     momentum_buffer.copy_(momentum * momentum_buffer + (1 - momentum) * grad)
