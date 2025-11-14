@@ -109,7 +109,7 @@ def zeropower_via_newtonschulz5(G: Tensor) -> Tensor:
         X = X.mT
     return X
 
-
+@torch.compile
 def update_faster(acc_bf16_view_u16: Tensor, mantissa: Tensor, momentum_buffer: Tensor, grad: Tensor, momentum: Tensor,
                   eff_lr: Tensor, eff_weight_decay: Tensor):
     """
@@ -126,7 +126,7 @@ def update_faster(acc_bf16_view_u16: Tensor, mantissa: Tensor, momentum_buffer: 
     acc_bf16_view_u16.copy_((acc_m_u32 >> 16).to(torch.uint16))
     mantissa.copy_(acc_m_u32.to(torch.uint16))
 
-
+@torch.compile
 def update_slower(acc: Tensor, momentum_buffer: Tensor, grad: Tensor, momentum: Tensor, eff_lr: Tensor,
                   eff_weight_decay: Tensor):
     """

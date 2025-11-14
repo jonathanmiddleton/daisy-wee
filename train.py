@@ -41,8 +41,8 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import torch
 from torch import nn
 import torch.distributed as dist
-TORCH_COMPILE_OFF = os.environ.get("TORCH_COMPILE_OFF", "0") == "1"
-if not TORCH_COMPILE_OFF:
+TORCH_DISABLE_MODEL_COMPILE = os.environ.get("TORCH_DISABLE_MODEL_COMPILE", "0") == "1"
+if not TORCH_DISABLE_MODEL_COMPILE:
     # Configure inductor/dynamo compile/tuning
     torch._inductor.config.coordinate_descent_tuning = bool(getattr(args, "torch_coordinate_descent_tuning", False))
     torch._dynamo.config.compiled_autograd = True
@@ -70,8 +70,8 @@ else:
 
 # noinspection PyShadowingNames
 def maybe_compile(model: nn.Module, dynamic: bool = False) -> nn.Module:
-    if TORCH_COMPILE_OFF:
-        logger.info(f"Compiling disabled: TORCH_COMPILE_OFF={TORCH_COMPILE_OFF}")
+    if TORCH_DISABLE_MODEL_COMPILE:
+        logger.info(f"Compiling disabled: TORCH_DISABLE_MODEL_COMPILE={TORCH_DISABLE_MODEL_COMPILE}")
         return model
     else:
         logger.info(f"Compiling model (dynamic={dynamic}). This may take several minutes.")
