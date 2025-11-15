@@ -2,3 +2,4 @@
 chardet
 flash-attention-linear
 triton
+causal-conv1d

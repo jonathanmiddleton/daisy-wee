@@ -6,8 +6,7 @@ tabulate
 seaborn
 matplotlib
 pandas
-# requires torch 2.10.0.dev
-# pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/ --upgrade
+# requires torch 2.10.0.dev to avoid graph breaks
 # pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu128  --upgrade
 #torch
 datasets

@@ -71,7 +71,7 @@ else:
 # noinspection PyShadowingNames
 def maybe_compile(model: nn.Module, dynamic: bool = False) -> nn.Module:
     if TORCH_DISABLE_MODEL_COMPILE:
-        logger.info(f"Compiling disabled: TORCH_DISABLE_MODEL_COMPILE={TORCH_DISABLE_MODEL_COMPILE}")
+        logger.info(f"Model compilation disabled: TORCH_DISABLE_MODEL_COMPILE={TORCH_DISABLE_MODEL_COMPILE}")
         return model
     else:
         logger.info(f"Compiling model (dynamic={dynamic}). This may take several minutes.")

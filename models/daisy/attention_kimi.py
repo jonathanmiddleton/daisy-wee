@@ -2,10 +2,13 @@ from typing import Optional
 
 import torch
 from torch import nn, Tensor
-from einops import rearrange
 from fla.ops.kda import chunk_kda, fused_recurrent_kda
 from fla.ops.kda.gate import fused_kda_gate
 from fla.modules import FusedRMSNormGated, ShortConvolution
+
+from models.daisy.fla_kda_custom_ops import kda_gate as kda_gate_op, kda_chunk as kda_chunk_op, rmsnorm_gated as rmsnorm_gated_op
+from einops import rearrange
+
 #noinspection PyBroadException
 try:
     from fla.layers.utils import get_unpad_data, index_first_axis, pad_input
@@ -33,6 +36,8 @@ class KimiLinearSelfAttention(nn.Module):
     # noinspection PyUnusedLocal
     def __init__(self, dim: int, num_heads: int, max_seq_len: int, head_dim: int, expand_v: float = 1.0, mode: str = 'chunk',
                  use_short_conv: bool = True, allow_neg_eigval: bool = False, conv_size: int = 4, conv_bias: bool = False, layer_idx: int = 0):
+        assert allow_neg_eigval == False, "allow_neg_eigval is not yet supported"
+        assert mode == 'chunk', "mode must be 'chunk'; fused_recurrent not yet supported"
         super().__init__()
         self.mode = mode
         self.allow_neg_eigval = allow_neg_eigval
@@ -85,6 +90,21 @@ class KimiLinearSelfAttention(nn.Module):
         lam1 = sa_lambdas[1].to(v.dtype)
         return lam0 * v + lam1 * ve.view_as(v)
 
+    def _kda_eager(self, x, q, k, v, g, beta, rec, cu_seqlens):
+        g = kda_gate_op(g, self.A_log, int(self.head_k_dim), self.dt_bias)
+        o, rec = kda_chunk_op(q, k, v, g, beta, rec, False, True, cu_seqlens)
+        o = rmsnorm_gated_op(
+            o,
+            rearrange(self.g_proj(x), "... (h d) -> ... h d", d=self.head_v_dim),
+            self.o_norm.weight,
+            getattr(self.o_norm, "bias", None),
+            float(getattr(self.o_norm, "eps", 1e-5)),
+            getattr(self.o_norm, "group_size", None),
+            bool(getattr(self.o_norm, "norm_before_gate", False)),
+        )
+        return o, rec
+
+
     def _forward_core(self, x: Tensor, ve: Optional[Tensor], sa_lambdas: Optional[Tensor], attn_mask: Optional[Tensor], use_cache: bool):
         b, s, _ = x.shape
         mode = "fused_recurrent" if s <= 64 and not self.training else self.mode
@@ -108,19 +128,20 @@ class KimiLinearSelfAttention(nn.Module):
             v = torch.nn.functional.silu(self.v_proj(x))
             conv_state = None
         g = self.f_proj(x)
-        g = fused_kda_gate(g, self.A_log, self.head_k_dim, g_bias=self.dt_bias)
-        beta = self.b_proj(x).float().sigmoid()
+        # g = fused_kda_gate(g, self.A_log, self.head_k_dim, g_bias=self.dt_bias)
         q, k = (rearrange(t, "... (h d) -> ... h d", d=self.head_k_dim) for t in (q, k))
         v = rearrange(v, "... (h d) -> ... h d", d=self.head_v_dim)
         if sa_lambdas is not None and ve is not None:
             v = self._mix_v_with_ve(v, ve, sa_lambdas)
-        if self.allow_neg_eigval:
-            beta = beta * 2.0
+        # if self.allow_neg_eigval:
+        #     beta = beta * 2.0
         rec = last_state["recurrent_state"] if isinstance(last_state, dict) else None
-        if mode == "chunk":
-            o, rec = chunk_kda(q=q, k=k, v=v, g=g, beta=beta, initial_state=rec, output_final_state=use_cache, use_qk_l2norm_in_kernel=True, cu_seqlens=cu_seqlens)
-        else:
-            o, rec = fused_recurrent_kda(q=q, k=k, v=v, g=g, beta=beta, initial_state=rec, output_final_state=use_cache, use_qk_l2norm_in_kernel=True, cu_seqlens=cu_seqlens)
+        beta = self.b_proj(x).float().sigmoid()
+        o, rec = self._kda_eager(x, q, k, v, g, beta, rec, cu_seqlens)
+        # if mode == "chunk":
+        #     o, rec = chunk_kda(q=q, k=k, v=v, g=g, beta=beta, initial_state=rec, output_final_state=use_cache, use_qk_l2norm_in_kernel=True, cu_seqlens=cu_seqlens)
+        # else:
+        #     o, rec = fused_recurrent_kda(q=q, k=k, v=v, g=g, beta=beta, initial_state=rec, output_final_state=use_cache, use_qk_l2norm_in_kernel=True, cu_seqlens=cu_seqlens)
         if use_cache:
             self._recurrent_state = rec
             self._conv_state = conv_state
