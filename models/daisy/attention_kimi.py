@@ -2,8 +2,8 @@ from typing import Optional
 
 import torch
 from torch import nn, Tensor
-from fla.ops.kda import chunk_kda, fused_recurrent_kda
-from fla.ops.kda.gate import fused_kda_gate
+import torch.nn.functional as F
+
 from fla.modules import FusedRMSNormGated, ShortConvolution
 
 from models.daisy.fla_kda_custom_ops import kda_gate as kda_gate_op, kda_chunk as kda_chunk_op, rmsnorm_gated as rmsnorm_gated_op
@@ -31,6 +31,34 @@ try:
     from fla.models.utils import Cache
 except Exception:
     Cache = None
+
+
+class CompilableFusedRMSNormGated(nn.Module):
+    """Replacement for FusedRMSNormGated that works with torch.compile"""
+
+    def __init__(self, hidden_size: int, activation: str = "sigmoid", eps: float = 1e-5, dtype=torch.bfloat16):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.eps = eps
+        self.activation = activation
+        assert activation == "sigmoid", "Only sigmoid activation is supported"
+
+        self.weight = nn.Parameter(torch.ones(hidden_size, dtype=dtype))
+        self.bias = None
+
+    def forward(self, x: Tensor, gate: Tensor) -> Tensor:
+        # x: (..., hidden_size)
+        # gate: (..., hidden_size) - will be passed through sigmoid
+
+        # Apply RMSNorm
+        normed = rmsnorm_gated_op(x, self.weight, self.bias, self.eps)
+
+        # Ensure gate is on the same device as normed (handles fake tensor case)
+        gate = gate.to(device=normed.device, dtype=normed.dtype)
+        gate_activated = torch.sigmoid(gate)
+
+        return normed * gate_activated
+
 
 class KimiLinearSelfAttention(nn.Module):
     # noinspection PyUnusedLocal
@@ -69,7 +97,8 @@ class KimiLinearSelfAttention(nn.Module):
         self.dt_bias = nn.Parameter(torch.zeros(self.key_dim, dtype=torch.float32))
         self.dt_bias._no_weight_decay = True
         self.g_proj = nn.Sequential(nn.Linear(dim, self.head_v_dim, bias=False, dtype=torch.bfloat16), nn.Linear(self.head_v_dim, self.value_dim, bias=True, dtype=torch.bfloat16) )
-        self.o_norm = FusedRMSNormGated(self.head_v_dim, activation="sigmoid", eps=1e-5, dtype=torch.bfloat16)
+        # self.o_norm = FusedRMSNormGated(self.head_v_dim, activation="sigmoid", eps=1e-5, dtype=torch.bfloat16)
+        self.o_norm = CompilableFusedRMSNormGated(self.head_v_dim, activation="sigmoid", eps=1e-5, dtype=torch.bfloat16)
         self.o_proj = nn.Linear(self.value_dim, dim, bias=False, dtype=torch.bfloat16)
         self._recurrent_state = None
         self._conv_state = None
@@ -91,19 +120,14 @@ class KimiLinearSelfAttention(nn.Module):
         return lam0 * v + lam1 * ve.view_as(v)
 
     def _kda_eager(self, x, q, k, v, g, beta, rec, cu_seqlens):
-        g = kda_gate_op(g, self.A_log, int(self.head_k_dim), self.dt_bias)
+        A_log = self.A_log.to(device=g.device)
+        dt_bias = self.dt_bias.to(device=g.device)
+        g = kda_gate_op(g, A_log, int(self.head_k_dim), dt_bias, None, 1.0, 20.0)
         o, rec = kda_chunk_op(q, k, v, g, beta, rec, False, True, cu_seqlens)
-        o = rmsnorm_gated_op(
-            o,
-            rearrange(self.g_proj(x), "... (h d) -> ... h d", d=self.head_v_dim),
-            self.o_norm.weight,
-            getattr(self.o_norm, "bias", None),
-            float(getattr(self.o_norm, "eps", 1e-5)),
-            getattr(self.o_norm, "group_size", None),
-            bool(getattr(self.o_norm, "norm_before_gate", False)),
-        )
+        gp_raw = self.g_proj(x)
+        gp = rearrange(gp_raw.to(device=o.device, dtype=o.dtype), "... (h d) -> ... h d", d=self.head_v_dim)
+        o = self.o_norm(o, gp)
         return o, rec
-
 
     def _forward_core(self, x: Tensor, ve: Optional[Tensor], sa_lambdas: Optional[Tensor], attn_mask: Optional[Tensor], use_cache: bool):
         b, s, _ = x.shape
@@ -114,6 +138,8 @@ class KimiLinearSelfAttention(nn.Module):
         elif self._recurrent_state is not None and use_cache:
             last_state = {"recurrent_state": self._recurrent_state, "conv_state": self._conv_state}
         indices, cu_seqlens, _ = get_unpad_data(attn_mask[:, -s:]) if attn_mask is not None else (None, None, None)
+        if cu_seqlens is not None:
+            cu_seqlens = cu_seqlens.detach()
         if indices is not None:
             x = index_first_axis(rearrange(x, "b t d -> (b t) d"), indices).unsqueeze(0)
         if self.use_short_conv:
@@ -136,7 +162,7 @@ class KimiLinearSelfAttention(nn.Module):
         # if self.allow_neg_eigval:
         #     beta = beta * 2.0
         rec = last_state["recurrent_state"] if isinstance(last_state, dict) else None
-        beta = self.b_proj(x).float().sigmoid()
+        beta = self.b_proj(x).to(dtype=torch.float32, device=x.device).sigmoid()
         o, rec = self._kda_eager(x, q, k, v, g, beta, rec, cu_seqlens)
         # if mode == "chunk":
         #     o, rec = chunk_kda(q=q, k=k, v=v, g=g, beta=beta, initial_state=rec, output_final_state=use_cache, use_qk_l2norm_in_kernel=True, cu_seqlens=cu_seqlens)
@@ -148,9 +174,9 @@ class KimiLinearSelfAttention(nn.Module):
             self._seen += s
             if self._cache is not None:
                 self._cache.update(recurrent_state=rec, conv_state=conv_state, layer_idx=self.layer_idx, offset=s)
-        o = self.o_norm(o, rearrange(self.g_proj(x), "... (h d) -> ... h d", d=self.head_v_dim))
+        # o = self.o_norm(o, rearrange(self.g_proj(x), "... (h d) -> ... h d", d=self.head_v_dim))
         o = rearrange(o, "b t h d -> b t (h d)")
-        o = self.o_proj(o)
+        o = self.o_proj(o.to(dtype=self.o_proj.weight.dtype, device=self.o_proj.weight.device))
         if indices is not None:
             o = pad_input(o.squeeze(0), indices, b, s)
         return o

@@ -1,5 +1,6 @@
 # for KimiLinearSelfAttention
 chardet
+# pip install -U --no-use-pep517 git+https://github.com/fla-org/flash-linear-attention --no-deps
 flash-attention-linear
 triton
 causal-conv1d
