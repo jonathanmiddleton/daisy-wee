@@ -7,7 +7,7 @@ from torch.nn.attention.flex_attention import BlockMask
 
 
 class Block(nn.Module):
-    def __init__(self, dim: int, num_heads: int, max_seq_len: int, layer_idx: int, head_dim: int, has_attn: bool,):
+    def __init__(self, dim: int, num_heads: int, max_seq_len: int, layer_idx: int, head_dim: int, has_attn: bool, attn_impl: str = "standard"):
         super().__init__()
 
         self.attn: CausalSelfAttention = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim,

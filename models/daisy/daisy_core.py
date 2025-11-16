@@ -112,7 +112,7 @@ class DaisyCore(nn.Module):
     def __init__(self, vocab_size: int, num_layers: int, num_heads: int, model_dim: int, max_seq_len: int,
                  head_dim: int, window_size: int = 1024,
                  window_block_size: int = 128, eos_token_id: int | None = None, desc: dict | None = None,
-                 value_embeddings: bool = True, tied_embeddings: bool = False):
+                 value_embeddings: bool = True, tied_embeddings: bool = False, attn_impl: str = "standard"):
         super().__init__()
         if eos_token_id is None:
             raise ValueError("eos_token_id is required.")
@@ -149,7 +149,7 @@ class DaisyCore(nn.Module):
         # self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(len(self.ve_layers))])
 
         self.blocks = nn.ModuleList(
-            [Block(model_dim, num_heads, max_seq_len, i, head_dim, i in self.attn_layers) for i in range(num_layers)])
+            [Block(model_dim, num_heads, max_seq_len, i, head_dim, i in self.attn_layers, attn_impl=attn_impl) for i in range(num_layers)])
         if tied_embeddings:
             nn.init.normal_(self.embed.weight, mean=0.0, std=0.02)
             self.lm_head_w = self.embed.weight
