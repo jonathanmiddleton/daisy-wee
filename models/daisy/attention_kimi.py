@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 from fla.modules import FusedRMSNormGated, ShortConvolution
 
-from models.daisy.fla_kda_custom_ops import kda_gate as kda_gate_op, kda_chunk as kda_chunk_op, rmsnorm_gated as rmsnorm_gated_op
+from models.daisy.fla_kda_custom_ops import kda_gate as kda_gate_op, kda_chunk as kda_chunk_op
 from einops import rearrange
 
 #noinspection PyBroadException
@@ -36,12 +36,11 @@ except Exception:
 class CompilableFusedRMSNormGated(nn.Module):
     """Replacement for FusedRMSNormGated that works with torch.compile"""
 
-    def __init__(self, hidden_size: int, activation: str = "sigmoid", eps: float = 1e-5, dtype=torch.bfloat16):
+    def __init__(self, hidden_size: int, activation: str = "sigmoid", dtype=torch.bfloat16):
+        assert activation == "sigmoid", "Only sigmoid activation is supported"
         super().__init__()
         self.hidden_size = hidden_size
-        self.eps = eps
         self.activation = activation
-        assert activation == "sigmoid", "Only sigmoid activation is supported"
 
         self.weight = nn.Parameter(torch.ones(hidden_size, dtype=dtype))
         self.bias = None
@@ -49,9 +48,8 @@ class CompilableFusedRMSNormGated(nn.Module):
     def forward(self, x: Tensor, gate: Tensor) -> Tensor:
         # x: (..., hidden_size)
         # gate: (..., hidden_size) - will be passed through sigmoid
-
-        # Apply RMSNorm
-        normed = rmsnorm_gated_op(x, self.weight, self.bias, self.eps)
+        from fla.modules.fused_norm_gate import rms_norm_gated
+        normed = rms_norm_gated(x, gate, self.weight, self.bias )
 
         # Ensure gate is on the same device as normed (handles fake tensor case)
         gate = gate.to(device=normed.device, dtype=normed.dtype)
@@ -65,7 +63,7 @@ class KimiLinearSelfAttention(nn.Module):
     def __init__(self, dim: int, num_heads: int, max_seq_len: int, head_dim: int, expand_v: float = 1.0, mode: str = 'chunk',
                  use_short_conv: bool = True, allow_neg_eigval: bool = False, conv_size: int = 4, conv_bias: bool = False, layer_idx: int = 0):
         assert allow_neg_eigval == False, "allow_neg_eigval is not yet supported"
-        assert mode == 'chunk', "mode must be 'chunk'; fused_recurrent not yet supported"
+        assert mode == 'chunk', "mode must be 'chunk'; fused_recurrent unsupported for training, future support for inference"
         super().__init__()
         self.mode = mode
         self.allow_neg_eigval = allow_neg_eigval
@@ -98,7 +96,7 @@ class KimiLinearSelfAttention(nn.Module):
         self.dt_bias._no_weight_decay = True
         self.g_proj = nn.Sequential(nn.Linear(dim, self.head_v_dim, bias=False, dtype=torch.bfloat16), nn.Linear(self.head_v_dim, self.value_dim, bias=True, dtype=torch.bfloat16) )
         # self.o_norm = FusedRMSNormGated(self.head_v_dim, activation="sigmoid", eps=1e-5, dtype=torch.bfloat16)
-        self.o_norm = CompilableFusedRMSNormGated(self.head_v_dim, activation="sigmoid", eps=1e-5, dtype=torch.bfloat16)
+        self.o_norm = CompilableFusedRMSNormGated(self.head_v_dim, activation="sigmoid", dtype=torch.bfloat16)
         self.o_proj = nn.Linear(self.value_dim, dim, bias=False, dtype=torch.bfloat16)
         self._recurrent_state = None
         self._conv_state = None
@@ -115,13 +113,16 @@ class KimiLinearSelfAttention(nn.Module):
     def _mix_v_with_ve(self, v, ve, sa_lambdas):
         if ve is None:
             return v
-        lam0 = sa_lambdas[0].to(v.dtype)
-        lam1 = sa_lambdas[1].to(v.dtype)
-        return lam0 * v + lam1 * ve.view_as(v)
+        lam0 = sa_lambdas[0].to(dtype=v.dtype)
+        lam1 = sa_lambdas[1].to(dtype=v.dtype)
+        ve_ = ve.to(dtype=v.dtype, device=v.device).view_as(v)
+        # print(f"lam0.device={lam0.device}, lam1.device={lam1.device}, v.device={v.device}, ve_.device={ve_.device}")
+        return lam0 * v + lam1 * ve_
 
     def _kda_eager(self, x, q, k, v, g, beta, rec, cu_seqlens):
         A_log = self.A_log.to(device=g.device)
         dt_bias = self.dt_bias.to(device=g.device)
+        # g = rearrange(g, "... (h d) -> ... h d", h=self.num_heads, d=self.head_k_dim) # expects g.shape(-1) == H * head_dim
         g = kda_gate_op(g, A_log, int(self.head_k_dim), dt_bias, None, 1.0, 20.0)
         o, rec = kda_chunk_op(q, k, v, g, beta, rec, False, True, cu_seqlens)
         gp_raw = self.g_proj(x)
@@ -129,7 +130,9 @@ class KimiLinearSelfAttention(nn.Module):
         o = self.o_norm(o, gp)
         return o, rec
 
+
     def _forward_core(self, x: Tensor, ve: Optional[Tensor], sa_lambdas: Optional[Tensor], attn_mask: Optional[Tensor], use_cache: bool):
+        torch._assert(x.shape[0] == 1, "batch size must be 1") # TODO remove
         b, s, _ = x.shape
         mode = "fused_recurrent" if s <= 64 and not self.training else self.mode
         last_state = None
@@ -159,22 +162,15 @@ class KimiLinearSelfAttention(nn.Module):
         v = rearrange(v, "... (h d) -> ... h d", d=self.head_v_dim)
         if sa_lambdas is not None and ve is not None:
             v = self._mix_v_with_ve(v, ve, sa_lambdas)
-        # if self.allow_neg_eigval:
-        #     beta = beta * 2.0
         rec = last_state["recurrent_state"] if isinstance(last_state, dict) else None
-        beta = self.b_proj(x).to(dtype=torch.float32, device=x.device).sigmoid()
+        beta = self.b_proj(x).sigmoid().to(dtype=torch.float32, device=x.device)
         o, rec = self._kda_eager(x, q, k, v, g, beta, rec, cu_seqlens)
-        # if mode == "chunk":
-        #     o, rec = chunk_kda(q=q, k=k, v=v, g=g, beta=beta, initial_state=rec, output_final_state=use_cache, use_qk_l2norm_in_kernel=True, cu_seqlens=cu_seqlens)
-        # else:
-        #     o, rec = fused_recurrent_kda(q=q, k=k, v=v, g=g, beta=beta, initial_state=rec, output_final_state=use_cache, use_qk_l2norm_in_kernel=True, cu_seqlens=cu_seqlens)
         if use_cache:
             self._recurrent_state = rec
             self._conv_state = conv_state
             self._seen += s
             if self._cache is not None:
                 self._cache.update(recurrent_state=rec, conv_state=conv_state, layer_idx=self.layer_idx, offset=s)
-        # o = self.o_norm(o, rearrange(self.g_proj(x), "... (h d) -> ... h d", d=self.head_v_dim))
         o = rearrange(o, "b t h d -> b t (h d)")
         o = self.o_proj(o.to(dtype=self.o_proj.weight.dtype, device=self.o_proj.weight.device))
         if indices is not None:
