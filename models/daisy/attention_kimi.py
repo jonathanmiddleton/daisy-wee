@@ -1,12 +1,14 @@
 from typing import Optional
 
 import torch
+from fla.ops.kda.gate import fused_kda_gate
+from fla.ops.kda import chunk_kda
 from torch import nn, Tensor
 import torch.nn.functional as F
 
 from fla.modules import FusedRMSNormGated, ShortConvolution
 
-from models.daisy.fla_kda_custom_ops import kda_gate as kda_gate_op, kda_chunk as kda_chunk_op
+# from models.daisy.fla_kda_custom_ops import kda_gate, kda_chunk, rmsnorm_gated
 from einops import rearrange
 
 #noinspection PyBroadException
@@ -49,7 +51,7 @@ class CompilableFusedRMSNormGated(nn.Module):
         # x: (..., hidden_size)
         # gate: (..., hidden_size) - will be passed through sigmoid
         from fla.modules.fused_norm_gate import rms_norm_gated
-        normed = rms_norm_gated(x, gate, self.weight, self.bias )
+        normed = rms_norm_gated(x, gate, self.weight, self.bias)
 
         # Ensure gate is on the same device as normed (handles fake tensor case)
         gate = gate.to(device=normed.device, dtype=normed.dtype)
@@ -119,12 +121,14 @@ class KimiLinearSelfAttention(nn.Module):
         # print(f"lam0.device={lam0.device}, lam1.device={lam1.device}, v.device={v.device}, ve_.device={ve_.device}")
         return lam0 * v + lam1 * ve_
 
-    def _kda_eager(self, x, q, k, v, g, beta, rec, cu_seqlens):
+    @torch.compiler.disable()
+    def _kda_eager(self, x, q, k, v, g, beta, rec, cu_seqlens, use_cache: bool):
         A_log = self.A_log.to(device=g.device)
         dt_bias = self.dt_bias.to(device=g.device)
         # g = rearrange(g, "... (h d) -> ... h d", h=self.num_heads, d=self.head_k_dim) # expects g.shape(-1) == H * head_dim
-        g = kda_gate_op(g, A_log, int(self.head_k_dim), dt_bias, None, 1.0, 20.0)
-        o, rec = kda_chunk_op(q, k, v, g, beta, rec, False, True, cu_seqlens)
+        g = fused_kda_gate(g, A_log, int(self.head_k_dim), dt_bias, None, 1.0, 20.0)
+        o, rec = chunk_kda(q=q, k=k, v=v, g=g, beta=beta, initial_state=rec, output_final_state=use_cache,
+                           use_qk_l2norm_in_kernel=True, cu_seqlens=cu_seqlens)
         gp_raw = self.g_proj(x)
         gp = rearrange(gp_raw.to(device=o.device, dtype=o.dtype), "... (h d) -> ... h d", d=self.head_v_dim)
         o = self.o_norm(o, gp)
@@ -134,7 +138,7 @@ class KimiLinearSelfAttention(nn.Module):
     def _forward_core(self, x: Tensor, ve: Optional[Tensor], sa_lambdas: Optional[Tensor], attn_mask: Optional[Tensor], use_cache: bool):
         torch._assert(x.shape[0] == 1, "batch size must be 1") # TODO remove
         b, s, _ = x.shape
-        mode = "fused_recurrent" if s <= 64 and not self.training else self.mode
+        # mode = "fused_recurrent" if s <= 64 and not self.training else self.mode
         last_state = None
         if self._cache is not None and use_cache and len(self._cache) > self.layer_idx:
             last_state = self._cache[self.layer_idx]
@@ -164,7 +168,7 @@ class KimiLinearSelfAttention(nn.Module):
             v = self._mix_v_with_ve(v, ve, sa_lambdas)
         rec = last_state["recurrent_state"] if isinstance(last_state, dict) else None
         beta = self.b_proj(x).sigmoid().to(dtype=torch.float32, device=x.device)
-        o, rec = self._kda_eager(x, q, k, v, g, beta, rec, cu_seqlens)
+        o, rec = self._kda_eager(x, q, k, v, g, beta, rec, cu_seqlens, use_cache=use_cache)
         if use_cache:
             self._recurrent_state = rec
             self._conv_state = conv_state
