@@ -3,7 +3,6 @@ import pytest
 import torch
 from torch.nn.attention.flex_attention import create_block_mask, BlockMask
 
-from models.daisy.daisy_core import build_attn_mask
 from models.daisy.attention import CausalSelfAttention, is_flex_available
 
 
@@ -25,7 +24,7 @@ def test_causal_self_attention_forward_equals_step(T, W,  monkeypatch, block_or_
         dim, max_seq_len = H * D, 256
 
         dtype = torch.bfloat16
-        x_t = torch.ones(T, device=device, dtype=torch.int) #pseudo-tokens
+        x_t = torch.ones(T, dtype=torch.int) #pseudo-tokens
         x = torch.randn(1, T, dim, device=device, dtype=dtype) #pseudo-embedding
         lambdas = torch.tensor([1.0, 0.5], device=device, dtype=dtype)
         ve_full = torch.randn(1, T, H, D, device=device, dtype=dtype)
@@ -33,8 +32,7 @@ def test_causal_self_attention_forward_equals_step(T, W,  monkeypatch, block_or_
         if block_or_attn_mask == "attn":
             m = CausalSelfAttention(dim=dim, num_heads=H, max_seq_len=max_seq_len, head_dim=D,
                                     use_flex_attn=False).to(device).eval()
-            mask = build_attn_mask(x_t, window_size=W)
-            y_full = m.forward(x, ve=ve_full, sa_lambdas=lambdas, attn_mask=mask)
+            y_full = m.forward(x, ve=ve_full, sa_lambdas=lambdas )
         elif block_or_attn_mask == "block":
             m = CausalSelfAttention(dim=dim, num_heads=H, max_seq_len=max_seq_len, head_dim=D,
                                     use_flex_attn=True).to(device).eval()

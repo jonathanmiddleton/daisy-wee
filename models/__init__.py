@@ -37,7 +37,6 @@ def get_model_class(model_class: str) -> Type[nn.Module]:
 def model_from_spec(spec_or_cfg: str | dict | ModelSpec | Any, device: str, overrides: dict = None) -> nn.Module:
     # Normalize to ModelSpec for validation of architecture fields
     spec: ModelSpec
-    aux_cfg: Dict[str, Any] = {}
 
     if isinstance(spec_or_cfg, str):
         # YAML -> ModelSpec (load_model_spec already validates)
@@ -47,14 +46,12 @@ def model_from_spec(spec_or_cfg: str | dict | ModelSpec | Any, device: str, over
     elif isinstance(spec_or_cfg, dict):
         cfg = dict(spec_or_cfg)
         # Keep extras for aux, but filter to ModelSpec fields for construction
-        aux_cfg = cfg
         allowed = {f.name for f in dc_fields(ModelSpec)}
         spec_data = {k: v for k, v in cfg.items() if k in allowed}
         spec_data.setdefault("attention_window_len", 4096)
         spec = ModelSpec(**spec_data)
     elif is_dataclass(spec_or_cfg):
         cfg = dc_asdict(spec_or_cfg)
-        aux_cfg = cfg
         allowed = {f.name for f in dc_fields(ModelSpec)}
         spec_data = {k: v for k, v in cfg.items() if k in allowed}
         spec = ModelSpec(**spec_data)
@@ -73,9 +70,10 @@ def model_from_spec(spec_or_cfg: str | dict | ModelSpec | Any, device: str, over
     model_dim = int(spec.model_dim)
     head_dim = int(spec.head_dim)
     max_seq_len = int(spec.max_seq_len)
-    window_block_size = int(spec.window_block_size)
     value_embeddings = bool(spec.value_embeddings)
     tied_embeddings = bool(spec.tied_embeddings)
+    attn_all_layers = bool(spec.attn_all_layers)
+    attn_impl = str(spec.attn_impl)
 
     ModelClass = get_model_class(model_class)
     model: nn.Module = ModelClass(
@@ -85,11 +83,12 @@ def model_from_spec(spec_or_cfg: str | dict | ModelSpec | Any, device: str, over
         model_dim=model_dim,
         max_seq_len=max_seq_len,
         head_dim=head_dim,
-        window_block_size=window_block_size,
         eos_token_id=eos_token_id,
         desc=asdict(spec),
         value_embeddings=value_embeddings,
         tied_embeddings=tied_embeddings,
+        attn_all_layers = attn_all_layers,
+        attn_impl=attn_impl
     ).to(device)
     return model
 

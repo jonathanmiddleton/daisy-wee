@@ -10,6 +10,7 @@ from torch.accelerator import device_index
 from data.data_gen_stream import DistributedDataGenerator
 from training.optim import get_num_window_blocks
 
+WINDOW_BLOCK_SIZE = 128
 
 @dataclass
 class EvalResult:
@@ -28,14 +29,14 @@ class Evaluator:
         world_size: int | None = None,
         rank: int | None = None,
         train_attention_window_len: int,
-        window_block_size: int,
     ) -> None:
+        global WINDOW_BLOCK_SIZE
         self._ddg = data_generator
         self._use_dist = bool(distributed_enabled) if distributed_enabled is not None else dist.is_available() and dist.is_initialized()
         self._rank = int(rank or 0)
         self._world_size = int(world_size or 1)
         self._tawt = int(train_attention_window_len)
-        self._wbs = int(window_block_size)
+        self._wbs = WINDOW_BLOCK_SIZE
         # Track EMA of dloss/token between eval calls
         self._last_val_loss: Optional[float] = None
         self._last_tokens_seen: int = 0

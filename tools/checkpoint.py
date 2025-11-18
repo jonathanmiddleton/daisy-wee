@@ -84,9 +84,9 @@ def load_checkpoint(path: str, map_location: Any | None = None, strip_prefix: bo
 def save_checkpoint(
         path: str,
         model: nn.Module | Dict[str, Any],
+        hparams: Dict[str, Any],
         step: Optional[int] = None,
         best_val: Optional[float] = None,
-        hparams: Optional[Dict[str, Any]] = None,
         tokens_per_step: Optional[int] = None,
         progress_state: Optional[Dict[str, Any]] = None,
 ) -> None:
@@ -104,7 +104,7 @@ def save_checkpoint(
         step=step,
         model=model_sd,
         best_val=best_val,
-        hparams=hparams or {},
+        hparams=hparams,
         tokens_per_step=tokens_per_step,
         progress_state=progress_state,
     )

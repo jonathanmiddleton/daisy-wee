@@ -179,7 +179,7 @@ def main(argv: List[str] | None = None) -> int:
     combos = _cartesian_product(override_pairs)
 
     # Environment setup
-    os.environ.setdefault("TORCH_COMPILE_OFF", "0")
+    os.environ.setdefault("TORCH_DISABLE_MODEL_COMPILE", "0")
     os.environ.setdefault("TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS", "1")
     os.environ["OMP_NUM_THREADS"] = os.environ.get("OMP_NUM_THREADS", "8")
     if begin_shard:

@@ -5,7 +5,6 @@ num_layers: 16
 num_heads: 8
 head_dim: 128
 model_dim: 1024
-window_block_size: 128
 attention_window_len: 2304
 max_seq_len: 262144
 value_embeddings: true
