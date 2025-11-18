@@ -6,8 +6,7 @@ import yaml
 
 import pytest
 
-import runner
-from helpers import is_mac_os
+from tools.helpers import is_mac_os
 
 
 class FakePopen:
