@@ -6,6 +6,7 @@ import yaml
 
 import pytest
 
+import training.runner as runner
 from tools.helpers import is_mac_os
 
 

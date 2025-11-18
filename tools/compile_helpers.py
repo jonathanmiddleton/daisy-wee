@@ -1,6 +1,10 @@
 from typing import Callable, Tuple, Any, Dict
 from torch._dynamo.eval_frame import innermost_fn
 import functools
+from tools.master_logger import MasterLogger
+from tools.helpers import _default_sanitizer
+
+logger = MasterLogger
 
 def torch_get_guards_from_callable(fn: Callable, *args, **kwargs):
     """

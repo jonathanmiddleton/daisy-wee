@@ -77,7 +77,6 @@ def test_eval_consumes_total_tokens_globally_across_world_sizes(world_size, glob
             world_size=world_size,
             rank=rank,
             train_attention_window_len=128,
-            window_block_size=1,
         )
         model = ToyModel().eval()
 
@@ -115,7 +114,6 @@ def test_eval_uses_data_generator_batches_exactly():
             world_size=world_size,
             rank=rank,
             train_attention_window_len=128,
-            window_block_size=1,
         )
         model = ToyModel().eval()
 

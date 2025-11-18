@@ -14,8 +14,7 @@ def _make_block_mask(T: int, H: int, W: int, device: torch.device):
 
 
 @pytest.mark.parametrize("T,W", [(128,128), (131,128)])
-@pytest.mark.parametrize("block_or_attn_mask", ["block", "attn"])
-def test_causal_self_attention_forward_equals_step(T, W,  monkeypatch, block_or_attn_mask):
+def test_causal_self_attention_forward_equals_step(T, W,  monkeypatch):
     monkeypatch.setenv("DISABLE_O_ZERO_INIT", "1")
     with torch.inference_mode():
         torch.manual_seed(0)
@@ -29,15 +28,13 @@ def test_causal_self_attention_forward_equals_step(T, W,  monkeypatch, block_or_
         lambdas = torch.tensor([1.0, 0.5], device=device, dtype=dtype)
         ve_full = torch.randn(1, T, H, D, device=device, dtype=dtype)
 
-        if block_or_attn_mask == "attn":
-            m = CausalSelfAttention(dim=dim, num_heads=H, max_seq_len=max_seq_len, head_dim=D,
-                                    use_flex_attn=False).to(device).eval()
-            y_full = m.forward(x, ve=ve_full, sa_lambdas=lambdas )
-        elif block_or_attn_mask == "block":
-            m = CausalSelfAttention(dim=dim, num_heads=H, max_seq_len=max_seq_len, head_dim=D,
-                                    use_flex_attn=True).to(device).eval()
+        if torch.cuda.is_available():
+            m = CausalSelfAttention(dim=dim, num_heads=H, max_seq_len=max_seq_len, head_dim=D).to(device).eval()
             mask = _make_block_mask(T, H, W, device)
-            y_full = m.forward(x, ve=ve_full, block_mask=mask, sa_lambdas=lambdas, )
+            y_full = m.forward(x, ve=ve_full, block_mask=mask, sa_lambdas=lambdas)
+        else:
+            m = CausalSelfAttention(dim=dim, num_heads=H, max_seq_len=max_seq_len, head_dim=D).to(device).eval()
+            y_full = m.forward(x, ve=ve_full, sa_lambdas=lambdas)
         # Initialize empty KV caches and append per token to match causal semantics
         K = torch.empty(1, 0, H, D, device=device, dtype=dtype)
         V = torch.empty(1, 0, H, D, device=device, dtype=dtype)

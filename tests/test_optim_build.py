@@ -14,7 +14,6 @@ def make_small_daisy_core():
         model_dim=32,
         max_seq_len=64,
         head_dim=16,
-        window_block_size=8,
         eos_token_id=0,
     )
     # Muon requires bf16 parameters; use bf16 across the board for simplicity

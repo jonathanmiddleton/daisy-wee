@@ -94,9 +94,9 @@ class Evaluator:
                 n_tg = len(targets)
                 n = min(n_in, n_tg)
                 cut = n - (n % self._wbs)
-                if n_in != cut:
+                if cut and n_in != cut:
                     inputs = inputs[:cut]
-                if n_tg != cut:
+                if cut and n_tg != cut:
                     targets = targets[:cut]
                 # Match training eval: use window schedule with s=1.0 (full windows) for stability
                 with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
