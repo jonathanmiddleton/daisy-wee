@@ -1,16 +1,16 @@
 # test config, attempts overfit
 wandb_log: true
 wandb_project: 'daisy-linear'
-wandb_run_name: 'pico_overfit_linear-fused_gate_custom_op'
+wandb_run_name: 'micro-linear-test-AAL_false'
 # Torch config
 torch.coordinate_descent_tuning: true
 # Pretraining configuration
-train_shards: "data/overfit/edu_fineweb_overfit_1M.bin"
-target_tokens: 41_943_040
-cooldown_frac: 0.5
+train_shards: "data/fineweb-edu/edu_fineweb_train_*.bin"
+target_tokens: 7_000_000_000
+cooldown_frac: 0.2
 learning_rate_schedule: linear_decay
 learning_rate_floor: 0.01
-training_sequence_length: 51200        #  N * 1024; must be divisible by window_block_size
+training_sequence_length: 40960        #  N * 1024; must be divisible by window_block_size
 train_attention_window_len: 3456        # largest sliding attention window used during training; must be divisible by window_block_size
 # Optimizers configuration
 optimizers:
@@ -40,16 +40,15 @@ full_windows: true
 # Gradient accumulation
 grad_acc_steps: 1
 # Evaluations
-# NOTE: we don't care about val loss since we're overfitting on the training data
 val_shards:
   - type: "fineweb-edu"
-    path: "data/overfit/edu_fineweb_overfit_1M.bin"
-val_loss_every_tokens: 999_999_999_999
-val_seq_len: 1
-tot_val_tokens: 8
+    path: "data/fineweb-edu/edu_fineweb_val_*.bin"
+val_loss_every_tokens:     10_485_760
+val_seq_len: 81920
+tot_val_tokens: 819_200
 # Checkpoints
-save_checkpoint: true
-checkpoint_warmup_tokens:     41_943_038
-checkpoint_per_n_tokens:      1
+checkpoint_warmup_tokens:   209715200     # token warmup before checkpoints
+checkpoint_per_n_tokens:     52428800         # checkpoint interval by tokens
+save_checkpoint: false
 # Model Definition
-model_spec: daisy_pico_256_linear
+model_spec: daisy_micro_linear

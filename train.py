@@ -225,6 +225,8 @@ if args.init_checkpoint:
     model, hparams = model_from_checkpoint(args.init_checkpoint, device=device)
     logger.info("Rehydrated model from checkpoint.")
 else:
+    max_len = max(args.max_seq_len, args.max_seq_len, args.val_seq_len)
+    setattr(args, "max_seq_len", max_len) # init rotary buffers with the maximum sequence length passed to the model
     model = model_from_spec(args.model_spec, device=device.type, overrides=asdict(args))
     hparams = _build_hparams_from_args(args)
 

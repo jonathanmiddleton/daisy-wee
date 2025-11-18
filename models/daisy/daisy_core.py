@@ -95,7 +95,11 @@ def pick_attention_layers(total_layers, d_model=None, num_heads=None, attn_impl:
     idx = [int(round(i * (total_layers - 1) / (K - 1))) for i in range(K)]
     idx_s = set(idx)
     if attn_impl == 'kimi_linear':
-        idx_s = idx_s | set(list(range(0, total_layers, 4))) #ensure we have kimi_linear every 4th layer
+        # Ensure KimiLinearSelfAttention exists for every layer number divisible by 4
+        # Block.py: if layer_idx % 4 == 0: self.attn = KimiLinearSelfAttention(...)
+        # We guarantee attention in the first and last layers so we expect Kimi in
+        # the first and SDPA/Flex in the last.
+        idx_s = idx_s | set(list(range(0, total_layers, 4)))
     return sorted(idx_s)
 
 def build_attn_mask(input_seq: Tensor, window_size: int):
@@ -156,7 +160,7 @@ class DaisyCore(nn.Module):
         self.skip_map = _get_skip_map(num_layers)
         self.eos_token_id = int(eos_token_id)
         self.embed = nn.Embedding(vocab_size, model_dim)
-        self.attn_layers = [i for i in range(num_layers)] if attn_all_layers else pick_attention_layers(num_layers)
+        self.attn_layers = [i for i in range(num_layers)] if attn_all_layers else pick_attention_layers(num_layers, attn_impl=attn_impl)
         self.ve_layers = pick_value_embedding_layers(self.attn_layers) if value_embeddings else []
         self.zero_embedding = ZeroEmbedding(end_dim=self.embed.weight.size(1), dtype=torch.bfloat16) # TODO strongly reconsider this
         self.value_embeds = nn.ModuleList([

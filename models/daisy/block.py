@@ -38,10 +38,8 @@ class Block(nn.Module):
         self.attn: AttentionProtocol | None = None
         if has_attn:
             if attn_impl == 'kimi_linear':
-                if layer_idx % 4 != 0:
-                    self.attn = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim)
-                else:
-                    self.attn = KimiLinearSelfAttention(dim, num_heads, max_seq_len, head_dim)
+                if layer_idx % 4 == 0: self.attn = KimiLinearSelfAttention(dim, num_heads, max_seq_len, head_dim)
+                else: self.attn = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim)
             elif attn_impl == 'standard':
                 self.attn = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim)
             else:

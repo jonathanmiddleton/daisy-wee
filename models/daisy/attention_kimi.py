@@ -1,7 +1,8 @@
 from typing import Optional
 
 import torch
-from fla.ops.kda.gate import fused_kda_gate
+# from fla.ops.kda.gate import fused_kda_gate
+from models.daisy.fla_custom_ops import fused_kda_gate
 from fla.ops.kda import chunk_kda
 from torch import nn, Tensor
 import torch.nn.functional as F
@@ -9,7 +10,6 @@ import torch.nn.functional as F
 from fla.modules import ShortConvolution
 from fla.modules.fused_norm_gate import rms_norm_gated
 
-# from models.daisy.fla_kda_custom_ops import kda_gate, kda_chunk, rmsnorm_gated
 from einops import rearrange
 
 #noinspection PyBroadException
@@ -121,7 +121,7 @@ class KimiLinearSelfAttention(nn.Module):
         # print(f"lam0.device={lam0.device}, lam1.device={lam1.device}, v.device={v.device}, ve_.device={ve_.device}")
         return lam0 * v + lam1 * ve_
 
-    @torch.compiler.disable()
+    # @torch.compiler.disable()
     def _kda_eager(self, x, q, k, v, g, beta, rec, cu_seqlens, use_cache: bool):
         A_log = self.A_log.to(device=g.device)
         dt_bias = self.dt_bias.to(device=g.device)
