@@ -6,7 +6,8 @@ from fla.ops.kda import chunk_kda
 from torch import nn, Tensor
 import torch.nn.functional as F
 
-from fla.modules import FusedRMSNormGated, ShortConvolution
+from fla.modules import ShortConvolution
+from fla.modules.fused_norm_gate import rms_norm_gated
 
 # from models.daisy.fla_kda_custom_ops import kda_gate, kda_chunk, rmsnorm_gated
 from einops import rearrange
@@ -50,7 +51,6 @@ class CompilableFusedRMSNormGated(nn.Module):
     def forward(self, x: Tensor, gate: Tensor) -> Tensor:
         # x: (..., hidden_size)
         # gate: (..., hidden_size) - will be passed through sigmoid
-        from fla.modules.fused_norm_gate import rms_norm_gated
         normed = rms_norm_gated(x, gate, self.weight, self.bias)
 
         # Ensure gate is on the same device as normed (handles fake tensor case)

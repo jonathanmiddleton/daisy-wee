@@ -8,8 +8,28 @@ from models.daisy.attention_kimi import KimiLinearSelfAttention
 from models.daisy.attention import CausalSelfAttention
 from models.daisy.mlp import MLP
 from models.daisy.functional import norm
-from torch import Tensor
+from torch import Tensor, zeros_like
 
+# class NoOpAttention(nn.Module):
+#     """Attention stub that returns zeros, so we can avoid Python branches in Block.forward."""
+#
+#     def forward(
+#         self,
+#         x: Tensor,
+#         ve: Optional[Tensor],
+#         sa_lambdas: Optional[Tensor],
+#         block_mask: Optional[BlockMask] = None,
+#     ) -> Tensor:
+#         # preserves shape & device, pure tensor op
+#         return  zeros_like(x)
+#
+#     def step(self, x, k_ctx, v_ctx, pos, ve, sa_lambdas, window):
+#         # return zero output and no new KV state
+#         return  zeros_like(x), None, None
+#
+#     def prefill(self, x, ve: Optional[Tensor], sa_lambdas, attn_mask, debug=False):
+#         # zero output, no KV state
+#         return  zeros_like(x), None, None
 
 class Block(nn.Module):
     def __init__(self, dim: int, num_heads: int, max_seq_len: int, layer_idx: int, head_dim: int, has_attn: bool, attn_impl: str = 'standard'):
@@ -17,16 +37,16 @@ class Block(nn.Module):
 
         self.attn: AttentionProtocol | None = None
         if has_attn:
-            if layer_idx % 4 == 0:
-                self.attn  = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim)
-            else:
-                if attn_impl == 'standard':
+            if attn_impl == 'kimi_linear':
+                if layer_idx % 4 != 0:
                     self.attn = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim)
-                elif attn_impl == 'kimi_linear':
-                    self.attn = KimiLinearSelfAttention(dim, num_heads, max_seq_len, head_dim)
                 else:
-                    raise ValueError(f'Unknown attn_impl: {attn_impl}')
-            self.mlp = MLP(dim)
+                    self.attn = KimiLinearSelfAttention(dim, num_heads, max_seq_len, head_dim)
+            elif attn_impl == 'standard':
+                self.attn = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim)
+            else:
+                raise ValueError(f'Unknown attn_impl: {attn_impl}')
+        self.mlp = MLP(dim)
 
     def reset_history(self):
         if self.attn is not None:

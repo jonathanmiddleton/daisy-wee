@@ -26,7 +26,7 @@ class ZeroEmbedding(nn.Module):
     def __call__(self, x: Tensor):
         # Return a zero tensor shaped like an embedding(x)
         out_shape = (*x.shape, self.end_dim)
-        #TODO cache these
+        #TODO cache these?
         return torch.zeros(out_shape, dtype=self.zero.dtype, device=x.device, requires_grad=False)
 
     def _apply(self, fn, recurse=True):
@@ -57,7 +57,7 @@ def pick_value_embedding_layers(attn_layers, M=None):
     return [attn_layers[i] for i in sorted(set(idx))]
 
 
-def pick_attention_layers(total_layers, d_model=None, num_heads=None):
+def pick_attention_layers(total_layers, d_model=None, num_heads=None, attn_impl: str = 'standard'):
     """
     Sparse Attention Layer Selection
 
@@ -93,7 +93,10 @@ def pick_attention_layers(total_layers, d_model=None, num_heads=None):
     s = max(4, min(12, round(8 * (d_head / 64) ** 0.5)))
     K = min(total_layers, max(ceil(total_layers / s), ceil(2 + log2(total_layers))))
     idx = [int(round(i * (total_layers - 1) / (K - 1))) for i in range(K)]
-    return sorted(set(idx))
+    idx_s = set(idx)
+    if attn_impl == 'kimi_linear':
+        idx_s = idx_s | set(list(range(0, total_layers, 4))) #ensure we have kimi_linear every 4th layer
+    return sorted(idx_s)
 
 def build_attn_mask(input_seq: Tensor, window_size: int):
     T = input_seq.size(-1)
@@ -148,7 +151,6 @@ class DaisyCore(nn.Module):
             m = {c + t: c - t * s for t in range(1, K + 1)}
             return {i: j for i, j in m.items() if 0 <= j < i < L}
 
-
         self.attn_impl_ids = DaisyCore.AttnImplIDs
 
         self.skip_map = _get_skip_map(num_layers)
@@ -156,11 +158,10 @@ class DaisyCore(nn.Module):
         self.embed = nn.Embedding(vocab_size, model_dim)
         self.attn_layers = [i for i in range(num_layers)] if attn_all_layers else pick_attention_layers(num_layers)
         self.ve_layers = pick_value_embedding_layers(self.attn_layers) if value_embeddings else []
-        self.zero_embedding = ZeroEmbedding(end_dim=self.embed.weight.size(1), dtype=torch.bfloat16)
+        self.zero_embedding = ZeroEmbedding(end_dim=self.embed.weight.size(1), dtype=torch.bfloat16) # TODO strongly reconsider this
         self.value_embeds = nn.ModuleList([
             nn.Embedding(vocab_size, model_dim) if i in self.ve_layers else self.zero_embedding for i in range(num_layers)
         ])
-        # self.value_embeds = nn.ModuleList([nn.Embedding(vocab_size, model_dim) for _ in range(len(self.ve_layers))])
 
         self.attn_impl_id = self.attn_impl_ids.get_attn_impl_id(attn_impl)
         self.blocks = nn.ModuleList(
@@ -235,7 +236,7 @@ class DaisyCore(nn.Module):
         long_bm, short_bm = build_bm(sliding_window_num_blocks), build_bm(sliding_window_num_blocks // 2)
 
         cycle = [long_bm] + [short_bm] * 3
-        block_masks = (cycle * ((L + 3) // 4))[:L - 1] + [long_bm]
+        block_masks = (cycle * ((L + 3) // 4))[:L - 1] + [long_bm] #TODO adjust cycle for kimi_linear L,S,L,_
         return block_masks
 
     def compute_value_embeddings(self, input_seq: Tensor) -> list[Tensor]:
@@ -257,7 +258,7 @@ class DaisyCore(nn.Module):
 
         skip_connections = []
 
-        if input_seq.device.type == "cuda" and self.attn_impl_id == self.attn_impl_ids.STANDARD:
+        if input_seq.device.type == "cuda": # we assume CUDA implies FlexAttention
             block_masks = self.create_blockmasks(input_seq, sliding_window_num_blocks, L=L)
         else:
             block_masks = [None] * L
@@ -278,7 +279,7 @@ class DaisyCore(nn.Module):
         loss = 0
         for i in range(4):
             logits: Tensor = F.linear(x.flatten(end_dim=1).chunk(4)[i].bfloat16(), self.lm_head_w.bfloat16()).float()
-            loss += F.cross_entropy(15 * logits * torch.rsqrt(logits.square() + 225), target_seq.chunk(4)[i]) / 4
+            loss += F.cross_entropy(15 * logits * torch.rsqrt(logits.square() + 225), target_seq.chunk(4)[i]) / 4 # TODO enforce target_seq % 4 == 0
         return loss
 
     def step(self, token_id: Tensor, k_ctxs, v_ctxs, pos: int, window: int):
@@ -311,7 +312,7 @@ class DaisyCore(nn.Module):
         logits = F.linear(x.flatten(end_dim=1).bfloat16(), self.lm_head_w.bfloat16()).float()
         return logits, k_new_list, v_new_list
 
-    def prefill(self, input_seq: Tensor, window: Optional[int] = None, debug: bool = False):
+    def prefill(self, input_seq: Tensor, window: Optional[int] = None, debug: bool = False): #TODO CUDA/Flex for prefill -> merge prefill/forward
         assert input_seq.ndim == 2
         B, T = input_seq.shape
         h = None
