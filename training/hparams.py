@@ -122,26 +122,27 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
     if missing:
         raise ValueError(f"Missing required hyperparameter(s) in {used_path}: {missing}")
 
-    #TODO ensure either train/val or sft_train/sft_val is set
+    #TODO properly validate : train/val or sft_train/sft_val is set along with below
 
     # Normalize and validate
-    vcfg = cfg_dict.get("val_shards")
-    if not isinstance(vcfg, list) or len(vcfg) == 0:
-        raise ValueError("val_shards must be a non-empty list of objects with 'path' and optional 'type' fields")
-    norm_list: list[dict] = []
-    for i, item in enumerate(vcfg, start=1):
-        if not isinstance(item, dict):
-            raise ValueError(f"val_shards[{i}] must be a mapping with keys: path (str), type (str, optional)")
-        path = item.get("path")
-        vtype = item.get("type")
-        if not isinstance(path, str) or not path:
-            raise ValueError(f"val_shards[{i}].path must be a non-empty string")
-        if vtype is not None and not isinstance(vtype, str):
-            raise ValueError(f"val_shards[{i}].type must be a string when provided")
-        if vtype is None:
-            vtype = f"val{i}"
-        norm_list.append({"type": vtype, "path": path})
-    cfg_dict["val_shards"] = norm_list
+    if cfg_dict.get("train_mode") == "pretrain":
+        vcfg = cfg_dict.get("val_shards")
+        if not isinstance(vcfg, list) or len(vcfg) == 0:
+            raise ValueError("val_shards must be a non-empty list of objects with 'path' and optional 'type' fields")
+        norm_list: list[dict] = []
+        for i, item in enumerate(vcfg, start=1):
+            if not isinstance(item, dict):
+                raise ValueError(f"val_shards[{i}] must be a mapping with keys: path (str), type (str, optional)")
+            path = item.get("path")
+            vtype = item.get("type")
+            if not isinstance(path, str) or not path:
+                raise ValueError(f"val_shards[{i}].path must be a non-empty string")
+            if vtype is not None and not isinstance(vtype, str):
+                raise ValueError(f"val_shards[{i}].type must be a string when provided")
+            if vtype is None:
+                vtype = f"val{i}"
+            norm_list.append({"type": vtype, "path": path})
+        cfg_dict["val_shards"] = norm_list
 
     args = Hyperparameters(**cfg_dict)
 
