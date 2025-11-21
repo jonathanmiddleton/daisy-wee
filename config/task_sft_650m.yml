@@ -7,7 +7,7 @@ train_mode: "sft"
 # SFT data
 sft_train_root: "data/instruct_tasks"
 sft_train_split: "train"
-sft_global_batch_size: 27648      # global batch across all devices
+sft_global_batch_size: 27648      # must be divisible by world_size
 sft_val_root: "data/instruct_tasks"
 sft_val_split: "val"
 # Checkpoint
@@ -18,7 +18,7 @@ target_tokens: 12_000_000
 cooldown_frac: 0.999
 learning_rate_floor: 0.1
 learning_rate_schedule: linear_decay
-training_sequence_length: 3456        #  N * 1024; must be divisible by window_block_size
+training_sequence_length: 16384        #  N * 1024; must be divisible by window_block_size
 train_attention_window_len: 3456        # largest sliding attention window used during training; must be divisible by window_block_size
 # Optimizers configuration
 optimizers:
@@ -44,8 +44,8 @@ full_windows: true
 # Gradient accumulation
 grad_acc_steps: 1
 # Evaluations
-val_loss_every_tokens:    26_214_400
-val_seq_len: 65536
+val_loss_every_tokens:    1_048_576
+val_seq_len: 16384
 tot_val_tokens: 524_288
 # Checkpoints
 checkpoint_warmup_tokens:   1     # token warmup before checkpoints
