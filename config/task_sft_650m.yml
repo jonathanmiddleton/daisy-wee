@@ -10,13 +10,16 @@ sft_train_split: "train"
 sft_global_batch_size: 1      # global batch across all devices
 sft_val_root: "data/instruct_tasks"
 sft_val_split: "val"
+# Checkpoint
+init_checkpoint: "checkpoints/20251121T1729-val2.720-step011000-run1-best.pt"
 # Torch config
 torch.coordinate_descent_tuning: true
-target_tokens: 5_000_000_000
+target_tokens: 12_000_000
 cooldown_frac: 0.999
+learning_rate_floor: 0.1
 learning_rate_schedule: linear_decay
 training_sequence_length: 65536        #  N * 1024; must be divisible by window_block_size
-train_attention_window_len: 2304        # largest sliding attention window used during training; must be divisible by window_block_size
+train_attention_window_len: 3456        # largest sliding attention window used during training; must be divisible by window_block_size
 # Optimizers configuration
 optimizers:
   - type: AdamW
@@ -41,14 +44,11 @@ full_windows: true
 # Gradient accumulation
 grad_acc_steps: 1
 # Evaluations
-val_shards:
-  - type: "fineweb-edu"
-    path: "data/fineweb-edu/edu_fineweb_val_*.bin"
 val_loss_every_tokens:    26_214_400
-val_seq_len: 2048
-tot_val_tokens: 10_485_760
+val_seq_len: 65536
+tot_val_tokens: 524_288
 # Checkpoints
-checkpoint_warmup_tokens:   209715200     # token warmup before checkpoints
+checkpoint_warmup_tokens:   1     # token warmup before checkpoints
 checkpoint_per_n_tokens:     1         # checkpoint interval by tokens
 save_checkpoint: true
 # Model Definition

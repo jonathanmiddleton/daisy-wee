@@ -58,9 +58,7 @@ def _tok_pair(tok, instr: str, resp: str, eos_id: int):
     r_ids = tok(resp, add_special_tokens=False).input_ids + [eos_id]
     x = p_ids + r_ids  # full sequence
 
-    # Next-token targets aligned with logits at same positions:
-    # y[t] = x[t+1]; y[-1] = -100.
-    # Do NOT supervise on prompt content: mask positions whose next token is still inside the prompt.
+    # Next-token targets aligned with logits at same positions
     y = [-100] * len(x)
     for t in range(len(x) - 1):
         nxt = x[t + 1]
