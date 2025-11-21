@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch.nn.attention.flex_attention import BlockMask
 
 from models.daisy.attention_protocol import AttentionProtocol
-from models.daisy.attention_kimi import KimiLinearSelfAttention
+# from models.daisy.attention_kimi import KimiLinearSelfAttention #TODO remove
 from models.daisy.attention import CausalSelfAttention
 from models.daisy.mlp import MLP
 from models.daisy.functional import norm
@@ -38,8 +38,10 @@ class Block(nn.Module):
         self.attn: AttentionProtocol | None = None
         if has_attn:
             if attn_impl == 'kimi_linear':
-                if layer_idx % 4 == 0: self.attn = KimiLinearSelfAttention(dim, num_heads, max_seq_len, head_dim)
-                else: self.attn = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim)
+            # TODO remove
+                i = 5
+                # if layer_idx % 4 == 0: self.attn = KimiLinearSelfAttention(dim, num_heads, max_seq_len, head_dim)
+                # else: self.attn = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim)
             elif attn_impl == 'standard':
                 self.attn = CausalSelfAttention(dim, num_heads, max_seq_len, head_dim)
             else:
