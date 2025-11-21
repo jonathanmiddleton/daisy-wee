@@ -56,6 +56,18 @@ def pick_value_embedding_layers(attn_layers, M=None):
     idx = [int(round(i * (K - 1) / (M - 1))) for i in range(M)]
     return [attn_layers[i] for i in sorted(set(idx))]
 
+def build_attn_mask(input_seq: Tensor, window_size: int):
+    T = input_seq.size(-1)
+    q = torch.arange(T, device=input_seq.device)[:, None]  # (T, 1)
+    k = torch.arange(T, device=input_seq.device)[None, :]  # (1, T)
+    d = q - k  # d[q, k] = q - k
+
+    m = torch.zeros(T, T, device=input_seq.device, dtype=torch.float32)
+    m[d < 0] = float("-inf")  # forbid future (k > q)
+    m[d >= window_size] = float("-inf")  # forbid too-far past
+    attn_mask = m[None, None, :, :]
+    return attn_mask
+
 
 def pick_attention_layers(total_layers, d_model=None, num_heads=None, attn_impl: str = 'standard'):
     """
@@ -102,18 +114,6 @@ def pick_attention_layers(total_layers, d_model=None, num_heads=None, attn_impl:
         # the first and SDPA/Flex in the last.
         idx_s = idx_s | set(list(range(0, total_layers, 4)))
     return sorted(idx_s)
-
-def build_attn_mask(input_seq: Tensor, window_size: int):
-    T = input_seq.size(-1)
-    q = torch.arange(T, device=input_seq.device)[:, None]  # (T, 1)
-    k = torch.arange(T, device=input_seq.device)[None, :]  # (1, T)
-    d = q - k  # d[q, k] = q - k
-
-    m = torch.zeros(T, T, device=input_seq.device, dtype=torch.float32)
-    m[d < 0] = float("-inf")  # forbid future (k > q)
-    m[d >= window_size] = float("-inf")  # forbid too-far past
-    attn_mask = m[None, None, :, :]
-    return attn_mask
 
 class DaisyCore(nn.Module):
     class AttnImplIDs:
@@ -265,13 +265,15 @@ class DaisyCore(nn.Module):
 
         if input_seq.device.type == "cuda": # we assume CUDA implies FlexAttention
             block_masks = self.create_blockmasks(input_seq, sliding_window_num_blocks, L=L)
+            attn_mask = None
         else:
             block_masks = [None] * L
+            attn_mask = build_attn_mask(input_seq, self.window_size)
 
         for i in range(L):
             if i in skip_map:
                 x = x + skip_weights[skip_map[i]] * skip_connections[skip_map[i]]
-            x = self.blocks[i](x, ve[i], x0, lambdas[i], sa_lambdas[i], block_mask=block_masks[i])
+            x = self.blocks[i](x, ve[i], x0, lambdas[i], sa_lambdas[i], block_mask=block_masks[i], attn_mask=attn_mask)
             skip_connections.append(x)
 
         x = norm(x)
