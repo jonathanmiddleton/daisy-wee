@@ -13,9 +13,6 @@ WINDOW_BLOCK_SIZE = 128
 @dataclass
 class Hyperparameters:
     # Required scenario-specific fields
-    train_shards: str
-    # List of evaluation datasets with descriptive type and path glob
-    val_shards: list[dict]
     training_sequence_length: int
     val_seq_len: int
     target_tokens: int
@@ -58,6 +55,9 @@ class Hyperparameters:
     value_embeddings: bool = True
     tied_embeddings: bool = False
     train_mode: str = "pretrain"  # "pretrain" or "sft"
+    train_shards: str = ""
+    # List of evaluation datasets with descriptive type and path glob
+    val_shards: list[dict] = ""
 
     # SFT train data
     sft_train_root: Optional[str] = None  # e.g. "data/instruct_tasks"
@@ -121,6 +121,8 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
     missing = [name for name in required if name not in cfg_dict]
     if missing:
         raise ValueError(f"Missing required hyperparameter(s) in {used_path}: {missing}")
+
+    #TODO ensure either train/val or sft_train/sft_val is set
 
     # Normalize and validate
     vcfg = cfg_dict.get("val_shards")
