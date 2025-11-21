@@ -56,17 +56,23 @@ def pick_value_embedding_layers(attn_layers, M=None):
     idx = [int(round(i * (K - 1) / (M - 1))) for i in range(M)]
     return [attn_layers[i] for i in sorted(set(idx))]
 
-def build_attn_mask(input_seq: Tensor, window_size: int):
+def build_attn_mask(input_seq: Tensor, window_size: int, eos_token_id: int):
     T = input_seq.size(-1)
     q = torch.arange(T, device=input_seq.device)[:, None]  # (T, 1)
     k = torch.arange(T, device=input_seq.device)[None, :]  # (1, T)
     d = q - k  # d[q, k] = q - k
 
+    docs = (input_seq == eos_token_id).cumsum(0)
+    docs_q = docs[:, None]
+    docs_k = docs[None, :]
+
     m = torch.zeros(T, T, device=input_seq.device, dtype=torch.float32)
     m[d < 0] = float("-inf")  # forbid future (k > q)
     m[d >= window_size] = float("-inf")  # forbid too-far past
+    m[docs_q != docs_k] = float("-inf")
     attn_mask = m[None, None, :, :]
     return attn_mask
+
 
 
 def pick_attention_layers(total_layers, d_model=None, num_heads=None, attn_impl: str = 'standard'):
