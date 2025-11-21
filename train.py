@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from data.data_gen_stream import DistributedDataGenerator
+from data.data_gen_task import TaskDataGenerator
 from models import model_from_spec
 from tools.checkpoint import model_from_checkpoint
 from tools.checkpoint import save_checkpoint
@@ -32,6 +33,10 @@ args = apply_cli_overrides(args, sys.argv[2:])
 set_full_windows(args.full_windows)
 run_id = int(os.environ.get("RUN_ID", 0))
 ### End App Config ###
+
+train_mode = getattr(args, "train_mode", "pretrain")
+if train_mode not in ("pretrain", "sft"):
+    raise ValueError(f"Unsupported train_mode={train_mode!r}; expected 'pretrain' or 'sft'.")
 
 
 ########################################
@@ -268,43 +273,122 @@ model: nn.Module = maybe_compile(model, dynamic=False)
 ########################################
 
 maybe_reset_peak_memory_stats()
-# Optional beginning shard (1-based) from environment
+
 _begin_shard_env = os.environ.get("BEGIN_SHARD")
 _begin_shard = int(_begin_shard_env) if _begin_shard_env not in (None, "",) else None
-_train_ddg = DistributedDataGenerator(args.train_shards, world_size * args.training_sequence_length, rank, world_size,
-                                      start_shard=_begin_shard, device=device.type)
-val_batch_size = world_size * args.val_seq_len
-if args.tot_val_tokens % val_batch_size != 0:
-    raise ValueError(f"tot_val_tokens ({args.tot_val_tokens}) must be divisible by val_batch_size ({val_batch_size})")
-# Build persistent validation data generators and evaluators for each configured dataset
-_val_evals: list[tuple[str, Evaluator]] = []
-for _v in args.val_shards:
-    _label = _v.get("type")
-    _path = _v.get("path")
-    _ddg = DistributedDataGenerator(_path, val_batch_size, rank, world_size, device=device.type)
-    _eval = Evaluator(
-        data_generator=_ddg,
-        distributed_enabled=use_distributed,
-        rank=rank,
-        train_attention_window_len=args.train_attention_window_len,
-    )
-    _val_evals.append((_label, _eval))
 
-# Tokens per training micro-step (includes padding by design)
-tokens_per_step = world_size * args.training_sequence_length
-# Effective tokens per optimizer step (accounts for gradient accumulation)
+_val_evals: list[tuple[str, Evaluator]] = []
+
+if train_mode == "pretrain":
+    _train_ddg = DistributedDataGenerator(
+        args.train_shards,
+        world_size * args.training_sequence_length,
+        rank,
+        world_size,
+        start_shard=_begin_shard,
+        device=device.type,
+    )
+
+    val_batch_size = world_size * args.val_seq_len
+    if args.tot_val_tokens % val_batch_size != 0:
+        raise ValueError(f"tot_val_tokens ({args.tot_val_tokens}) must be divisible by val_batch_size ({val_batch_size})")
+
+    for _v in args.val_shards:
+        _label = _v.get("type")
+        _path = _v.get("path")
+        _ddg = DistributedDataGenerator(
+            _path,
+            val_batch_size,
+            rank,
+            world_size,
+            device=device.type,
+        )
+        _eval = Evaluator(
+            data_generator=_ddg,
+            distributed_enabled=use_distributed,
+            rank=rank,
+            train_attention_window_len=args.train_attention_window_len,
+        )
+        _val_evals.append((_label, _eval))
+
+    tokens_per_step = world_size * args.training_sequence_length
+
+else:  # train_mode == "sft"
+    if not getattr(args, "sft_train_root", None):
+        raise ValueError("SFT mode requires sft_train_root")
+    sft_global_batch_size = int(getattr(args, "sft_global_batch_size", 0))
+    if sft_global_batch_size <= 0:
+        raise ValueError("SFT mode requires sft_global_batch_size > 0")
+    if sft_global_batch_size % world_size != 0:
+        raise ValueError(f"sft_global_batch_size ({sft_global_batch_size}) must be divisible by world_size ({world_size})")
+
+    _train_ddg = TaskDataGenerator(
+        root=args.sft_train_root,
+        split=getattr(args, "sft_train_split", "train"),
+        batch_size=sft_global_batch_size,
+        world_size=world_size,
+        rank=rank,
+        seed=int(getattr(args, "sft_seed", 1337)),
+        device=device.type,
+        start_shard=_begin_shard,
+        drop_remainder=True,
+        infinite=True,
+        squeeze_singleton_batch=False,
+    )
+
+    sft_val_root = getattr(args, "sft_val_root", None)
+    if sft_val_root:
+        sft_val_global_batch_size = int(getattr(args, "sft_val_global_batch_size", 0)) or sft_global_batch_size
+        if sft_val_global_batch_size % world_size != 0:
+            raise ValueError(
+                f"sft_val_global_batch_size ({sft_val_global_batch_size}) must be divisible by world_size ({world_size})"
+            )
+
+        val_batch_size = sft_val_global_batch_size * args.val_seq_len
+        if args.tot_val_tokens % val_batch_size != 0:
+            raise ValueError(f"tot_val_tokens ({args.tot_val_tokens}) must be divisible by val_batch_size ({val_batch_size})")
+
+        _ddg = TaskDataGenerator(
+            root=sft_val_root,
+            split=getattr(args, "sft_val_split", "val"),
+            batch_size=sft_val_global_batch_size,
+            world_size=world_size,
+            rank=rank,
+            seed=int(getattr(args, "sft_seed", 1337)),
+            device=device.type,
+            start_shard=None,
+            drop_remainder=True,
+            infinite=True,
+            squeeze_singleton_batch=False,
+        )
+        _eval = Evaluator(
+            data_generator=_ddg,
+            distributed_enabled=use_distributed,
+            rank=rank,
+            train_attention_window_len=args.train_attention_window_len,
+        )
+        _val_evals.append(("sft", _eval))
+
+    tokens_per_step = int(sft_global_batch_size) * int(args.training_sequence_length)
+
 _ga_steps_cfg = max(1, int(args.grad_acc_steps))
 _tokens_per_optim_step = tokens_per_step * _ga_steps_cfg
+
 
 # Progress and tracking
 from training.progress import ProgressMeter
 
+_eval_every_tokens = None
+if _val_evals and int(args.val_loss_every_tokens) > 0:
+    _eval_every_tokens = int(args.val_loss_every_tokens)
+
 progress = ProgressMeter(
     target_tokens=int(args.target_tokens),
-    eval_every_tokens=int(args.val_loss_every_tokens) if int(args.val_loss_every_tokens) > 0 else None,
-    checkpoint_per_n_tokens=int(args.checkpoint_per_n_tokens),  # allow 0 to mean every update after warmup
+    eval_every_tokens=_eval_every_tokens,
+    checkpoint_per_n_tokens=int(args.checkpoint_per_n_tokens),
     checkpoint_warmup_tokens=int(args.checkpoint_warmup_tokens),
 )
+
 
 # Tracking for eval stats and ETA
 last_val_loss = None

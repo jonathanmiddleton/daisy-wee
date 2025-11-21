@@ -1,7 +1,7 @@
 import dataclasses
 from dataclasses import dataclass, fields as dataclass_fields
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import yaml
 
@@ -57,6 +57,16 @@ class Hyperparameters:
     init_checkpoint: str | None = None
     value_embeddings: bool = True
     tied_embeddings: bool = False
+    train_mode: str = "pretrain"  # "pretrain" or "sft"
+
+    # SFT train data
+    sft_train_root: Optional[str] = None  # e.g. "data/instruct_tasks"
+    sft_train_split: str = "train"  # "train" / "val" / "test"
+    sft_global_batch_size: int = 0  # total examples across all ranks
+    # SFT val data
+    sft_val_root: Optional[str] = None  # e.g. "data/instruct_tasks"
+    sft_val_split: str = "val"
+    sft_val_global_batch_size: int = 0  # if 0, default to sft_global_batch_size
 
 
 def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
