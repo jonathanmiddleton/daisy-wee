@@ -137,7 +137,8 @@ class CausalSelfAttention(nn.Module):
         y = torch.nn.functional.linear(y, self.qkvo_w[3])
         return y, k_.transpose(1, 2), v_.transpose(1, 2), q_.transpose(1, 2)
 
-    def forward_sdpa(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, attn_mask: Tensor = None):
+    def forward_sdpa(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, attn_mask: Tensor = None, block_mask: BlockMask = None):
+        assert block_mask is None, "BlockMask is not supported for SDPA"
         # attn_mask: for future document-causal masking
         y, _, _, _ = self._sdpa_common(x, ve, sa_lambdas)
         return y

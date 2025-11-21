@@ -1,14 +1,16 @@
 from typing import Optional
 
 import torch
-# from fla.ops.kda.gate import fused_kda_gate
 from models.daisy.fla_custom_ops import fused_kda_gate
-from fla.ops.kda import chunk_kda
 from torch import nn, Tensor
-import torch.nn.functional as F
 
-from fla.modules import ShortConvolution
-from fla.modules.fused_norm_gate import rms_norm_gated
+#noinspection PyBroadException
+try:
+    from fla.ops.kda import chunk_kda
+    from fla.modules import ShortConvolution
+    from fla.modules.fused_norm_gate import rms_norm_gated
+except Exception:
+    pass
 
 from einops import rearrange
 
@@ -104,6 +106,7 @@ class KimiLinearSelfAttention(nn.Module):
         self._conv_state = None
         self._seen = 0
         self._cache = Cache() if Cache is not None else None
+        # TODO init weights
 
     def reset_history(self):
         self._recurrent_state = None
@@ -183,6 +186,7 @@ class KimiLinearSelfAttention(nn.Module):
 
     # noinspection PyUnusedLocal
     def forward(self, x: Tensor, ve: Tensor, sa_lambdas: Tensor, attn_mask: Tensor = None, sliding_window_num_blocks: Tensor = None, block_mask: Optional[Tensor] = None):
+        assert block_mask is None, "block_mask not supported for KimiLinearSelfAttention"
         return self._forward_core(x, ve, sa_lambdas, attn_mask, use_cache=False)
 
     # noinspection PyUnusedLocal

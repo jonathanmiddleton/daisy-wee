@@ -10,8 +10,8 @@ target_tokens: 20_971_520
 cooldown_frac: 0.95
 learning_rate_schedule: linear_decay
 learning_rate_floor: 0.5
-training_sequence_length: 8192        #  N * 1024; must be divisible by window_block_size
-train_attention_window_len: 1024        # largest sliding attention window used during training; must be divisible by window_block_size
+training_sequence_length: 16384        #  N * 1024; must be divisible by window_block_size
+train_attention_window_len: 16384        # largest sliding attention window used during training; must be divisible by window_block_size
 # Optimizers configuration
 optimizers:
   - type: AdamW
@@ -34,7 +34,7 @@ optimizers:
         lr: 0.02
 full_windows: false
 # Gradient accumulation
-grad_acc_steps: 16
+grad_acc_steps: 1
 # Evaluations
 # NOTE: we don't care about val loss since we're overfitting on the training data
 val_shards:
@@ -48,4 +48,4 @@ save_checkpoint: false
 checkpoint_warmup_tokens:     1
 checkpoint_per_n_tokens:      1
 # Model Definition
-model_spec: daisy_pico_256
+model_spec: daisy_pico

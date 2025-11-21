@@ -4,7 +4,9 @@ import torch.nn as nn
 from torch.nn.attention.flex_attention import BlockMask
 
 from models.daisy.attention_protocol import AttentionProtocol
-from models.daisy.attention_kimi import KimiLinearSelfAttention
+import torch
+if torch.cuda.is_available():
+    from models.daisy.attention_kimi import KimiLinearSelfAttention
 from models.daisy.attention import CausalSelfAttention
 from models.daisy.mlp import MLP
 from models.daisy.functional import norm

@@ -18,7 +18,8 @@ class AttentionProtocol(Protocol):
         x: Tensor,
         ve: Tensor,
         sa_lambdas: Tensor,
-        attn_mask: Tensor = None,
+        attn_mask: Optional[Tensor] = None,
+        block_mask: Optional[Tensor] = None,
     ) -> Tensor: ...
 
     def __call__(self, *args, **kwargs) -> Tensor: ...
