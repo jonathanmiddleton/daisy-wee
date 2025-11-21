@@ -41,15 +41,12 @@ full_windows: true
 # Gradient accumulation
 grad_acc_steps: 1
 # Evaluations
-val_shards:
-  - type: "fineweb-edu"
-    path: "data/fineweb-edu/edu_fineweb_val_*.bin"
 val_loss_every_tokens:    26_214_400
 val_seq_len: 2048
 tot_val_tokens: 10_485_760
 # Checkpoints
-checkpoint_warmup_tokens:   209715200     # token warmup before checkpoints
+checkpoint_warmup_tokens:   209_715_200     # token warmup before checkpoints
 checkpoint_per_n_tokens:     1         # checkpoint interval by tokens
 save_checkpoint: true
 # Model Definition
-model_spec: daisy_470m
+model_spec: daisy_300m

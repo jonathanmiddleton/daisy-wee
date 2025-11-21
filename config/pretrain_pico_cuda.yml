@@ -3,7 +3,7 @@ wandb_log: true
 wandb_project: 'daisy-linear'
 wandb_run_name: 'pico-overfit-cuda'
 # Torch config
-torch.coordinate_descent_tuning: true
+torch.coordinate_descent_tuning: false
 # Pretraining configuration
 train_shards: "data/overfit/edu_fineweb_overfit_1M.bin"
 target_tokens: 41_943_040

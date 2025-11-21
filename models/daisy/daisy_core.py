@@ -89,6 +89,7 @@ def pick_attention_layers(total_layers, d_model=None, num_heads=None, attn_impl:
     if total_layers == 4: return [0, 1, 3]
     if total_layers == 5: return [0, 2, 4]
     if total_layers == 6: return [0, 1, 3, 5]
+    if total_layers == 16: return [0, 1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 15]
     d_head = (d_model // num_heads) if (d_model and num_heads) else 64
     s = max(4, min(12, round(8 * (d_head / 64) ** 0.5)))
     K = min(total_layers, max(ceil(total_layers / s), ceil(2 + log2(total_layers))))
