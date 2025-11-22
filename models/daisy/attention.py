@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 import torch
 from torch import nn, Tensor
@@ -129,17 +130,19 @@ class CausalSelfAttention(nn.Module):
         v_ = v.transpose(1, 2)
         return q_, k_, v_
 
-    def _sdpa_common(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor):
+    def _sdpa_common(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, attn_mask: Optional[Tensor] = None):
         B, T = x.size(0), x.size(1)
         q_, k_, v_ = self._qkv_common(x, ve, sa_lambdas)
-        y = torch.nn.functional.scaled_dot_product_attention(q_, k_, v_, is_causal=True, scale=self.attn_scale)
+        if attn_mask is not None:
+            y = torch.nn.functional.scaled_dot_product_attention(q_, k_, v_, is_causal=False, attn_mask=attn_mask, scale=self.attn_scale)
+        else:
+            y = torch.nn.functional.scaled_dot_product_attention(q_, k_, v_, is_causal=True, scale=self.attn_scale)
         y = y.transpose(1, 2).contiguous().view(B, T, self.m_dim)
         y = torch.nn.functional.linear(y, self.qkvo_w[3])
         return y, k_.transpose(1, 2), v_.transpose(1, 2), q_.transpose(1, 2)
 
-    def forward_sdpa(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, attn_mask: Tensor = None):
-        # attn_mask: for future document-causal masking
-        y, _, _, _ = self._sdpa_common(x, ve, sa_lambdas)
+    def forward_sdpa(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, attn_mask: Tensor, block_mask: Optional[Tensor] = None):
+        y, _, _, _ = self._sdpa_common(x, ve, sa_lambdas, attn_mask=attn_mask)
         return y
 
     def forward_flex(self, x: torch.Tensor, ve: torch.Tensor, sa_lambdas: torch.Tensor, block_mask: BlockMask):

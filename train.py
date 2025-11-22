@@ -18,6 +18,7 @@ from training.hparams import Hyperparameters, load_hparams_from_yaml, apply_cli_
 from training.optim import Muon, get_lr_scale
 from training.optim import build_optimizers_from_cfg
 from training.optim import get_num_window_blocks, set_full_windows
+from training.progress import ProgressMeter
 
 WINDOW_BLOCK_SIZE = 128
 
@@ -38,6 +39,7 @@ train_mode = getattr(args, "train_mode", "pretrain")
 if train_mode not in ("pretrain", "sft"):
     raise ValueError(f"Unsupported train_mode={train_mode!r}; expected 'pretrain' or 'sft'.")
 
+is_sft = (train_mode == "sft")
 
 ########################################
 #        Torch Setup                   #
@@ -46,6 +48,7 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import torch
 from torch import nn
 import torch.distributed as dist
+
 TORCH_DISABLE_MODEL_COMPILE = os.environ.get("TORCH_DISABLE_MODEL_COMPILE", "0") == "1"
 if not TORCH_DISABLE_MODEL_COMPILE:
     # Configure inductor/dynamo compile/tuning
@@ -59,52 +62,59 @@ local_rank = int(os.environ.get("LOCAL_RANK", "0"))
 
 use_distributed = world_size > 1
 
-device = torch.device("cuda", local_rank) if torch.cuda.is_available() else torch.device('mps') if torch.mps.is_available() else torch.device('cpu')
-if device.type == 'cuda':
+device = (
+    torch.device("cuda", local_rank)
+    if torch.cuda.is_available()
+    else torch.device("mps")
+    if torch.mps.is_available()
+    else torch.device("cpu")
+)
+if device.type == "cuda":
     torch.cuda.set_device(device)
     if use_distributed:
         dist.init_process_group(backend="nccl", device_id=device, world_size=world_size)
         dist.barrier()
-    is_master = (rank == 0)
-elif device.type == 'mps':
+    is_master = rank == 0
+elif device.type == "mps":
     if use_distributed:
         raise ValueError("Distributed training is not supported on macOS/MPS")
     is_master = True
 else:
     is_master = True
 
-# noinspection PyShadowingNames
+
 def maybe_compile(model: nn.Module, dynamic: bool = False) -> nn.Module:
     if TORCH_DISABLE_MODEL_COMPILE:
         logger.info(f"Model compilation disabled: TORCH_DISABLE_MODEL_COMPILE={TORCH_DISABLE_MODEL_COMPILE}")
         return model
     else:
         logger.info(f"Compiling model (dynamic={dynamic}). This may take several minutes.")
-        model: nn.Module = torch.compile(model, dynamic=dynamic)
+        model = torch.compile(model, dynamic=dynamic)
         return model
 
+
 def maybe_reset_peak_memory_stats():
-    if device.type == 'cuda':
+    if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats()
     else:
         logger.debug(f"reset_memory_stats() unsupported on device.type={device.type}")
 
+
 def get_max_memory_allocated() -> Optional[int]:
-    if device.type == 'cuda':
+    if device.type == "cuda":
         return torch.cuda.max_memory_allocated()
     else:
         logger.debug(f"max_memory_allocated() unsupported on device.type={device.type}")
         return None
-### End Torch Setup ###
 
 
 ########################################
 #        Logging                       #
 ########################################
 from tools.master_logger import MasterLogger
+
 logger = MasterLogger
 ### End Logging ###
-
 
 # Run start timestamp truncated to the minute (UTC)
 _run_start_dt = datetime.now(timezone.utc).replace(second=0, microsecond=0)
@@ -128,6 +138,7 @@ if is_master and args.wandb_log:
         logger.info(f"wandb logging enabled: project={_project} name={_name}")
         art = _wandb.Artifact(name=f"models-src-{run_id}", type="code")
         import glob
+
         files = [p for p in glob.glob("models/**/*.py", recursive=True) if os.path.basename(p) != "__init__.py"]
         for p in files:
             art.add_file(p, name=os.path.relpath(p, start="models"))
@@ -137,7 +148,7 @@ if is_master and args.wandb_log:
         _wandb = None
         _wandb_enabled = False
 
-# noinspection PyShadowingNames
+
 def log_wandb(d: dict):
     if _wandb_enabled:
         try:
@@ -145,9 +156,9 @@ def log_wandb(d: dict):
         except Exception as _e:
             logger.error(f"[warn] wandb.log failed: {_e}")
 
+
 def update_wandb_config(d: dict):
     if _wandb_enabled:
-        # noinspection PyShadowingNames
         try:
             _wandb.config.update(d, allow_val_change=True)
         except Exception as _e:
@@ -157,37 +168,44 @@ def update_wandb_config(d: dict):
 ########################################
 #               Helpers                #
 ########################################
-
-# noinspection PyShadowingNames
 def _build_hparams_from_args(args: Hyperparameters) -> dict:
     """Build a checkpoint hparams dict from training args."""
     return asdict(args)
 
-# noinspection PyShadowingNames
-def _get_ckpt_filename(*, val_value: Optional[float], step: int, run_start_minute: str, run_id: int, suffix: Optional[str] = None, ) -> str:
+
+def _get_ckpt_filename(
+    *,
+    val_value: Optional[float],
+    step: int,
+    run_start_minute: str,
+    run_id: int,
+    suffix: Optional[str] = None,
+) -> str:
     os.makedirs("checkpoints", exist_ok=True)
     _val_trunc = math.trunc(val_value * 100) / 100 if val_value is not None else float("nan")
-    return f"checkpoints/{run_start_minute}-val{_val_trunc:.3f}-step{step:06d}-run{run_id}" + (f"-{suffix}" if suffix else "") + ".pt"
+    return (
+        f"checkpoints/{run_start_minute}-val{_val_trunc:.3f}-step{step:06d}-run{run_id}"
+        + (f"-{suffix}" if suffix else "")
+        + ".pt"
+    )
 
-# noinspection PyShadowingNames
+
 def _save_checkpoint(
-        *,
-        val_value: Optional[float],
-        step: int,
-        run_start_minute: str,
-        run_id: int,
-        model: nn.Module,
-        best_val: float,
-        args: Hyperparameters,
-        tokens_per_step: int,
-        progress,
-        overwrite: bool = False,
-        suffix: Optional[str] = None,
+    *,
+    val_value: Optional[float],
+    step: int,
+    run_start_minute: str,
+    run_id: int,
+    model: nn.Module,
+    best_val: float,
+    args: Hyperparameters,
+    tokens_per_step: int,
+    progress,
+    overwrite: bool = False,
+    suffix: Optional[str] = None,
 ) -> str:
     """Create a run-scoped checkpoint filename, remove the previous run checkpoint if different,
     save the new checkpoint, and remember its path.
-
-    Returns the path to the saved checkpoint.
     """
     global _last_run_ckpt_path
     fname = _get_ckpt_filename(
@@ -231,13 +249,21 @@ if args.init_checkpoint:
     logger.info("Rehydrated model from checkpoint.")
 else:
     max_len = max(args.max_seq_len, args.max_seq_len, args.val_seq_len)
-    setattr(args, "max_seq_len", max_len) # init rotary buffers with the maximum sequence length passed to the model
+    setattr(args, "max_seq_len", max_len)  # init rotary buffers with the maximum sequence length passed to the model
     model = model_from_spec(args.model_spec, device=device.type, overrides=asdict(args))
     hparams = _build_hparams_from_args(args)
 
 logger.info("Hyperparameters:\n" + json.dumps(asdict(args), indent=2, sort_keys=True))
 # Ensure wandb sees the final effective hyperparameters (after overrides and any rehydration)
-update_wandb_config(asdict(args)) # TODO without diff of checkpoint/model_spec_from_args the reported model args may be incorrect
+update_wandb_config(asdict(args))  # TODO without diff of checkpoint/model_spec_from_args the reported model args may be incorrect
+
+if is_sft:
+    if not getattr(args, "sft_train_root", None):
+        raise ValueError("SFT mode requires 'sft_train_root'.")
+    if int(args.target_tokens) <= 0:
+        raise ValueError("SFT mode requires 'target_tokens' > 0.")
+    if int(args.train_attention_window_len) <= 0:
+        raise ValueError("SFT mode requires 'train_attention_window_len' > 0.")
 
 for m in model.modules():
     if isinstance(m, nn.Embedding):
@@ -245,9 +271,10 @@ for m in model.modules():
 for param in model.parameters():
     if use_distributed:
         dist.broadcast(param.detach(), 0)
-# Build optimizer(s) from YAML config
+
 if not args.optimizers:
     raise ValueError("Training config must provide 'optimizers' list")
+
 optimizers: list[torch.optim.Optimizer] = build_optimizers_from_cfg(
     cfg_list=args.optimizers,
     model=model,
@@ -255,8 +282,10 @@ optimizers: list[torch.optim.Optimizer] = build_optimizers_from_cfg(
     world_size=world_size,
 )
 
+
 def opt_params(opt: torch.optim.Optimizer) -> list[nn.Parameter]:
     return [p for g in opt.param_groups for p in g["params"]]
+
 
 opt2params = {opt: opt_params(opt) for opt in optimizers}
 for opt in optimizers:
@@ -265,7 +294,7 @@ for opt in optimizers:
 
 report = build_report(model)
 logger.info(f"Model report:\n{format_report_text(report)}")
-model: nn.Module = maybe_compile(model, dynamic=False)
+model = maybe_compile(model, dynamic=False)
 
 
 ########################################
@@ -291,7 +320,9 @@ if train_mode == "pretrain":
 
     val_batch_size = world_size * args.val_seq_len
     if args.tot_val_tokens % val_batch_size != 0:
-        raise ValueError(f"tot_val_tokens ({args.tot_val_tokens}) must be divisible by val_batch_size ({val_batch_size})")
+        raise ValueError(
+            f"tot_val_tokens ({args.tot_val_tokens}) must be divisible by val_batch_size ({val_batch_size})"
+        )
 
     for _v in args.val_shards:
         _label = _v.get("type")
@@ -314,52 +345,33 @@ if train_mode == "pretrain":
     tokens_per_step = world_size * args.training_sequence_length
 
 else:  # train_mode == "sft"
-    if not getattr(args, "sft_train_root", None):
-        raise ValueError("SFT mode requires sft_train_root")
-    sft_global_batch_size = int(getattr(args, "sft_global_batch_size", 0))
-    if sft_global_batch_size <= 0:
-        raise ValueError("SFT mode requires sft_global_batch_size > 0")
-    if sft_global_batch_size % world_size != 0:
-        raise ValueError(f"sft_global_batch_size ({sft_global_batch_size}) must be divisible by world_size ({world_size})")
-
     _train_ddg = TaskDataGenerator(
         root=args.sft_train_root,
         split=getattr(args, "sft_train_split", "train"),
-        batch_size=sft_global_batch_size,
+        batch_size=world_size,  # one example per rank
         world_size=world_size,
         rank=rank,
         seed=int(getattr(args, "sft_seed", 1337)),
         device=device.type,
         start_shard=_begin_shard,
-        drop_remainder=True,
+        drop_remainder=False,
         infinite=True,
-        squeeze_singleton_batch=False,
+        squeeze_singleton_batch=True,
     )
 
-    sft_val_root = getattr(args, "sft_val_root", None)
-    if sft_val_root:
-        sft_val_global_batch_size = int(getattr(args, "sft_val_global_batch_size", 0)) or sft_global_batch_size
-        if sft_val_global_batch_size % world_size != 0:
-            raise ValueError(
-                f"sft_val_global_batch_size ({sft_val_global_batch_size}) must be divisible by world_size ({world_size})"
-            )
-
-        val_batch_size = sft_val_global_batch_size * args.val_seq_len
-        if args.tot_val_tokens % val_batch_size != 0:
-            raise ValueError(f"tot_val_tokens ({args.tot_val_tokens}) must be divisible by val_batch_size ({val_batch_size})")
-
+    if getattr(args, "sft_val_root", None):
         _ddg = TaskDataGenerator(
-            root=sft_val_root,
+            root=args.sft_val_root,
             split=getattr(args, "sft_val_split", "val"),
-            batch_size=sft_val_global_batch_size,
+            batch_size=world_size,  # one example per rank
             world_size=world_size,
             rank=rank,
             seed=int(getattr(args, "sft_seed", 1337)),
             device=device.type,
             start_shard=None,
-            drop_remainder=True,
+            drop_remainder=False,
             infinite=True,
-            squeeze_singleton_batch=False,
+            squeeze_singleton_batch=True,
         )
         _eval = Evaluator(
             data_generator=_ddg,
@@ -369,14 +381,15 @@ else:  # train_mode == "sft"
         )
         _val_evals.append(("sft", _eval))
 
-    tokens_per_step = int(sft_global_batch_size) * int(args.training_sequence_length)
+    # For SFT we use dynamic token counting; tokens_per_step is not meaningful.
+    tokens_per_step = None
 
 _ga_steps_cfg = max(1, int(args.grad_acc_steps))
-_tokens_per_optim_step = tokens_per_step * _ga_steps_cfg
-
-
-# Progress and tracking
-from training.progress import ProgressMeter
+if tokens_per_step is not None:
+    _tokens_per_optim_step = tokens_per_step * _ga_steps_cfg
+else:
+    # SFT: use an upper bound based on attention window length for checkpoint metadata
+    _tokens_per_optim_step = int(args.train_attention_window_len) * _ga_steps_cfg
 
 _eval_every_tokens = None
 if _val_evals and int(args.val_loss_every_tokens) > 0:
@@ -388,7 +401,6 @@ progress = ProgressMeter(
     checkpoint_per_n_tokens=int(args.checkpoint_per_n_tokens),
     checkpoint_warmup_tokens=int(args.checkpoint_warmup_tokens),
 )
-
 
 # Tracking for eval stats and ETA
 last_val_loss = None
@@ -411,27 +423,32 @@ while progress.tokens_processed < progress.target_tokens:
             dist.barrier()
         training_time_ms += 1000 * (time.perf_counter() - t0)
         model.eval()
-        # Evaluate using all configured Evaluators (per-rank tokens)
+
         per_ds_results: list[tuple[str, dict]] = []
         for _label, _ev in _val_evals:
-            _world_batch = val_batch_size
-            _steps = args.tot_val_tokens // _world_batch if _world_batch > 0 else 0
-            logger.info(f"[eval] dataset={_label} steps={_steps} (global_batch={_world_batch}, tot_tokens={args.tot_val_tokens})")
             _ev.reset_generator()
             _out = _ev.eval(model=model, total_tokens=args.tot_val_tokens)
+            _world_batch = _ev.world_batch_tokens or 0
+            _steps = args.tot_val_tokens // _world_batch if _world_batch > 0 else 0
+            logger.info(
+                f"[eval] dataset={_label} steps={_steps} "
+                f"(global_batch_tokens={_world_batch}, tot_tokens={args.tot_val_tokens})"
+            )
             per_ds_results.append((_label, _out))
+
         # Canonical/primary val metrics use the first dataset
         primary_label, primary_out = per_ds_results[0]
         cur_val = float(primary_out.get("val_loss", float("nan")))
         last_val_loss = cur_val
         ema_dloss_per_token = primary_out.get("ema_dloss_per_token", ema_dloss_per_token)
-        # Print a compact per-dataset summary line
+
         parts = [f"{lbl}:{float(out.get('val_loss', float('nan'))):.6f}" for lbl, out in per_ds_results]
         logger.info(
             f"step:{step} tokens:{progress.tokens_processed:,}/{progress.target_tokens:,} (s={progress.s:.4f}) "
-            + " ".join(parts) +
-            f" train_time:{training_time_ms:,.0f}ms ema_dloss_per_1e6_tokens:{ema_dloss_per_token*1e6:.6f}")
-        # W&B logging: primary under legacy keys; all datasets under namespaced keys
+            + " ".join(parts)
+            + f" train_time:{training_time_ms:,.0f}ms ema_dloss_per_1e6_tokens:{ema_dloss_per_token * 1e6:.6f}"
+        )
+
         wb = {
             "val/loss": cur_val,
             "val/ppl": math.exp(cur_val) if cur_val < 20 else float("inf"),
@@ -446,11 +463,10 @@ while progress.tokens_processed < progress.target_tokens:
             wb[f"val/{lbl}/loss"] = _loss
             wb[f"val/{lbl}/ppl"] = math.exp(_loss) if _loss < 20 else float("inf")
         log_wandb(wb)
-        # checkpoints by tokens (save only if validation improves) using primary dataset
+
         if is_master and args.save_checkpoint and progress.should_checkpoint():
             if cur_val < best_val:
                 best_val = cur_val
-                # Save checkpoint (handles filename, cleanup, and bookkeeping)
                 fname = _save_checkpoint(
                     val_value=cur_val,
                     step=step,
@@ -466,10 +482,12 @@ while progress.tokens_processed < progress.target_tokens:
                 )
                 logger.info(f"Saved checkpoint to {fname} with val loss {float(cur_val):.6f}")
             else:
-                logger.info(f"No improvement in val loss: best={best_val:.6f}, current={cur_val:.6f}. Skipping checkpoint.")
+                logger.info(
+                    f"No improvement in val loss: best={best_val:.6f}, current={cur_val:.6f}. Skipping checkpoint."
+                )
 
             progress.mark_checkpoint_done()
-        # resume training clock
+
         model.train()
         if use_distributed:
             dist.barrier()
@@ -479,32 +497,55 @@ while progress.tokens_processed < progress.target_tokens:
     # --------------- TRAINING SECTION -----------------
     ga_steps = max(1, int(args.grad_acc_steps))
     total_train_loss = 0.0
+    tokens_this_step = 0
 
     for micro_step in range(ga_steps):
         inputs, targets = next(_train_ddg)
-        n_blocks = get_num_window_blocks(progress.s, attention_window_len=args.train_attention_window_len, window_block_size=WINDOW_BLOCK_SIZE).to(device.type)
-        logger.debug(f"Pre-autocast: inputs.shape={inputs.shape} inputs.device.type={inputs.device.type} targets.shape={targets.shape} targets.device.type={targets.device.type} n_blocks={n_blocks}")
+
+        if is_sft:
+            seq_len = inputs.size(-1)
+            if seq_len > int(args.train_attention_window_len):
+                raise RuntimeError(
+                    f"SFT example length {seq_len} exceeds train_attention_window_len "
+                    f"{int(args.train_attention_window_len)}"
+                )
+            tokens_this_step += int(seq_len)
+
+        n_blocks = get_num_window_blocks(
+            progress.s,
+            attention_window_len=args.train_attention_window_len,
+            window_block_size=WINDOW_BLOCK_SIZE,
+        ).to(device.type)
+
+        logger.debug(
+            f"Pre-autocast: inputs.shape={inputs.shape} inputs.device.type={inputs.device.type} "
+            f"targets.shape={targets.shape} targets.device.type={targets.device.type} n_blocks={n_blocks}"
+        )
+
         with torch.autocast(device.type, dtype=torch.bfloat16):
             loss = model(inputs, n_blocks, targets)
-            # scale loss so that gradients are averaged across micro-steps
+
         loss_to_backward = loss / ga_steps
         if use_distributed:
-            model.require_backward_grad_sync = (micro_step == ga_steps - 1) # no_sync()
+            model.require_backward_grad_sync = micro_step == ga_steps - 1
         loss_to_backward.backward()
         total_train_loss += float(loss.item())
 
-    # collect the futures for all the optimizers (do distributed grad average once after accumulation)
     opt2futures = {
-        opt: ([dist.all_reduce(p.grad, op=dist.ReduceOp.AVG, async_op=True).get_future() for p in params if
-               p.grad is not None]
-              if use_distributed else [])
+        opt: (
+            [
+                dist.all_reduce(p.grad, op=dist.ReduceOp.AVG, async_op=True).get_future()
+                for p in params
+                if p.grad is not None
+            ]
+            if use_distributed
+            else []
+        )
         for opt, params in opt2params.items()
     }
-    # set optimization hyperparameters based on s
+
     s = progress.s
-    # Compute LR scale by selected schedule via dispatch in training.optim
     lr_scale_base = get_lr_scale(args.learning_rate_schedule, s, args.cooldown_frac)
-    # Apply optional learning rate floor (as a fraction of the initial LR)
     lr_scale = max(lr_scale_base, float(getattr(args, "learning_rate_floor", 0.0)))
 
     for opt in optimizers:
@@ -512,41 +553,52 @@ while progress.tokens_processed < progress.target_tokens:
             continue
         for group in opt.param_groups:
             group["lr"] = group["initial_lr"] * lr_scale
-    # Momentum warmup for Muon optimizers driven by progress s
+
     for opt in optimizers:
         if isinstance(opt, Muon):
             for group in opt.param_groups:
                 frac = s
                 group["momentum"] = (1 - frac) * 0.85 + frac * 0.95
-    # step the optimizers
+
     for opt in optimizers:
         if use_distributed:
             torch.futures.collect_all(opt2futures[opt]).wait()
         opt.step()
-    # null the gradients
     model.zero_grad(set_to_none=True)
 
-    # Update tokens and counters (only once per accumulation cycle)
-    progress.update(tokens_per_step * ga_steps)
+    if not is_sft:
+        progress.update(tokens_per_step * ga_steps)
+    else:
+        progress.update(tokens_this_step * world_size)
+
     step += 1
 
-    # logging (only at accumulation boundary)
     train_loss_est = total_train_loss / ga_steps
     approx_training_time_ms = training_time_ms + 1000 * (time.perf_counter() - t0)
     if step == 9:
         warmup_end = approx_training_time_ms
-    avg_step = f"avg_step:{(approx_training_time_ms - warmup_end) / max(step - 9, 1):.2f}ms" if step >= 10 else "avg_step: (warmup to step 10)"
+    avg_step = (
+        f"avg_step:{(approx_training_time_ms - warmup_end) / max(step - 9, 1):.2f}ms"
+        if step >= 10
+        else "avg_step: (warmup to step 10)"
+    )
     logger.info(
-        f"step:{step} train_loss:{train_loss_est:.4f} tokens:{progress.tokens_processed:,}/{progress.target_tokens:,} (s={progress.s:.4f}) train_time:{approx_training_time_ms:,.0f}ms {avg_step} lr_scale:{lr_scale:.4f} (base:{lr_scale_base:.4f} floor:{float(getattr(args, 'learning_rate_floor', 0.0)):.4f})")
-    log_wandb({
-                "train/loss": train_loss_est,
-                "train/ppl": math.exp(train_loss_est) if train_loss_est < 20 else float("inf"),
-                "tokens": progress.tokens_processed,
-                "s": progress.s,
-                "lr_scale": lr_scale,
-                "lr_scale_base": lr_scale_base,
-                "learning_rate_floor": float(getattr(args, "learning_rate_floor", 0.0)),
-                "train/time_ms": approx_training_time_ms,})
+        f"step:{step} train_loss:{train_loss_est:.4f} tokens:{progress.tokens_processed:,}/{progress.target_tokens:,} "
+        f"(s={progress.s:.4f}) train_time:{approx_training_time_ms:,.0f}ms {avg_step} "
+        f"lr_scale:{lr_scale:.4f} (base:{lr_scale_base:.4f} floor:{float(getattr(args, 'learning_rate_floor', 0.0)):.4f})"
+    )
+    log_wandb(
+        {
+            "train/loss": train_loss_est,
+            "train/ppl": math.exp(train_loss_est) if train_loss_est < 20 else float("inf"),
+            "tokens": progress.tokens_processed,
+            "s": progress.s,
+            "lr_scale": lr_scale,
+            "lr_scale_base": lr_scale_base,
+            "learning_rate_floor": float(getattr(args, "learning_rate_floor", 0.0)),
+            "train/time_ms": approx_training_time_ms,
+        }
+    )
 
 # End of training: save final checkpoint
 if is_master and args.save_checkpoint:
@@ -561,14 +613,13 @@ if is_master and args.save_checkpoint:
         tokens_per_step=_tokens_per_optim_step,
         progress=progress,
         overwrite=False,
-        suffix="final"
+        suffix="final",
     )
 
 _peak_mem = get_max_memory_allocated()
 if _peak_mem is not None:
     logger.info(f"peak memory allocated: {_peak_mem // 1024 // 1024} MiB")
 if _wandb_enabled:
-    # noinspection PyBroadException
     try:
         _wandb.finish()
     except Exception as _e:

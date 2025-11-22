@@ -37,16 +37,19 @@ class TaskDataGenerator:
         self.files = sorted([d for d in p.iterdir() if d.is_dir() and (d / "meta.json").exists()])
         if not self.files: raise FileNotFoundError(f"no shards in {p}")
         assert batch_size % world_size == 0
+        self.batch_size = int(batch_size)
+        self.world_size = int(world_size)
         self.local_bsz = batch_size // world_size
         self.rank = int(rank)
-        self.world = int(world_size)
         self.seed = int(seed)
         self.device = torch.device(device)
         self.drop_remainder = drop_remainder
         self.infinite = infinite
         self.squeeze_single = bool(squeeze_singleton_batch)
         i0 = (start_shard or 0) % len(self.files)
-        self._file_iter = itertools.cycle(self.files[i0:] + self.files[:i0])
+        # Preserve the chosen file ordering so we can reset back to it.
+        self._files_ordered = self.files[i0:] + self.files[:i0]
+        self._file_iter = itertools.cycle(self._files_ordered)
         self._rng = np.random.default_rng(self.seed)
         self._shard = None
         self._order = None
@@ -62,6 +65,14 @@ class TaskDataGenerator:
         self._order = self._rng.permutation(n).tolist()
         self._pos = 0
 
+    def reset(self):
+        self._file_iter = itertools.cycle(self._files_ordered)
+        self._rng = np.random.default_rng(self.seed)
+        self._shard = None
+        self._order = None
+        self._pos = 0
+        self._pad_id = None
+
     def __iter__(self): return self
 
     def __next__(self):
@@ -75,7 +86,7 @@ class TaskDataGenerator:
                 if not self.infinite and not b: raise StopIteration
             if self._pos >= len(self._order): continue
             idx = self._order[self._pos]; self._pos += 1
-            if (self._pos - 1) % self.world != self.rank: continue
+            if (self._pos - 1) % self.world_size != self.rank: continue
             b.append(self._shard.get(idx))
             need -= 1
         if len(b) < self.local_bsz and self.drop_remainder: raise StopIteration

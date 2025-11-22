@@ -7,19 +7,22 @@ train_mode: "sft"
 # SFT data
 sft_train_root: "data/instruct_tasks"
 sft_train_split: "train"
-sft_global_batch_size: 27648      # must be divisible by world_size
-sft_val_root: "data/instruct_tasks"
+sft_val_root: "data/instruct_tasks"   # optional
 sft_val_split: "val"
+
+# Run length: PER-RANK token budget
+target_tokens: 12_000_000
+
+# Hard max example length
+train_attention_window_len: 3456
 # Checkpoint
-init_checkpoint: "checkpoints/20251121T1729-val2.720-step011000-run1-best.pt"
+init_checkpoint: ""
 # Torch config
 torch.coordinate_descent_tuning: true
-target_tokens: 12_000_000
+
 cooldown_frac: 0.999
 learning_rate_floor: 0.1
 learning_rate_schedule: linear_decay
-training_sequence_length: 16384        #  N * 1024; must be divisible by window_block_size
-train_attention_window_len: 3456        # largest sliding attention window used during training; must be divisible by window_block_size
 # Optimizers configuration
 optimizers:
   - type: AdamW
@@ -39,14 +42,12 @@ optimizers:
     weight_decay: 0.0
     params:
       - group: hidden_matrix_params
-        lr: 4e-4
+        lr: 0.0004
 full_windows: true
 # Gradient accumulation
 grad_acc_steps: 1
 # Evaluations
-val_loss_every_tokens:    1_048_576
-val_seq_len: 16384
-tot_val_tokens: 524_288
+val_loss_every_tokens:    131072
 # Checkpoints
 checkpoint_warmup_tokens:   1     # token warmup before checkpoints
 checkpoint_per_n_tokens:     1         # checkpoint interval by tokens

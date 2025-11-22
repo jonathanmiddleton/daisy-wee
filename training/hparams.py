@@ -13,8 +13,7 @@ WINDOW_BLOCK_SIZE = 128
 @dataclass
 class Hyperparameters:
     # Required scenario-specific fields
-    training_sequence_length: int
-    val_seq_len: int
+
     target_tokens: int
     cooldown_frac: float
     # Learning rate schedule selection
@@ -24,7 +23,6 @@ class Hyperparameters:
     # Common fields with defaults
     vocab_size: int
     eos_token_id: int
-    tot_val_tokens: int  # how many tokens of validation data
     val_loss_every_tokens: int  # num tokens between validation passes (0 disables)
     checkpoint_warmup_tokens: int  # tokens to skip before taking checkpoints
     checkpoint_per_n_tokens: int  # interval in tokens between checkpoints (0 = every update after warmup)
@@ -67,6 +65,11 @@ class Hyperparameters:
     sft_val_root: Optional[str] = None  # e.g. "data/instruct_tasks"
     sft_val_split: str = "val"
     sft_val_global_batch_size: int = 0  # if 0, default to sft_global_batch_size
+
+    # Training Defaults
+    training_sequence_length: int = 16384
+    val_seq_len: int = 16384
+    total_val_tokens: int = 6144 # for SFT this may be 20 examples
 
 
 def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
@@ -119,6 +122,7 @@ def load_hparams_from_yaml(config_path: str) -> Hyperparameters:
                 if f.default is dataclasses.MISSING and getattr(f, "default_factory",
                                                                dataclasses.MISSING) is dataclasses.MISSING]
     missing = [name for name in required if name not in cfg_dict]
+
     if missing:
         raise ValueError(f"Missing required hyperparameter(s) in {used_path}: {missing}")
 

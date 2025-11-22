@@ -274,7 +274,7 @@ class DaisyCore(nn.Module):
             attn_mask = None
         else:
             block_masks = [None] * L
-            attn_mask = build_attn_mask(input_seq, self.window_size)
+            attn_mask = build_attn_mask(input_seq, self.window_size, self.eos_token_id)
 
         for i in range(L):
             if i in skip_map:
